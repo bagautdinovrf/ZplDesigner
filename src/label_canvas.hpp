@@ -40,6 +40,7 @@ public:
     [[nodiscard]] bool isFitMode() const;
     // Reserve space for workspace chrome without changing printer geometry.
     void setWorkspaceInsets(const QMargins& insets);
+    [[nodiscard]] QString dimensionsFooterText() const;
 
 signals:
     // Flush a pending raster before capturing hit targets and gesture geometry.
@@ -58,6 +59,7 @@ signals:
     void duplicateRequested();
     void zoomChanged(int percent);
     void layoutSettingsEdited(Designer::CanvasLayoutSettings settings);
+    void dimensionsFooterChanged(QString text);
 
 protected:
     void drawBackground(QPainter* painter, const QRectF& rect) override;
@@ -129,6 +131,7 @@ private:
     QWidget* m_horizontalRuler = nullptr;
     QWidget* m_verticalRuler = nullptr;
     QLabel* m_dimensionsCaption = nullptr;
+    QString m_dimensionsFooterText;
     QMargins m_workspaceInsets{35, 50, 35, 45};
     bool m_guideHorizontal = false;
     bool m_guideInside = false;

@@ -189,6 +189,18 @@ protected:
     }
 };
 
+class ElidedCaption final : public QLabel {
+public:
+    using QLabel::QLabel;
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        painter.setPen(palette().color(foregroundRole()));
+        painter.drawText(contentsRect(), alignment(),
+                         fontMetrics().elidedText(text(), Qt::ElideRight, contentsRect().width()));
+    }
+};
+
 class SymbolIconEngine final : public QIconEngine {
 public:
     explicit SymbolIconEngine(QString symbol) : symbol_(std::move(symbol)) {}
@@ -792,10 +804,18 @@ void MainWindow::buildUi() {
     connect(focusDuplicate, &QPushButton::clicked, this, &MainWindow::duplicateElement);
     auto* focusShadow = new QGraphicsDropShadowEffect(focusBar_); focusShadow->setBlurRadius(15); focusShadow->setOffset(0, 3); focusShadow->setColor(QColor(0, 0, 0, 18)); focusBar_->setGraphicsEffect(focusShadow);
     auto* zoomControls = new WorkspaceSurface(center, true); zoomControls->setFixedHeight(34);
+    canvasZoomControls_ = zoomControls;
     zoomControls->setObjectName(QStringLiteral("canvasZoomControls"));
+    zoomControls->installEventFilter(this);
     auto* zoomRow = new QHBoxLayout(zoomControls); zoomRow->setContentsMargins(11, 4, 11, 4); zoomRow->setSpacing(9);
-    canvasSelection_ = caption(QString(), zoomControls); zoomRow->addWidget(canvasSelection_); zoomRow->addStretch();
-    zoomRow->addWidget(caption(QStringLiteral("Масштаб"), zoomControls));
+    canvasSelection_ = new ElidedCaption(zoomControls);
+    auto selectionFont = canvasSelection_->font(); selectionFont.setPixelSize(10); canvasSelection_->setFont(selectionFont);
+    canvasSelection_->setForegroundRole(QPalette::PlaceholderText);
+    canvasSelection_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    canvasSelection_->setMaximumWidth(140);
+    zoomRow->addWidget(canvasSelection_); zoomRow->addStretch();
+    canvasZoomTitle_ = caption(QStringLiteral("Масштаб"), zoomControls);
+    zoomRow->addWidget(canvasZoomTitle_);
     auto* zoom = new QComboBox(zoomControls); zoom->setObjectName(QStringLiteral("canvasZoom")); zoom->setProperty("compact", true); zoom->setFixedWidth(85); zoom->setFixedHeight(25);
     zoom->setEditable(true);
     zoom->setInsertPolicy(QComboBox::NoInsert);
@@ -807,6 +827,21 @@ void MainWindow::buildUi() {
         zoom->addItem(QStringLiteral("%1%").arg(percent), percent);
     zoom->setMaxVisibleItems(zoom->count());
     zoomRow->addWidget(zoom);
+    canvasDimensionsFooter_ = new ElidedCaption(zoomControls);
+    canvasDimensionsFooter_->setObjectName(QStringLiteral("canvasDimensionsFooter"));
+    canvasDimensionsFooter_->setAccessibleName(QStringLiteral("Размеры этикетки"));
+    canvasDimensionsFooter_->setTextFormat(Qt::PlainText);
+    canvasDimensionsFooter_->setFont(canvasSelection_->font());
+    canvasDimensionsFooter_->setForegroundRole(QPalette::PlaceholderText);
+    canvasDimensionsFooter_->setAlignment(Qt::AlignCenter);
+    canvasDimensionsFooter_->setAttribute(Qt::WA_TransparentForMouseEvents);
+    canvasDimensionsFooter_->setText(canvas_->dimensionsFooterText());
+    connect(canvas_, &LabelCanvas::dimensionsFooterChanged, this, [this](const QString& text) {
+        canvasDimensionsFooter_->setText(text);
+        canvasDimensionsFooter_->setToolTip(text);
+        canvasZoomControls_->setToolTip(text);
+        positionCanvasDimensionsFooter();
+    });
     connect(zoom, &QComboBox::activated, this, [this, zoom](int index) {
         if (index < 0) return;
         const int percent = zoom->itemData(index).toInt();
@@ -1237,7 +1272,7 @@ void MainWindow::buildUi() {
     connect(static_cast<ZplSourceEditor*>(code_), &ZplSourceEditor::sourceCursorActivated,
             this, [this] { syncSourceSelection(true); });
     connect(editorTabs_, &QTabWidget::currentChanged, this, [this, zoomControls](int index) {
-        zoomControls->setVisible(index == 0);
+        zoomControls->setVisible(index == 0 && !workspacePreferences_.focus);
         if (!applyingEditorLayout_ && workspacePreferences_.focus
             && workspacePreferences_.editorLayout == EditorLayout::Single)
             applyWorkspaceLayout();
@@ -1348,6 +1383,7 @@ void MainWindow::setWorkspaceMode(bool focus) {
 void MainWindow::applyWorkspaceLayout() {
     applyingWorkspace_ = true;
     const bool focus = workspacePreferences_.focus;
+    canvasZoomControls_->setVisible(!focus && editorTabs_->currentIndex() == 0);
     const bool layersVisible = focus ? workspacePreferences_.focusLayers : workspacePreferences_.balanceLayers;
     const bool propertiesVisible = focus ? workspacePreferences_.focusProperties : workspacePreferences_.balanceProperties;
     const QSignalBlocker balanceBlock(balanceAction_), focusBlock(focusAction_);
@@ -1396,10 +1432,24 @@ void MainWindow::refreshFocusSummary() {
     focusSummary_->setToolTip(text);
     if (canvasSelection_) canvasSelection_->setText(indices.isEmpty() ? QStringLiteral("Выберите объект")
         : validSelection ? session_->document().elements[selected_].name : QString());
+    if (canvasSelection_) canvasSelection_->setToolTip(canvasSelection_->text());
     positionWorkspaceOverlays();
 }
 
+void MainWindow::positionCanvasDimensionsFooter() {
+    if (!canvasDimensionsFooter_ || !canvasZoomTitle_) return;
+    // Use equal clearance on both sides so the caption stays at the center of
+    // the entire panel, independent of the selection name and zoom controls.
+    const int width = canvasZoomControls_->width();
+    const int side = std::min(width / 2, std::max(canvasSelection_->geometry().right() + 10,
+                                                width - canvasZoomTitle_->x() + 9));
+    canvasDimensionsFooter_->setGeometry(canvasZoomControls_->rect());
+    canvasDimensionsFooter_->setContentsMargins(side, 0, side, 0);
+    canvasDimensionsFooter_->raise();
+}
+
 void MainWindow::positionWorkspaceOverlays() {
+    positionCanvasDimensionsFooter();
     if (!workspaceCenter_ || !focusBar_ || !inspectorCard_) return;
     const auto area = workspaceCenter_->rect();
     const QRect canvasArea(canvas_->viewport()->mapTo(workspaceCenter_, QPoint{}), canvas_->viewport()->size());
@@ -1417,6 +1467,9 @@ void MainWindow::positionWorkspaceOverlays() {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == canvasZoomControls_
+        && (event->type() == QEvent::Resize || event->type() == QEvent::LayoutRequest))
+        positionCanvasDimensionsFooter();
     if ((watched == workspaceCenter_ && event->type() == QEvent::Resize)
         || (canvas_ && watched == canvas_->viewport() && event->type() == QEvent::Resize)
         || (watched == editorSplitter_ && (event->type() == QEvent::Resize || event->type() == QEvent::Move)))

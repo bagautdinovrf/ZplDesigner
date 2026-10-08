@@ -63,6 +63,7 @@ private:
     void restoreCanvasZoom();
     void refreshFocusSummary();
     void positionWorkspaceOverlays();
+    void positionCanvasDimensionsFooter();
     bool eventFilter(QObject* watched, QEvent* event) override;
     void restoreDocument(const DesignDocument& document);
     void commitDocument(DesignDocument document, const QString& title, int selection = -2);
@@ -160,6 +161,9 @@ private:
     QLabel* objectSymbol_ = nullptr;
     QLabel* layerCount_ = nullptr;
     QLabel* canvasSelection_ = nullptr;
+    QWidget* canvasZoomControls_ = nullptr;
+    QLabel* canvasZoomTitle_ = nullptr;
+    QLabel* canvasDimensionsFooter_ = nullptr;
     QWidget* contentSection_ = nullptr;
     QToolButton* fileButton_ = nullptr;
     QToolBar* documentCommandPanel_ = nullptr;

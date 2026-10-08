@@ -38,6 +38,21 @@ constexpr int maximumGuides = 128;
 constexpr qreal minimumZoom = 0.1;
 constexpr qreal maximumZoom = 8.0;
 
+class DimensionsBadge final : public QLabel {
+public:
+    using QLabel::QLabel;
+protected:
+    void paintEvent(QPaintEvent* event) override {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(palette().brush(QPalette::Window));
+        painter.drawRoundedRect(rect(), 4, 4);
+        painter.end();
+        QLabel::paintEvent(event);
+    }
+};
+
 QFont rulerFont(QFont font)
 {
     font.setPixelSize(9);
@@ -241,12 +256,13 @@ LabelCanvas::LabelCanvas(QWidget* parent)
     }
     m_horizontalRuler->setCursor(Qt::SplitVCursor);
     m_verticalRuler->setCursor(Qt::SplitHCursor);
-    m_dimensionsCaption = new QLabel(this);
+    m_dimensionsCaption = new DimensionsBadge(viewport());
     m_dimensionsCaption->setObjectName(QStringLiteral("labelDimensionsCaption"));
     m_dimensionsCaption->setAccessibleName(tr("Размеры этикетки"));
     m_dimensionsCaption->setTextFormat(Qt::PlainText);
     m_dimensionsCaption->setAlignment(Qt::AlignCenter);
-    m_dimensionsCaption->setAutoFillBackground(true);
+    m_dimensionsCaption->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_dimensionsCaption->setContentsMargins(12, 6, 12, 6);
     updateDimensionsCaption();
     updateRulers();
 }
@@ -1178,16 +1194,39 @@ void LabelCanvas::updateDimensionsCaption()
         .arg(locale().toString(m_document.width), locale().toString(m_document.height),
              locale().toString(m_document.width * 25.4 / std::max(1, m_document.dpi), 'f', 2),
              locale().toString(m_document.height * 25.4 / std::max(1, m_document.dpi), 'f', 2)) : QString{});
-    const int height = std::max(26, m_dimensionsCaption->fontMetrics().height() + 12);
-    if (viewportMargins().bottom() != height) setViewportMargins(0, 0, 0, height);
     positionDimensionsCaption();
+}
+
+QString LabelCanvas::dimensionsFooterText() const
+{
+    return m_dimensionsFooterText;
 }
 
 void LabelCanvas::positionDimensionsCaption()
 {
     if (!m_dimensionsCaption) return;
-    const QRect area = viewport()->geometry();
-    m_dimensionsCaption->setGeometry(area.left(), area.bottom() + 1, area.width(), viewportMargins().bottom());
+    const QRect paper = mapFromScene(labelRect()).boundingRect();
+    const QSize size = m_dimensionsCaption->sizeHint().expandedTo(QSize(0, 26));
+    const QRect badge(paper.center().x() - size.width() / 2, paper.bottom() + 13,
+                      size.width(), size.height());
+    // Keep the badge attached to the paper. If it leaves the visible workspace,
+    // the footer takes over instead of clamping the badge over printed content.
+    QRect available = viewport()->rect().adjusted(4, 4, -4, -4);
+    // Larger workspace insets reserve the floating Focus controls. Stay out
+    // of their entire bands, including the inspector's shadow.
+    if (m_workspaceInsets.right() > 35)
+        available.setRight(viewport()->width() - m_workspaceInsets.right());
+    if (m_workspaceInsets.bottom() > 45)
+        available.setBottom(viewport()->height() - m_workspaceInsets.bottom());
+    const bool floating = m_hasDocument && available.contains(badge);
+    m_dimensionsCaption->setGeometry(badge);
+    m_dimensionsCaption->setVisible(floating);
+    if (floating) m_dimensionsCaption->raise();
+    const QString footerText = m_hasDocument && !floating ? m_dimensionsCaption->text() : QString{};
+    if (m_dimensionsFooterText != footerText) {
+        m_dimensionsFooterText = footerText;
+        emit dimensionsFooterChanged(footerText);
+    }
 }
 
 void LabelCanvas::changeEvent(QEvent* event)
@@ -1403,6 +1442,7 @@ void LabelCanvas::scrollContentsBy(int dx, int dy)
     if (!m_positioningView && !m_fitting)
         m_viewCenter = mapToScene(viewport()->rect().center());
     updateRulers();
+    positionDimensionsCaption();
 }
 
 void LabelCanvas::resizeEvent(QResizeEvent* event)

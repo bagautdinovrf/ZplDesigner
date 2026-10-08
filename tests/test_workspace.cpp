@@ -42,7 +42,8 @@ private slots:
     void focusGivesSpaceToCanvasAndRestoresBalance();
     void panelsCanBeReopenedWithoutLeavingFocus();
     void focusPropertiesAvoidSourceAndPreview();
-    void focusPropertiesKeepClearOfZoomControls();
+    void focusPropertiesKeepInsideEditorWithoutZoomFooter();
+    void dimensionsMoveBetweenCanvasAndCenteredFooter();
     void focusCoordinatesFollowDisplayUnits();
     void focusSummarySurvivesDocumentReset();
     void modeSwitchPreservesPendingSourceAndHistory();
@@ -205,12 +206,13 @@ void WorkspaceTests::focusPropertiesAvoidSourceAndPreview()
     auto* card = window_->findChild<QWidget*>(u"focusInspectorCard"_s);
     auto* slot = window_->findChild<QWidget*>(u"inspectorSlot"_s);
     auto* focusBar = window_->findChild<QWidget*>(u"focusContextBar"_s);
+    auto* zoom = window_->findChild<QWidget*>(u"canvasZoomControls"_s);
     auto* layout = window_->findChild<QComboBox*>(u"editorLayout"_s);
     auto* editorSplitter = window_->findChild<QSplitter*>(u"editorSplitter"_s);
     auto* code = window_->findChild<QPlainTextEdit*>(u"zplEditor"_s);
     auto* canvas = window_->findChild<LabelCanvas*>();
     auto* session = window_->findChild<DocumentSession*>();
-    QVERIFY(tabs); QVERIFY(inspector); QVERIFY(card); QVERIFY(slot); QVERIFY(focusBar);
+    QVERIFY(tabs); QVERIFY(inspector); QVERIFY(card); QVERIFY(slot); QVERIFY(focusBar); QVERIFY(zoom);
     QVERIFY(layout); QVERIFY(editorSplitter); QVERIFY(code); QVERIFY(canvas); QVERIFY(session);
     canvas->setSelectedIndex(0);
     const auto source = code->toPlainText();
@@ -229,6 +231,7 @@ void WorkspaceTests::focusPropertiesAvoidSourceAndPreview()
     QVERIFY(card->isAncestorOf(inspector));
     QVERIFY(!slot->isVisible());
     QVERIFY(focusBar->isVisible());
+    QVERIFY(!zoom->isVisible());
 
     for (const int tab : {1, 2, 1}) {
         tabs->setCurrentIndex(tab);
@@ -240,6 +243,7 @@ void WorkspaceTests::focusPropertiesAvoidSourceAndPreview()
         QVERIFY(slot->isAncestorOf(inspector));
         QVERIFY(!card->isVisible());
         QVERIFY(!focusBar->isVisible());
+        QVERIFY(!zoom->isVisible());
         QVERIFY(!bounds(slot).intersects(bounds(tabs->currentWidget())));
         QVERIFY(!bounds(slot).intersects(bounds(editorSplitter)));
         QVERIFY(editorSplitter->width() < designWidth);
@@ -273,6 +277,7 @@ void WorkspaceTests::focusPropertiesAvoidSourceAndPreview()
         QVERIFY(slot->isAncestorOf(inspector));
         QVERIFY(!card->isVisible());
         QVERIFY(!focusBar->isVisible());
+        QVERIFY(!zoom->isVisible());
         QVERIFY(!bounds(slot).intersects(bounds(code)));
         QVERIFY(!bounds(slot).intersects(bounds(tabs->currentWidget())));
     }
@@ -282,7 +287,7 @@ void WorkspaceTests::focusPropertiesAvoidSourceAndPreview()
     QCOMPARE(documentChanges.count(), 0);
 }
 
-void WorkspaceTests::focusPropertiesKeepClearOfZoomControls()
+void WorkspaceTests::focusPropertiesKeepInsideEditorWithoutZoomFooter()
 {
     auto* card = window_->findChild<QWidget*>(u"focusInspectorCard"_s);
     auto* inspector = window_->findChild<QTabWidget*>(u"inspectorTabs"_s);
@@ -298,12 +303,91 @@ void WorkspaceTests::focusPropertiesKeepClearOfZoomControls()
             QApplication::processEvents();
             const QRect cardBounds(card->mapTo(window_.get(), QPoint{}), card->size());
             const QRect editorBounds(editor->mapTo(window_.get(), QPoint{}), editor->size());
-            const int zoomTop = zoom->mapTo(window_.get(), QPoint{}).y();
             QVERIFY(card->isVisible());
+            QVERIFY(!zoom->isVisible());
             QVERIFY(editorBounds.contains(cardBounds));
-            QVERIFY(zoomTop - cardBounds.bottom() - 1 >= 14);
+            QVERIFY(editorBounds.bottom() - cardBounds.bottom() >= 14);
         }
     }
+}
+
+void WorkspaceTests::dimensionsMoveBetweenCanvasAndCenteredFooter()
+{
+    auto* canvas = window_->findChild<LabelCanvas*>();
+    auto* caption = window_->findChild<QLabel*>(u"labelDimensionsCaption"_s);
+    auto* footer = window_->findChild<QLabel*>(u"canvasDimensionsFooter"_s);
+    auto* controls = window_->findChild<QWidget*>(u"canvasZoomControls"_s);
+    auto* zoom = window_->findChild<QComboBox*>(u"canvasZoom"_s);
+    auto* focusBar = window_->findChild<QWidget*>(u"focusContextBar"_s);
+    auto* tabs = window_->findChild<QTabWidget*>(u"editorTabs"_s);
+    QVERIFY(canvas); QVERIFY(caption); QVERIFY(footer); QVERIFY(controls);
+    QVERIFY(zoom); QVERIFY(focusBar); QVERIFY(tabs);
+    const QString originalZpl = toZpl(window_->document());
+
+    canvas->setZoomPercent(800);
+    canvas->centerLabel();
+    QApplication::processEvents();
+    QVERIFY(controls->isVisible());
+    QVERIFY(!caption->isVisible());
+    QVERIFY(!footer->text().isEmpty());
+    const auto verifyCentered = [&] {
+        QApplication::processEvents();
+        const QRect footerBounds(footer->mapTo(controls, footer->contentsRect().topLeft()),
+                                 footer->contentsRect().size());
+        const QRect zoomBounds(zoom->mapTo(controls, QPoint{}), zoom->size());
+        QVERIFY(controls->rect().contains(footerBounds));
+        QVERIFY(qAbs(QRectF(footerBounds).center().x() - QRectF(controls->rect()).center().x()) <= 1);
+        QVERIFY(!footerBounds.intersects(zoomBounds));
+        QCOMPARE(footer->toolTip(), canvas->dimensionsFooterText());
+    };
+    verifyCentered();
+    const int controlsHeight = controls->height();
+    canvas->setSelectedIndex(0);
+    verifyCentered();
+    const QRect footerGeometry = footer->geometry();
+    const QRect zoomGeometry = zoom->geometry();
+    const QRect canvasGeometry = canvas->geometry();
+    const QFont footerFont = footer->font();
+    const QColor footerColor = footer->palette().color(footer->foregroundRole());
+    action("darkTheme")->trigger();
+    verifyCentered();
+    QCOMPARE(footer->geometry(), footerGeometry);
+    QCOMPARE(zoom->geometry(), zoomGeometry);
+    QCOMPARE(canvas->geometry(), canvasGeometry);
+    QCOMPARE(footer->font(), footerFont);
+    QVERIFY(footer->palette().color(footer->foregroundRole()) != footerColor);
+    action("darkTheme")->trigger();
+
+    for (const auto size : {QSize(1000, 650), QSize(1420, 900)}) {
+        window_->resize(size);
+        verifyCentered();
+        QCOMPARE(controls->height(), controlsHeight);
+    }
+    canvas->setZoomPercent(25);
+    canvas->centerLabel();
+    QApplication::processEvents();
+    QVERIFY(caption->isVisible());
+    QVERIFY(footer->text().isEmpty());
+    QCOMPARE(controls->height(), controlsHeight);
+
+    action("workspaceFocus")->trigger();
+    QApplication::processEvents();
+    QVERIFY(focusBar->isVisible());
+    QVERIFY(!controls->isVisible());
+    for (const int tab : {1, 2, 0}) {
+        tabs->setCurrentIndex(tab);
+        QApplication::processEvents();
+        QVERIFY(!controls->isVisible());
+    }
+    action("workspaceBalance")->trigger();
+    canvas->setZoomPercent(800);
+    canvas->centerLabel();
+    QApplication::processEvents();
+    QVERIFY(controls->isVisible());
+    QVERIFY(!focusBar->isVisible());
+    QVERIFY(!footer->text().isEmpty());
+    verifyCentered();
+    QCOMPARE(toZpl(window_->document()), originalZpl);
 }
 
 void WorkspaceTests::focusCoordinatesFollowDisplayUnits()
@@ -796,14 +880,18 @@ void WorkspaceTests::restoredManualZoomCentersPaperAfterWindowLayout()
         QVERIFY(qAbs(paper.width() - qRound(initial_.width * zoomPercent / 100.0)) <= 1);
         QVERIFY(qAbs(paper.height() - qRound(initial_.height * zoomPercent / 100.0)) <= 1);
         QCOMPARE(loadWorkspacePreferences().canvasZoomPercent, zoomPercent);
-        QVERIFY(caption->isVisible());
-        const QRect captionBounds(caption->mapTo(window_.get(), QPoint{}), caption->size());
-        for (const auto* name : {"focusContextBar", "focusInspectorCard", "inspectorTabs"}) {
-            auto* overlay = window_->findChild<QWidget*>(QString::fromLatin1(name));
-            QVERIFY2(overlay, name);
-            if (!overlay->isVisible()) continue;
-            const QRect overlayBounds(overlay->mapTo(window_.get(), QPoint{}), overlay->size());
-            QVERIFY2(!captionBounds.intersects(overlayBounds), name);
+        if (caption->isVisible()) {
+            QVERIFY(canvas->dimensionsFooterText().isEmpty());
+            const QRect captionBounds(caption->mapTo(window_.get(), QPoint{}), caption->size());
+            for (const auto* name : {"focusContextBar", "focusInspectorCard", "inspectorTabs"}) {
+                auto* overlay = window_->findChild<QWidget*>(QString::fromLatin1(name));
+                QVERIFY2(overlay, name);
+                if (!overlay->isVisible()) continue;
+                const QRect overlayBounds(overlay->mapTo(window_.get(), QPoint{}), overlay->size());
+                QVERIFY2(!captionBounds.intersects(overlayBounds), name);
+            }
+        } else {
+            QVERIFY(!canvas->dimensionsFooterText().isEmpty());
         }
     };
     verifyPaper();

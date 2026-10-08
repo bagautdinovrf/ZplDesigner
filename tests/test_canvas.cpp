@@ -8,6 +8,7 @@
 #include <QEvent>
 #include <QFontMetrics>
 #include <QMimeData>
+#include <QLabel>
 #include <QLocale>
 #include <QPainter>
 #include <QPixmap>
@@ -126,7 +127,8 @@ private slots:
     void controlWheelKeepsFittingAxesVisibleAndOverflowAnchored();
     void controlWheelPreservesAnchorAfterQueuedScrollBarLayout();
     void manualZoomKeepsPannedSceneCenterAfterResize();
-    void dimensionCaptionStaysOutsidePaperViewport();
+    void dimensionCaptionMovesToFooterWhenScrolledOut();
+    void dimensionCaptionUpdatesDockedText();
     void invalidDataMatrixMarkerIsEditorOnlyAndFollowsIdentity();
     void persistentGroupsSelectAndToggleAtomically();
     void persistentGroupsExpandRubberBandAndFollowModel();
@@ -1200,7 +1202,9 @@ void CanvasTests::fitModeKeepsPanAndRestoresManualZoomScrollbars()
     document_.width = 812;
     document_.height = 406;
     canvas_->syncDocument(document_);
-    canvas_->resize(958, 508);
+    // Leave less than 406 dots of usable height at 100%, even without a
+    // dedicated dimensions strip, so this exercises vertical-only overflow.
+    canvas_->resize(958, 480);
     canvas_->fitLabel();
     QTest::qWait(10);
     const QTransform fitted = canvas_->transform();
@@ -1513,39 +1517,107 @@ void CanvasTests::manualZoomKeepsPannedSceneCenterAfterResize()
     QVERIFY(qAbs(resized.y() - panned.y()) <= 1);
 }
 
-void CanvasTests::dimensionCaptionStaysOutsidePaperViewport()
+void CanvasTests::dimensionCaptionMovesToFooterWhenScrolledOut()
 {
-    auto* caption = canvas_->findChild<QWidget*>(QStringLiteral("labelDimensionsCaption"));
+    auto* caption = canvas_->findChild<QLabel*>(QStringLiteral("labelDimensionsCaption"));
     QVERIFY(caption);
-    const auto verifyCaption = [&] {
+    const auto verifyFloatingCaption = [&] {
         QApplication::processEvents();
         QVERIFY(caption->isVisible());
-        const QRect captionBounds(caption->mapTo(canvas_.get(), QPoint{}), caption->size());
-        const QRect viewportBounds(canvas_->viewport()->mapTo(canvas_.get(), QPoint{}),
-                                   canvas_->viewport()->size());
+        QVERIFY(canvas_->dimensionsFooterText().isEmpty());
+        const QRect captionBounds(caption->mapTo(canvas_->viewport(), QPoint{}), caption->size());
         QVERIFY(!captionBounds.isEmpty());
-        QVERIFY(canvas_->rect().contains(captionBounds));
-        // Keeping the dimensions outside the painting viewport guarantees
-        // they cannot hide printed content at any zoom or scroll position.
-        QVERIFY(!captionBounds.intersects(viewportBounds));
+        QVERIFY(canvas_->viewport()->rect().contains(captionBounds));
         const QRect paper = canvas_->mapFromScene(
             QRectF(0, 0, document_.width, document_.height)).boundingRect();
-        const QRect paperInCanvas(canvas_->viewport()->mapTo(canvas_.get(), paper.topLeft()), paper.size());
-        QVERIFY(!paperInCanvas.intersected(viewportBounds).intersects(captionBounds));
+        QVERIFY(!paper.intersects(captionBounds));
+        QVERIFY(captionBounds.top() > paper.bottom());
+        QVERIFY(qAbs(QRectF(captionBounds).center().x() - QRectF(paper).center().x()) <= 1);
     };
-    for (const int percent : {10, 100, 800}) {
+    for (const int percent : {10, 100}) {
         canvas_->setZoomPercent(percent);
-        verifyCaption();
-        canvas_->horizontalScrollBar()->setValue(canvas_->horizontalScrollBar()->maximum());
-        canvas_->verticalScrollBar()->setValue(canvas_->verticalScrollBar()->maximum());
-        verifyCaption();
+        verifyFloatingCaption();
     }
-    canvas_->resize(260, 200);
-    verifyCaption();
+
+    canvas_->setZoomPercent(200);
+    QApplication::processEvents();
+    auto* vertical = canvas_->verticalScrollBar();
+    QVERIFY(vertical->isVisible());
+    vertical->setValue(vertical->minimum());
+    QApplication::processEvents();
+    QVERIFY(!caption->isVisible());
+    QCOMPARE(canvas_->dimensionsFooterText(), caption->text());
+    const QSize viewportSize = canvas_->viewport()->size();
+    ResizeCounter resizes;
+    canvas_->viewport()->installEventFilter(&resizes);
+    QSignalSpy footerChanges(canvas_.get(), &LabelCanvas::dimensionsFooterChanged);
+
+    // Scrolling the paper bottom into view restores its own badge. Scrolling
+    // back moves the same information into the footer without relaying out
+    // the viewport or clamping the badge over printed content.
+    vertical->setValue(vertical->maximum());
+    verifyFloatingCaption();
+    QCOMPARE(canvas_->viewport()->size(), viewportSize);
+    QVERIFY(!footerChanges.isEmpty());
+    QCOMPARE(footerChanges.last().first().toString(), QString{});
+    vertical->setValue(vertical->minimum());
+    QApplication::processEvents();
+    QVERIFY(!caption->isVisible());
+    QCOMPARE(canvas_->dimensionsFooterText(), caption->text());
+    QCOMPARE(footerChanges.last().first().toString(), caption->text());
+    QCOMPARE(canvas_->viewport()->size(), viewportSize);
+    vertical->setValue(vertical->maximum());
+    verifyFloatingCaption();
+    QCOMPARE(resizes.count, 0);
+    canvas_->viewport()->removeEventFilter(&resizes);
+
     auto settings = canvas_->layoutSettings();
     settings.rulersVisible = false;
     canvas_->setLayoutSettings(settings);
-    verifyCaption();
+    canvas_->fitLabel();
+    verifyFloatingCaption();
+    canvas_->setZoomPercent(800);
+    canvas_->centerLabel();
+    QApplication::processEvents();
+    QVERIFY(!caption->isVisible());
+    QCOMPARE(canvas_->dimensionsFooterText(), caption->text());
+}
+
+void CanvasTests::dimensionCaptionUpdatesDockedText()
+{
+    auto* caption = canvas_->findChild<QLabel*>(QStringLiteral("labelDimensionsCaption"));
+    QVERIFY(caption);
+    canvas_->setZoomPercent(800);
+    canvas_->centerLabel();
+    QApplication::processEvents();
+    QVERIFY(!caption->isVisible());
+    QSignalSpy footerChanges(canvas_.get(), &LabelCanvas::dimensionsFooterChanged);
+
+    canvas_->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
+    document_.width = 812;
+    document_.height = 406;
+    document_.dpi = 203;
+    canvas_->syncDocument(document_);
+    QApplication::processEvents();
+    QCOMPARE(canvas_->dimensionsFooterText(), QStringLiteral("812 × 406 dots · 101.60 × 50.80 мм"));
+    QVERIFY(!footerChanges.isEmpty());
+    QCOMPARE(footerChanges.last().first().toString(), canvas_->dimensionsFooterText());
+
+    canvas_->setLocale(QLocale(QLocale::Russian, QLocale::Russia));
+    QApplication::processEvents();
+    QCOMPARE(canvas_->dimensionsFooterText(), QStringLiteral("812 × 406 dots · 101,60 × 50,80 мм"));
+    QCOMPARE(footerChanges.last().first().toString(), canvas_->dimensionsFooterText());
+
+    document_.dpi = 300;
+    canvas_->syncDocument(document_);
+    QApplication::processEvents();
+    QCOMPARE(canvas_->dimensionsFooterText(), QStringLiteral("812 × 406 dots · 68,75 × 34,37 мм"));
+    QCOMPARE(caption->text(), canvas_->dimensionsFooterText());
+    QCOMPARE(footerChanges.last().first().toString(), canvas_->dimensionsFooterText());
+    const int changes = footerChanges.size();
+    canvas_->syncDocument(document_);
+    QApplication::processEvents();
+    QCOMPARE(footerChanges.size(), changes);
 }
 
 void CanvasTests::invalidDataMatrixMarkerIsEditorOnlyAndFollowsIdentity()
