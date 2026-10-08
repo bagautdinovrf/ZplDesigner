@@ -142,20 +142,6 @@ std::optional<QString> decodeTemplateMetadata(QStringView text)
     return decoded;
 }
 
-bool isByteEscapedField(QStringView source)
-{
-    const QStringView data = source.sliced(3);
-    if (data.isEmpty() || data.size() % 3 != 0) return false;
-    for (qsizetype i = 0; i < data.size(); i += 3) {
-        if (data[i] != u'_') return false;
-        for (int digit = 1; digit <= 2; ++digit) {
-            const ushort ch = data[i + digit].toUpper().unicode();
-            if (!((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'F'))) return false;
-        }
-    }
-    return true;
-}
-
 QString parameter(const QtZpl::Barcode& code, qsizetype index, QString fallback = {})
 {
     return index < code.parameters.size() && !code.parameters[index].isEmpty() ? code.parameters[index] : fallback;
@@ -809,8 +795,6 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                         }
                     } else if (code.symbology == u"BX") {
                         element.type = ElementType::DataMatrix;
-                        if (charset == 28 && isByteEscapedField(command.source))
-                            element.text = QString::fromUtf8(element.text.toLatin1());
                         element.moduleWidth = parameter(code, 1, u"3"_s).toInt();
                         element.dataMatrixColumns = parameter(code, 3, u"0"_s).toInt();
                         element.dataMatrixRows = parameter(code, 4, u"0"_s).toInt();

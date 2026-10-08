@@ -46,6 +46,7 @@ if(QTZPL_SOURCE_DIR)
     set(QTZPL_BUILD_SHARED OFF CACHE BOOL "Build the bundled QtZpl as a DLL" FORCE)
     set(QTZPL_BUILD_TESTS OFF CACHE BOOL "Build QtZpl dependency tests" FORCE)
     set(QTZPL_BUILD_EXAMPLES OFF CACHE BOOL "Build QtZpl dependency examples" FORCE)
+    message(STATUS "QtZpl source directory: ${QTZPL_SOURCE_DIR}")
     add_subdirectory("${QTZPL_SOURCE_DIR}" "qtzpl" EXCLUDE_FROM_ALL)
 else()
     find_package(QtZpl CONFIG REQUIRED)
@@ -82,6 +83,8 @@ add_library(designer_core STATIC
     src/data_matrix_values.hpp
     src/document_validation.cpp
     src/zpl_codec.cpp
+    src/zpl_source_map.cpp
+    src/zpl_source_map.hpp
     src/image_converter.cpp
     src/preview_renderer.cpp
     src/preset_catalog.cpp
@@ -113,6 +116,8 @@ designer_target_settings(designer_printing)
 add_library(designer_widgets STATIC
     src/designer_theme.cpp
     src/designer_theme.hpp
+    src/ui_translations.cpp
+    src/ui_translations.hpp
     src/workspace_preferences.cpp
     src/workspace_preferences.hpp
     src/dot_spin_box.cpp
@@ -151,6 +156,20 @@ add_library(designer_widgets STATIC
 target_link_libraries(designer_widgets PUBLIC designer_session designer_printing Qt6::Widgets)
 designer_target_settings(designer_widgets)
 
+# Keep standard Qt dialogs in Russian even when deployed without a separate
+# translations directory. Resolve against the selected Qt kit, not a host kit.
+get_filename_component(DESIGNER_QT_TRANSLATIONS_DIR "${QT6_INSTALL_TRANSLATIONS}" ABSOLUTE
+    BASE_DIR "${QT6_INSTALL_PREFIX}")
+set(DESIGNER_QT_RUSSIAN_TRANSLATION "${DESIGNER_QT_TRANSLATIONS_DIR}/qtbase_ru.qm")
+if(NOT EXISTS "${DESIGNER_QT_RUSSIAN_TRANSLATION}")
+    message(FATAL_ERROR "Install Russian Qt translations for the selected Qt kit; missing ${DESIGNER_QT_RUSSIAN_TRANSLATION}")
+endif()
+qt_add_resources(designer_widgets designer_translations
+    PREFIX "/designer/translations"
+    BASE "${DESIGNER_QT_TRANSLATIONS_DIR}"
+    FILES "${DESIGNER_QT_RUSSIAN_TRANSLATION}"
+)
+
 qt_add_executable(QtZplDesigner WIN32 src/main.cpp)
 target_link_libraries(QtZplDesigner PRIVATE designer_widgets)
 target_include_directories(QtZplDesigner PRIVATE "${DESIGNER_GENERATED_DIR}")
@@ -172,7 +191,7 @@ designer_target_settings(QtZplDesigner)
 if(DESIGNER_BUILD_TESTS)
     enable_testing()
     find_package(Qt6 6.11 REQUIRED COMPONENTS Test)
-    foreach(feature workspace split_editor projects table_barcodes designer_extensions printer_profiles extended_zpl canvas_transforms advanced_dialogs)
+    foreach(feature workspace window_geometry ui_translations split_editor projects table_barcodes designer_extensions printer_profiles extended_zpl canvas_transforms advanced_dialogs)
         qt_add_executable(designer_${feature}_tests tests/test_${feature}.cpp)
         target_link_libraries(designer_${feature}_tests PRIVATE Qt6::Test designer_widgets)
         designer_target_settings(designer_${feature}_tests)
@@ -193,6 +212,12 @@ if(DESIGNER_BUILD_TESTS)
     designer_target_settings(designer_tests)
     add_test(NAME designer_document COMMAND designer_tests -o ${CMAKE_CURRENT_BINARY_DIR}/document-results.txt,txt)
     set_tests_properties(designer_document PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    qt_add_executable(designer_source_map_tests tests/test_source_map.cpp)
+    target_link_libraries(designer_source_map_tests PRIVATE Qt6::Test designer_core)
+    designer_target_settings(designer_source_map_tests)
+    add_test(NAME designer_source_map COMMAND designer_source_map_tests -o ${CMAKE_CURRENT_BINARY_DIR}/source-map-results.txt,txt)
+    set_tests_properties(designer_source_map PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 
     qt_add_executable(designer_datamatrix_template_tests tests/test_datamatrix_templates.cpp)
     target_link_libraries(designer_datamatrix_template_tests PRIVATE Qt6::Test designer_core)
@@ -253,6 +278,12 @@ if(DESIGNER_BUILD_TESTS)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 30
     )
+
+    qt_add_executable(designer_command_panels_tests tests/test_command_panels.cpp)
+    target_link_libraries(designer_command_panels_tests PRIVATE Qt6::Test designer_widgets)
+    designer_target_settings(designer_command_panels_tests)
+    add_test(NAME designer_command_panels COMMAND designer_command_panels_tests -o ${CMAKE_CURRENT_BINARY_DIR}/command-panels-results.txt,txt)
+    set_tests_properties(designer_command_panels PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 
     # Explicit local-corpus inspection tool; it is not an automatic test and
     # does not embed or copy the user's production preset catalogue.

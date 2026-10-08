@@ -8,6 +8,11 @@ Native Qt Widgets editor. Read this file and README.md before modifying it.
 - The sibling `../qt-zpl` owns parsing and rendering. Link `QtZpl::QtZpl` and
   generate every preview through that library. Do not introduce another renderer
   or remote service, and do not modify the sibling checkout as an incidental fix.
+- Always build against the current sibling `../qt-zpl` sources unless the user
+  explicitly requests another checkout. Never switch to an older snapshot to
+  make a build pass. If the dependency is being edited concurrently, verify the
+  current sources and report any remaining incompatibility instead of pinning
+  an earlier copy.
 - The editor owns its mutable document, interaction, ZPL generation, and imported
   image conversion. Library API models remain read-only.
 - Preserve the target boundaries: `designer_core` handles values, codecs, images,

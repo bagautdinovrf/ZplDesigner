@@ -1,7 +1,9 @@
 #pragma once
 
+#include <QByteArray>
 #include <QList>
 #include <QString>
+#include <QStringList>
 
 namespace Designer {
 
@@ -9,6 +11,7 @@ enum class EditorLayout { Single, CodeDesign, CodePreview };
 
 // Application-local UI state, independent of label documents and their history.
 struct WorkspacePreferences {
+    QByteArray windowGeometry;
     bool focus = false;
     bool dark = false;
     bool balanceLayers = true;
@@ -19,7 +22,9 @@ struct WorkspacePreferences {
     QList<int> focusSizes{185, 950, 258};
     EditorLayout editorLayout = EditorLayout::Single;
     bool codeOnLeft = true;
+    bool selectionSync = true;
     QList<int> editorSizes{500, 500};
+    QStringList hiddenToolbarCommands;
 };
 
 [[nodiscard]] QString workspacePreferencesPath();

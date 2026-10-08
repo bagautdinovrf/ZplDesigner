@@ -168,8 +168,9 @@ def main() -> int:
         safe_directory = checked_build_dir(args.build_dir)
         print(f"Removing generated build directory: {safe_directory}", flush=True)
         shutil.rmtree(safe_directory)
-    if args.action in ("configure", "all") or not (args.build_dir / "CMakeCache.txt").is_file():
-        configure(args, environment, qt_dir)
+    # Apply the current source path on every invocation: an existing CMake cache
+    # may still point to an old checkout or snapshot, including during deploy.
+    configure(args, environment, qt_dir)
     if args.action == "configure":
         return 0
     target = "QtZplDesigner" if args.action in ("run", "deploy") else args.target

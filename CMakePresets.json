@@ -8,6 +8,7 @@
       "binaryDir": "${sourceDir}/build_agent_debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
+        "QTZPL_SOURCE_DIR": "${sourceDir}/../qt-zpl",
         "DESIGNER_BUILD_TESTS": "ON"
       }
     },

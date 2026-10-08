@@ -1,4 +1,5 @@
 #include "main_window.hpp"
+#include "command_icons.hpp"
 #include "label_canvas.hpp"
 #include "canvas_layout_dialog.hpp"
 #include "document_session.hpp"
@@ -55,9 +56,12 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRegion>
 #include <QSaveFile>
+#include <QScopedValueRollback>
 #include <QSet>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -69,6 +73,7 @@
 #include <QStyleOptionViewItem>
 #include <QTabWidget>
 #include <QTabBar>
+#include <QTextBlock>
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
@@ -81,6 +86,12 @@
 
 namespace Designer {
 namespace {
+QString applicationTitle() {
+    const auto version = QCoreApplication::applicationVersion();
+    return version.isEmpty() ? QStringLiteral("QtZpl Designer")
+        : QStringLiteral("QtZpl Designer %1").arg(version);
+}
+
 // The HTML concept uses painted flat surfaces rather than platform chrome.
 class WorkspaceSurface final : public QWidget {
 public:
@@ -100,6 +111,33 @@ private:
     bool rounded_;
 };
 
+class InspectorTabs final : public QTabWidget {
+public:
+    using QTabWidget::QTabWidget;
+
+    void setRoundedCorners(bool rounded) {
+        if (rounded_ == rounded) return;
+        rounded_ = rounded;
+        updateCornerMask();
+    }
+protected:
+    void resizeEvent(QResizeEvent* event) override {
+        QTabWidget::resizeEvent(event);
+        if (rounded_) updateCornerMask();
+    }
+private:
+    void updateCornerMask() {
+        if (!rounded_) { clearMask(); return; }
+        // Clip opaque tab/page backgrounds inside the floating card's border.
+        // The one-pixel inset leaves its antialiased outer radius visible.
+        QPainterPath path;
+        path.addRoundedRect(QRectF(rect()), 6, 6);
+        setMask(QRegion(path.toFillPolygon().toPolygon()));
+    }
+
+    bool rounded_ = false;
+};
+
 class ObjectBadge final : public QLabel {
 public:
     using QLabel::QLabel;
@@ -111,6 +149,26 @@ protected:
         p.setBrush(designerColor(outline ? DesignerColor::PanelAlternate : DesignerColor::Tint));
         p.drawRoundedRect(QRectF(rect()).adjusted(.5, .5, -.5, -.5), outline ? 3 : 5, outline ? 3 : 5); p.end();
         QLabel::paintEvent(event);
+    }
+};
+
+class SelectionSyncIconEngine final : public QIconEngine {
+public:
+    QIconEngine* clone() const override { return new SelectionSyncIconEngine; }
+    void paint(QPainter* painter, const QRect& rect, QIcon::Mode mode, QIcon::State state) override {
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+        painter->translate(rect.center());
+        const auto scale = std::min(rect.width(), rect.height()) / 18.0;
+        painter->scale(scale, scale);
+        painter->rotate(-35);
+        const auto role = state == QIcon::On || mode == QIcon::Selected ? QPalette::Link : QPalette::Text;
+        const auto group = mode == QIcon::Disabled ? QPalette::Disabled : QPalette::Active;
+        painter->setPen(QPen(qApp->palette().color(group, role), 1.6, Qt::SolidLine, Qt::RoundCap));
+        painter->setBrush(Qt::NoBrush);
+        painter->drawRoundedRect(QRectF(-8, -3, 10, 6), 3, 3);
+        painter->drawRoundedRect(QRectF(-2, -3, 10, 6), 3, 3);
+        painter->restore();
     }
 };
 
@@ -285,6 +343,7 @@ protected:
     void initStyleOption(QStyleOptionViewItem* option, const QModelIndex& index) const override {
         QStyledItemDelegate::initStyleOption(option, index);
         option->text.clear();
+        option->features.setFlag(QStyleOptionViewItem::HasDisplay, false);
         option->displayAlignment = Qt::AlignCenter;
         option->decorationAlignment = Qt::AlignCenter;
         option->decorationPosition = QStyleOptionViewItem::Top;
@@ -394,6 +453,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(undo_, &QUndoStack::cleanChanged, this, [this] { updateTitle(); });
     setDocument(sampleDocument());
     selectElement(1);
+    // Qt retains the normal rectangle and maximized state, and adjusts the
+    // saved placement if its screen is no longer available.
+    if (!workspacePreferences_.windowGeometry.isEmpty())
+        restoreGeometry(workspacePreferences_.windowGeometry);
     QTimer::singleShot(0, canvas_, &LabelCanvas::fitLabel);
 }
 
@@ -456,28 +519,29 @@ void MainWindow::buildUi() {
         setDesignerTheme(dark ? DesignerTheme::Dark : DesignerTheme::Light);
         persistWorkspace();
     });
-    // Keep commands as actions, with a single compact command row from the mockup.
+    // Keep command actions shared by menus and the compact icon panels.
     auto* fresh = new QAction(QStringLiteral("Новая"), this); fresh->setShortcut(QKeySequence::New); addAction(fresh);
     connect(fresh, &QAction::triggered, this, [this] { newDocument(); });
     auto* open = new QAction(QStringLiteral("Открыть"), this); open->setShortcut(QKeySequence::Open); addAction(open);
     connect(open, &QAction::triggered, this, [this] { chooseOpen(); });
-    auto* saveAction = new QAction(QStringLiteral("Сохранить"), this); saveAction->setShortcut(QKeySequence::Save); addAction(saveAction);
+    auto* saveAction = new QAction(QStringLiteral("Сохранить"), this); saveAction->setObjectName(QStringLiteral("saveAction"));
+    saveAction->setShortcut(QKeySequence::Save); addAction(saveAction);
     connect(saveAction, &QAction::triggered, this, [this] { save(); });
     undoAction_ = new QAction(QStringLiteral("Отменить"), this); undoAction_->setObjectName(QStringLiteral("undoAction"));
     undoAction_->setShortcut(QKeySequence::Undo); undoAction_->setToolTip(QStringLiteral("Отменить · Ctrl+Z")); addAction(undoAction_);
     redoAction_ = new QAction(QStringLiteral("Повторить"), this); redoAction_->setObjectName(QStringLiteral("redoAction"));
     redoAction_->setShortcut(QKeySequence::Redo); redoAction_->setToolTip(QStringLiteral("Повторить · Ctrl+Y")); addAction(redoAction_);
     connect(undoAction_, &QAction::triggered, this, [this] {
-        if (workspacePreferences_.editorLayout != EditorLayout::Single && code_->hasFocus()) code_->undo();
+        if (code_->hasFocus()) code_->undo();
         else if (!codePending_) undo_->undo();
     });
     connect(redoAction_, &QAction::triggered, this, [this] {
-        if (workspacePreferences_.editorLayout != EditorLayout::Single && code_->hasFocus()) code_->redo();
+        if (code_->hasFocus()) code_->redo();
         else if (!codePending_) undo_->redo();
     });
     connect(undo_, &QUndoStack::canUndoChanged, this, &MainWindow::updateHistoryActions);
     connect(undo_, &QUndoStack::canRedoChanged, this, &MainWindow::updateHistoryActions);
-    auto* valuesAction = new QAction(QStringLiteral("Значения…"), this); valuesAction->setObjectName(QStringLiteral("placeholderValuesAction"));
+    auto* valuesAction = new QAction(QStringLiteral("Значения плейсхолдеров…"), this); valuesAction->setObjectName(QStringLiteral("placeholderValuesAction"));
     connect(valuesAction, &QAction::triggered, this, [this] { showPlaceholderValues(); });
     previewAction_ = new QAction(QStringLiteral("Превью"), this); previewAction_->setObjectName(QStringLiteral("previewAction"));
     previewAction_->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+P"))); addAction(previewAction_);
@@ -494,7 +558,13 @@ void MainWindow::buildUi() {
     auto* badge = new ObjectBadge(QStringLiteral("ZPL"), title); badge->setProperty("outline", true); badge->setAlignment(Qt::AlignCenter); badge->setFixedSize(24, 22);
     auto badgeFont = badge->font(); badgeFont.setPixelSize(11); badgeFont.setBold(true); badge->setFont(badgeFont);
     badge->setForegroundRole(QPalette::Link); titleRow->addWidget(badge);
-    titleRow->addWidget(heading(QStringLiteral("QtZpl Designer"), title)); titleRow->addSpacing(11);
+    auto* brand = heading(applicationTitle(), title); brand->setObjectName(QStringLiteral("applicationBrand"));
+    titleRow->addWidget(brand);
+    titleRow->addSpacing(15); // Together with the row's 9 px spacing: 24 px after Designer.
+    documentCommandPanel_ = new QToolBar(title);
+    documentCommandPanel_->setObjectName(QStringLiteral("documentCommandPanel"));
+    titleRow->addWidget(documentCommandPanel_);
+    titleRow->addSpacing(11);
     documentName_ = caption(QString(), title, 11); titleRow->addWidget(documentName_); titleRow->addStretch();
     auto addTool = [](QHBoxLayout* row, QAction* action, bool compact = false, bool flat = false) {
         auto* button = new QToolButton(row->parentWidget()); button->setDefaultAction(action);
@@ -511,16 +581,16 @@ void MainWindow::buildUi() {
     fileButton_ = new QToolButton(formatBar); fileButton_->setObjectName(QStringLiteral("fileMenuButton")); fileButton_->setText(QStringLiteral("Файл"));
     fileButton_->setProperty("flat", true); fileButton_->setPopupMode(QToolButton::InstantPopup); commandRow->addWidget(fileButton_);
     fileButton_->setMinimumWidth(60);
-    auto* undoTool = addTool(commandRow, undoAction_, false, true); undoTool->setFixedWidth(29); undoTool->setText(QStringLiteral("↶"));
-    auto* redoTool = addTool(commandRow, redoAction_, false, true); redoTool->setFixedWidth(29); redoTool->setText(QStringLiteral("↷"));
-    connect(undoAction_, &QAction::changed, undoTool, [undoTool] { undoTool->setText(QStringLiteral("↶")); });
-    connect(redoAction_, &QAction::changed, redoTool, [redoTool] { redoTool->setText(QStringLiteral("↷")); });
     auto* divider = new QFrame(formatBar); divider->setFrameShape(QFrame::VLine); divider->setFixedHeight(22); commandRow->addWidget(divider);
     auto* viewTabs = new QTabBar(formatBar); viewTabs->setObjectName(QStringLiteral("workspaceViewTabs")); viewTabs->setDrawBase(false);
     viewTabs->setExpanding(false); viewTabs->setFixedHeight(37);
     viewTabs->addTab(QStringLiteral("Дизайн")); viewTabs->addTab(QStringLiteral("Код ZPL")); viewTabs->addTab(QStringLiteral("Превью")); commandRow->addWidget(viewTabs);
-    commandRow->addStretch();
-    dimensions_ = caption(QString(), formatBar, 11); commandRow->addWidget(dimensions_);
+    commandRow->addSpacing(12);
+    editCommandPanel_ = new QToolBar(formatBar);
+    editCommandPanel_->setObjectName(QStringLiteral("editCommandPanel"));
+    commandRow->addWidget(editCommandPanel_, 1);
+    dimensions_ = caption(QString(), this, 11);
+    statusBar()->addPermanentWidget(dimensions_);
     addTool(commandRow, layersAction_, true);
     auto* labelSetup = new QPushButton(QStringLiteral("Этикетка"), formatBar); labelSetup->setObjectName(QStringLiteral("labelSetup")); labelSetup->setProperty("compact", true);
     commandRow->addWidget(labelSetup); connect(labelSetup, &QPushButton::clicked, this, [this] {
@@ -599,6 +669,32 @@ void MainWindow::buildUi() {
         workspacePreferences_.codeOnLeft = !workspacePreferences_.codeOnLeft;
         workspacePreferences_.editorSizes = {workspacePreferences_.editorSizes[1], workspacePreferences_.editorSizes[0]};
         setEditorLayout(workspacePreferences_.editorLayout);
+        persistWorkspace();
+    });
+    syncEditorSelection_ = new QAction(QIcon(new SelectionSyncIconEngine), QStringLiteral("Связать выделение ZPL и дизайна"), this);
+    syncEditorSelection_->setObjectName(QStringLiteral("syncEditorSelection"));
+    syncEditorSelection_->setCheckable(true);
+    syncEditorSelection_->setChecked(workspacePreferences_.selectionSync);
+    auto* syncButton = addTool(canvasHeaderRow, syncEditorSelection_, true);
+    syncButton->setObjectName(QStringLiteral("sourceSelectionSyncButton"));
+    syncButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    syncButton->setIconSize(QSize(18, 18));
+    syncButton->setFixedSize(28, 28);
+    syncButton->setFocusPolicy(Qt::NoFocus);
+    syncButton->setAccessibleName(syncEditorSelection_->text());
+    const auto updateSelectionToolTip = [this] {
+        syncEditorSelection_->setToolTip(workspacePreferences_.selectionSync
+            ? QStringLiteral("Связь выделения ZPL ↔ дизайн включена. Нажмите, чтобы отключить.")
+            : QStringLiteral("Связь выделения ZPL ↔ дизайн выключена. Нажмите, чтобы включить."));
+    };
+    updateSelectionToolTip();
+    connect(syncEditorSelection_, &QAction::toggled, this, [this, updateSelectionToolTip](bool enabled) {
+        workspacePreferences_.selectionSync = enabled;
+        sourceSelectionActive_ = false;
+        sourceCaretActive_ = false;
+        updateSelectionToolTip();
+        if (enabled && code_->hasFocus()) syncSourceSelection(true);
+        syncDesignSelection();
         persistWorkspace();
     });
     canvasHeaderRow->addStretch();
@@ -708,7 +804,7 @@ void MainWindow::buildUi() {
     inspectorCard_ = new WorkspaceSurface(center, false, true); inspectorCard_->setObjectName(QStringLiteral("focusInspectorCard"));
     auto* cardLayout = new QVBoxLayout(inspectorCard_); cardLayout->setContentsMargins(1, 1, 1, 1);
     inspectorCard_->hide();
-    inspectorTabs_ = new QTabWidget(inspectorSlot_); inspectorTabs_->setMinimumWidth(0); inspectorSlotLayout->addWidget(inspectorTabs_);
+    inspectorTabs_ = new InspectorTabs(inspectorSlot_); inspectorTabs_->setMinimumWidth(0); inspectorSlotLayout->addWidget(inspectorTabs_);
     inspectorTabs_->setObjectName(QStringLiteral("inspectorTabs"));
     inspectorTabs_->tabBar()->setExpanding(false); inspectorTabs_->tabBar()->setProperty("compact", true);
     auto inspectorFont = inspectorTabs_->tabBar()->font(); inspectorFont.setPixelSize(11); inspectorTabs_->tabBar()->setFont(inspectorFont);
@@ -775,7 +871,7 @@ void MainWindow::buildUi() {
     gs1_->setObjectName(QStringLiteral("dataMatrixGs1")); primaryRow(gs1_);
     gs1Builder_ = new QPushButton(QStringLiteral("Мастер GS1…"), properties);
     gs1Builder_->setObjectName(QStringLiteral("gs1Builder")); primaryRow(gs1Builder_);
-    placeholderValues_ = new QPushButton(QStringLiteral("Значения…"), properties);
+    placeholderValues_ = new QPushButton(QStringLiteral("Значения плейсхолдеров…"), properties);
     placeholderValues_->setObjectName(QStringLiteral("placeholderValues"));
     placeholderValues_->setToolTip(QStringLiteral("Значения полей {{01}}, {{21}} и параметров [[имя]] для превью и заполненного ZPL"));
     primaryRow(placeholderValues_);
@@ -884,7 +980,7 @@ void MainWindow::buildUi() {
             commitDocument(std::move(next), QStringLiteral("Общие свойства выделения"));
     });
     auto* actions = new QHBoxLayout; actions->setContentsMargins(13, 12, 13, 12);
-    auto* duplicate = new QPushButton(QStringLiteral("Дубликат"), properties);
+    auto* duplicate = new QPushButton(QStringLiteral("Дублировать"), properties);
     auto* remove = new QPushButton(QStringLiteral("Удалить"), properties); actions->addWidget(duplicate); actions->addWidget(remove);
     propertiesLayout->addLayout(actions); propertiesLayout->addStretch(); scroll->setWidget(properties);
     inspectorTabs_->addTab(scroll, QStringLiteral("Объект"));
@@ -983,7 +1079,14 @@ void MainWindow::buildUi() {
         session_->setLayoutSettings(std::move(settings), QStringLiteral("Изменить направляющие"));
     });
     connect(canvas_, &LabelCanvas::zoomChanged, this, [this](int zoom) { zoomLabel_->setText(QStringLiteral("%1%").arg(zoom)); });
-    connect(canvas_, &LabelCanvas::selectionSetChanged, this, [this] { syncSelection(); });
+    connect(canvas_, &LabelCanvas::selectionSetChanged, this, [this] {
+        if (!syncingSourceSelection_) {
+            sourceSelectionActive_ = false;
+            sourceCaretActive_ = false;
+        }
+        syncSelection();
+        if (!syncingSourceSelection_) syncDesignSelection(true);
+    });
     connect(canvas_, &LabelCanvas::editingStarted, this, [this] {
         if (previewTimer_->isActive()) refreshPreview();
     });
@@ -1074,7 +1177,8 @@ void MainWindow::buildUi() {
     connect(dpi_, &QComboBox::currentIndexChanged, this, labelChanged);
     connect(code_, &QPlainTextEdit::textChanged, this, [this] {
         if (updating_ || code_->isReadOnly()) return;
-        codePending_ = code_->toPlainText() != toZpl(session_->document());
+        codePending_ = code_->toPlainText() != mappedSource_;
+        mappedSourceRevision_ = codePending_ ? -1 : code_->document()->revision();
         sourceTimer_->stop();
         if (codePending_) session_->setPendingSource(code_->toPlainText());
         else session_->clearPendingSource();
@@ -1094,11 +1198,22 @@ void MainWindow::buildUi() {
                 QStringLiteral("Код ZPL изменён. Откройте вкладку «Превью», чтобы посмотреть результат."));
             if (live) sourceTimer_->start();
         } else { updateEditorPresentation(); refreshPreview(); }
+        syncSourceSelection(code_->hasFocus());
+        syncDesignSelection();
     });
+    connect(code_, &QPlainTextEdit::selectionChanged, this, [this] {
+        syncSourceSelection(code_->hasFocus());
+    });
+    connect(code_, &QPlainTextEdit::cursorPositionChanged, this, [this] {
+        if (code_->hasFocus()) syncSourceSelection(true);
+    });
+    connect(static_cast<ZplSourceEditor*>(code_), &ZplSourceEditor::sourceCursorActivated,
+            this, [this] { syncSourceSelection(true); });
     connect(editorTabs_, &QTabWidget::currentChanged, this, [this, zoomControls](int index) {
         zoomControls->setVisible(index == 0);
-        focusBar_->setVisible(workspacePreferences_.focus && index == 0 && workspacePreferences_.editorLayout == EditorLayout::Single);
-        positionWorkspaceOverlays();
+        if (!applyingEditorLayout_ && workspacePreferences_.focus
+            && workspacePreferences_.editorLayout == EditorLayout::Single)
+            applyWorkspaceLayout();
         if (updating_ || applyingEditorLayout_) return;
         if (workspacePreferences_.editorLayout != EditorLayout::Single) {
             if (index == 1) {
@@ -1115,6 +1230,7 @@ void MainWindow::buildUi() {
         }
         if (editorTabs_->currentWidget() == previewWidget_) showPreview();
         else if (index == 0 && codePending_ && !applySource()) editorTabs_->setCurrentIndex(1);
+        if (index == 1) syncDesignSelection(true);
     });
 }
 
@@ -1150,6 +1266,7 @@ void MainWindow::setEditorLayout(EditorLayout layout) {
     updateEditorPresentation();
     updateHistoryActions();
     applyWorkspaceLayout();
+    syncDesignSelection(!sourceFocused);
 }
 
 void MainWindow::updateEditorPresentation() {
@@ -1202,13 +1319,16 @@ void MainWindow::applyWorkspaceLayout() {
     balanceAction_->setChecked(!focus); focusAction_->setChecked(focus);
     layersAction_->setChecked(layersVisible); propertiesAction_->setChecked(propertiesVisible);
     layersPanel_->setVisible(layersVisible);
-    const bool floating = focus && workspacePreferences_.editorLayout == EditorLayout::Single;
-    if (floating) inspectorCard_->layout()->addWidget(inspectorTabs_);
-    else inspectorSlot_->layout()->addWidget(inspectorTabs_);
+    const bool floating = focus && workspacePreferences_.editorLayout == EditorLayout::Single
+        && editorTabs_->currentIndex() == 0;
+    QWidget* inspectorHost = floating ? inspectorCard_ : inspectorSlot_;
+    if (inspectorTabs_->parentWidget() != inspectorHost)
+        inspectorHost->layout()->addWidget(inspectorTabs_);
+    static_cast<InspectorTabs*>(inspectorTabs_)->setRoundedCorners(floating);
     inspectorSlot_->setVisible(!floating && propertiesVisible);
     inspectorCard_->setVisible(floating && propertiesVisible);
     inspectorTabs_->setVisible(propertiesVisible);
-    focusBar_->setVisible(floating && editorTabs_->currentIndex() == 0);
+    focusBar_->setVisible(floating);
     workspaceSplitter_->setSizes(focus ? workspacePreferences_.focusSizes : workspacePreferences_.balanceSizes);
     canvas_->setWorkspaceInsets(QMargins(35, 50, floating && propertiesVisible ? 274 : 35, floating ? 80 : 45));
     applyingWorkspace_ = false;
@@ -1267,7 +1387,7 @@ void MainWindow::buildMenus() {
     file->addAction(QStringLiteral("Восстановить черновик…"), this, [this] { showRecoveryDialog(); })
         ->setObjectName(QStringLiteral("recoverDraft"));
     file->addAction(QStringLiteral("Шаблон из INI…"), this, [this] { choosePreset(); });
-    file->addAction(QStringLiteral("Сохранить"), this, [this] { save(); });
+    file->addAction(findChild<QAction*>(QStringLiteral("saveAction")));
     file->addAction(QStringLiteral("Сохранить как…"), QKeySequence::SaveAs, this, [this] { save(true); });
     file->addSeparator();
     file->addAction(QStringLiteral("Импортировать изображение…"), this, [this] { chooseImage(); });
@@ -1357,6 +1477,8 @@ void MainWindow::buildMenus() {
     view->addAction(layersAction_); view->addAction(propertiesAction_); view->addAction(diagnosticsAction_);
     view->addSeparator(); view->addAction(darkThemeAction_);
     auto* commandMenu = new QMenu(fileButton_);
+    commandMenu->setObjectName(QStringLiteral("commandMenu"));
+    commandMenu->addSection(QStringLiteral("Файл · все команды"));
     commandMenu->addActions(file->actions()); commandMenu->addSeparator(); commandMenu->addMenu(edit); commandMenu->addMenu(layout); commandMenu->addMenu(view);
     commandMenu->addAction(findChild<QAction*>(QStringLiteral("placeholderValuesAction")));
     fileButton_->setMenu(commandMenu); menuBar()->hide();
@@ -1374,11 +1496,129 @@ void MainWindow::buildMenus() {
             "Одна визуально редактируемая этикетка. Печать ZPL или растра через Windows и по IP.")
             .arg(QCoreApplication::applicationVersion()));
     });
+    buildCommandPanels(view);
+}
+
+void MainWindow::buildCommandPanels(QMenu* viewMenu) {
+    struct Command { const char* name; CommandIcon icon; const char* shortcut = nullptr; };
+    using Group = QList<Command>;
+    const auto configure = [this, viewMenu](QToolBar* panel, const QString& menuName,
+                                          const QString& title, const QList<Group>& groups) {
+        panel->setProperty("commandPanel", true);
+        panel->setMovable(false);
+        panel->setFloatable(false);
+        panel->setIconSize(QSize(16, 16));
+        panel->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        panel->setFixedHeight(30);
+        panel->setMinimumWidth(0);
+        panel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        panel->setAccessibleName(title);
+        auto* menu = new QMenu(title, this);
+        menu->setObjectName(menuName);
+        viewMenu->addMenu(menu);
+        QList<QList<QAction*>> visibleGroups;
+        QList<QAction*> separators;
+        QList<QAction*> switches;
+        for (const auto& group : groups) {
+            if (!visibleGroups.isEmpty()) {
+                separators.append(panel->addSeparator());
+                menu->addSeparator();
+            }
+            QList<QAction*> proxies;
+            for (const auto& command : group) {
+                const auto name = QString::fromLatin1(command.name);
+                auto* source = findChild<QAction*>(name);
+                Q_ASSERT(source);
+                source->setIcon(commandIcon(command.icon));
+                const QString shortcut = command.shortcut ? QString::fromLatin1(command.shortcut)
+                    : source->shortcut().toString(QKeySequence::NativeText);
+                const auto tooltip = source->text() + (shortcut.isEmpty() ? QString{} : QStringLiteral(" · ") + shortcut);
+                source->setToolTip(tooltip);
+                // Independent presentation actions keep hidden commands in their
+                // menus and preserve the original shortcuts and focus context.
+                auto* proxy = new QAction(panel);
+                proxy->setObjectName(name + QStringLiteral("Toolbar"));
+                const auto sync = [source, proxy] {
+                    proxy->setText(source->text());
+                    proxy->setIcon(source->icon());
+                    proxy->setToolTip(source->toolTip());
+                    proxy->setEnabled(source->isEnabled());
+                    proxy->setCheckable(source->isCheckable());
+                    proxy->setChecked(source->isChecked());
+                };
+                sync();
+                connect(source, &QAction::changed, proxy, sync);
+                connect(proxy, &QAction::triggered, source, &QAction::trigger);
+                panel->addAction(proxy);
+                auto* button = qobject_cast<QToolButton*>(panel->widgetForAction(proxy));
+                Q_ASSERT(button);
+                button->setObjectName(name + QStringLiteral("ToolButton"));
+                button->setProperty("commandButton", true);
+                button->setProperty("compact", true);
+                button->setProperty("flat", true);
+                if (command.icon == CommandIcon::Save) button->setProperty("designerControl", "accent");
+                button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+                button->setFixedSize(26, 28);
+                button->setFocusPolicy(Qt::NoFocus);
+                button->setAccessibleName(source->text());
+                const bool visible = !workspacePreferences_.hiddenToolbarCommands.contains(name);
+                proxy->setVisible(visible);
+                auto* toggle = menu->addAction(source->text());
+                toggle->setObjectName(QStringLiteral("visibility_") + name);
+                toggle->setCheckable(true);
+                toggle->setChecked(visible);
+                connect(toggle, &QAction::toggled, this, [this, proxy, name](bool show) {
+                    proxy->setVisible(show);
+                    workspacePreferences_.hiddenToolbarCommands.removeAll(name);
+                    if (!show) workspacePreferences_.hiddenToolbarCommands.append(name);
+                    persistWorkspace();
+                });
+                proxies.append(proxy);
+                switches.append(toggle);
+            }
+            visibleGroups.append(proxies);
+        }
+        const auto updateSeparators = [visibleGroups, separators] {
+            bool preceding = false;
+            for (qsizetype i = 0; i < visibleGroups.size(); ++i) {
+                const bool visible = std::ranges::any_of(visibleGroups[i], [](const QAction* action) { return action->isVisible(); });
+                if (i > 0) separators[i - 1]->setVisible(preceding && visible);
+                preceding |= visible;
+            }
+        };
+        for (auto* toggle : switches) connect(toggle, &QAction::toggled, panel, updateSeparators);
+        updateSeparators();
+        const auto contextMenu = [menu](QWidget* widget) {
+            widget->setContextMenuPolicy(Qt::CustomContextMenu);
+            connect(widget, &QWidget::customContextMenuRequested, menu, [widget, menu](const QPoint& point) {
+                menu->popup(widget->mapToGlobal(point));
+            });
+        };
+        contextMenu(panel);
+        contextMenu(panel->parentWidget());
+        for (auto* button : panel->findChildren<QToolButton*>()) contextMenu(button);
+    };
+    configure(documentCommandPanel_, QStringLiteral("documentCommandVisibilityMenu"), QStringLiteral("Панель 1 · файл и история"), {
+        {{"saveAction", CommandIcon::Save}},
+        {{"undoAction", CommandIcon::Undo}, {"redoAction", CommandIcon::Redo}},
+        {{"printAction", CommandIcon::Print}}
+    });
+    configure(editCommandPanel_, QStringLiteral("editCommandVisibilityMenu"), QStringLiteral("Панель 2 · объекты"), {
+        {{"alignLeft", CommandIcon::AlignLeft}, {"alignHorizontalCenter", CommandIcon::AlignHCenter},
+         {"alignRight", CommandIcon::AlignRight}, {"alignTop", CommandIcon::AlignTop},
+         {"alignVerticalCenter", CommandIcon::AlignVCenter}, {"alignBottom", CommandIcon::AlignBottom},
+         {"distributeHorizontal", CommandIcon::DistributeHorizontal}, {"distributeVertical", CommandIcon::DistributeVertical}},
+        {{"groupElements", CommandIcon::Group}, {"ungroupElements", CommandIcon::Ungroup}},
+        {{"cutElements", CommandIcon::Cut}, {"copyElements", CommandIcon::Copy}, {"pasteElements", CommandIcon::Paste},
+         {"duplicateElements", CommandIcon::Duplicate, "Ctrl+D"}, {"deleteElements", CommandIcon::Delete, "Delete"}}
+    });
 }
 
 const DesignDocument& MainWindow::document() const { return session_->document(); }
 
 void MainWindow::setDocument(const DesignDocument& document) {
+    sourceSelectionActive_ = false;
+    sourceCaretActive_ = false;
     canvas_->setSelectedIndex(-1);
     selected_ = -1; codePending_ = false; session_->reset(document); refreshPreview();
 }
@@ -1402,23 +1642,37 @@ void MainWindow::restoreDocument(const DesignDocument& document) {
     code_->setReadOnly(!sourceValid && !codePending_);
     code_->setPlaceholderText(sourceValid ? QString{} : QStringLiteral(
         "ZPL пока недоступен: %1\nИсправьте данные во вкладке «Дизайн». Все элементы сохранены в макете.").arg(sourceValid.error()));
-    const auto source = codePending_ ? session_->pendingSource() : sourceValid ? toZpl(document) : QString{};
+    auto source = codePending_ ? session_->pendingSource() : sourceValid ? toZpl(document) : QString{};
+    source.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    source.replace(u'\r', u'\n');
     // Applying live source must not reset the editor's cursor, scroll or undo.
     // Design changes replace the generated text but keep the reader's position.
     if (code_->toPlainText() != source) {
-        const auto oldCursor = code_->textCursor();
+        // A design edit can move field offsets. Keep the selected objects,
+        // rather than interpreting the old caret against newly generated ZPL.
+        sourceSelectionActive_ = false;
+        sourceCaretActive_ = false;
+        const int oldPosition = code_->textCursor().position();
+        const int oldAnchor = code_->textCursor().anchor();
         const int vertical = code_->verticalScrollBar()->value();
         const int horizontal = code_->horizontalScrollBar()->value();
         code_->setPlainText(source);
         auto cursor = code_->textCursor();
-        cursor.setPosition(std::min(oldCursor.anchor(), static_cast<int>(source.size())));
-        cursor.setPosition(std::min(oldCursor.position(), static_cast<int>(source.size())), QTextCursor::KeepAnchor);
+        cursor.setPosition(std::min(oldAnchor, static_cast<int>(source.size())));
+        cursor.setPosition(std::min(oldPosition, static_cast<int>(source.size())), QTextCursor::KeepAnchor);
         code_->setTextCursor(cursor);
         code_->verticalScrollBar()->setValue(vertical);
         code_->horizontalScrollBar()->setValue(horizontal);
     }
+    mappedSource_ = sourceValid ? toZpl(document) : QString{};
+    mappedSource_.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    mappedSource_.replace(u'\r', u'\n');
+    mappedSourceRevision_ = codePending_ ? -1 : code_->document()->revision();
+    sourceElementRanges_ = sourceElementRanges(document, mappedSource_);
     updating_ = false;
     refreshLayers(); refreshProperties(); updateTitle(); updateHistoryActions(); previewTimer_->start();
+    if (sourceSelectionActive_) syncSourceSelection(sourceCaretActive_);
+    syncDesignSelection();
     if (codePending_) {
         const bool live = workspacePreferences_.editorLayout != EditorLayout::Single;
         sourceStatus_->setText(live ? QStringLiteral("Обновление после ввода…")
@@ -1455,7 +1709,7 @@ void MainWindow::refreshPreview() {
     if (codePending_) return;
     refreshCleanPreview();
     if (!preview_.elementErrors.isEmpty()) setNotice(QStringLiteral(
-        "Заполните «Значения…» или исправьте данные отмеченных штрихкодов. Печатное превью и PNG пока недоступны."));
+        "Заполните «Значения плейсхолдеров…» или исправьте данные отмеченных штрихкодов. Печатное превью и PNG пока недоступны."));
     else if (!previewError_.isEmpty()) setNotice(QStringLiteral("Не удалось построить превью: %1").arg(previewError_));
     else if (!session_->document().visualEditable) setNotice(QStringLiteral("Режим исходного ZPL: команды сохранены. Для правок откройте вкладку «Код ZPL»."));
     else if (!notes.isEmpty()) setNotice(QStringLiteral("Превью содержит замечания (%1). Откройте панель «Проверка».").arg(notes.size()));
@@ -1522,7 +1776,7 @@ void MainWindow::resizeElement(int index, QSize size) {
     if (codePending_ || !session_->document().visualEditable || index < 0
         || index >= session_->document().elements.size()) return;
     if (preview_.elementErrors.contains(index)) {
-        setNotice(QStringLiteral("Для изменения размера штрихкода сначала заполните его данные через «Значения…»."));
+        setNotice(QStringLiteral("Для изменения размера штрихкода сначала заполните его данные через «Значения плейсхолдеров…»."));
         refreshProperties();
         return;
     }
@@ -1573,6 +1827,86 @@ void MainWindow::syncSelection() {
         item->setSelected(indices.contains(item->data(Qt::UserRole).toInt()));
     }
     refreshProperties();
+    syncDesignSelection();
+}
+
+bool MainWindow::sourceMatchesDocument() {
+    if (codePending_ || !session_->document().visualEditable) return false;
+    const int revision = code_->document()->revision();
+    if (revision != mappedSourceRevision_) {
+        // Syntax highlighting also advances QTextDocument's revision. A palette
+        // change must not invalidate the mapping when the source is identical.
+        if (code_->toPlainText() != mappedSource_) return false;
+        mappedSourceRevision_ = revision;
+    }
+    return true;
+}
+
+void MainWindow::syncDesignSelection(bool reveal) {
+    QList<QPair<int, int>> ranges;
+    if (workspacePreferences_.selectionSync && sourceMatchesDocument()) {
+        const auto indices = canvas_->selectedIndices();
+        for (const auto& range : sourceElementRanges_) {
+            if (indices.contains(range.elementIndex))
+                ranges.append({static_cast<int>(range.start), static_cast<int>(range.length)});
+        }
+    }
+    static_cast<ZplSourceEditor*>(code_)->setObjectHighlights(ranges, reveal && code_->isVisible());
+}
+
+void MainWindow::syncSourceSelection(bool allowCaret) {
+    if (updating_) return;
+    if (!workspacePreferences_.selectionSync) {
+        sourceSelectionActive_ = false;
+        sourceCaretActive_ = false;
+        return;
+    }
+    const QScopedValueRollback selectionGuard(syncingSourceSelection_, true);
+    const auto cursor = code_->textCursor();
+    const bool selectCaret = allowCaret && !cursor.hasSelection();
+    // Wait for this exact source to be applied. The last valid design keeps its
+    // own selection while pending or unsupported code is being inspected.
+    if (!sourceMatchesDocument()) {
+        sourceSelectionActive_ = cursor.hasSelection() || selectCaret;
+        sourceCaretActive_ = selectCaret;
+        return;
+    }
+    if (!cursor.hasSelection() && !selectCaret) {
+        if (sourceSelectionActive_) {
+            sourceSelectionActive_ = false;
+            sourceCaretActive_ = false;
+            canvas_->setSelectedIndices({});
+            if (canvas_->signalsBlocked()) syncSelection();
+        }
+        return;
+    }
+    sourceSelectionActive_ = true;
+    sourceCaretActive_ = selectCaret;
+    QList<int> indices;
+    if (selectCaret) {
+        // Prefer the exact field when several objects share a physical line.
+        for (const auto& range : sourceElementRanges_) {
+            if (cursor.position() >= range.start && cursor.position() < range.start + range.length) {
+                indices.append(range.elementIndex);
+                break;
+            }
+        }
+    }
+    if (!selectCaret || indices.isEmpty()) {
+        // A click in trailing whitespace still activates the object's line.
+        // Range selections retain their original half-open intersection rules.
+        const auto block = cursor.block();
+        const auto start = selectCaret ? block.position() : cursor.selectionStart();
+        const auto end = selectCaret ? block.position() + block.length() - 1 : cursor.selectionEnd();
+        for (const auto& range : sourceElementRanges_) {
+            if (range.start < end && range.start + range.length > start
+                && !indices.contains(range.elementIndex))
+                indices.append(range.elementIndex);
+        }
+    }
+    canvas_->setSelectedIndices(indices);
+    // restoreDocument can temporarily block canvas signals while applying ZPL.
+    if (canvas_->signalsBlocked()) syncSelection();
 }
 
 void MainWindow::refreshLayers() {
@@ -1683,7 +2017,7 @@ void MainWindow::refreshProperties() {
             if (!names) gs1Status_->setText(names.error());
             else if (!gs1Data) gs1Status_->setText(QStringLiteral("GS1 включён. %1\nИсправьте данные или используйте «Мастер GS1…».").arg(gs1Data.error()));
             else if (preview_.elementErrors.contains(selected_)) gs1Status_->setText(preview_.elementErrors.value(selected_));
-            else if (!names->isEmpty()) gs1Status_->setText(QStringLiteral("Плейсхолдеры: %1. Задайте «Значения…» для превью. Сохранение оставляет шаблон.").arg(names->join(QStringLiteral(", "))));
+            else if (!names->isEmpty()) gs1Status_->setText(QStringLiteral("Плейсхолдеры: %1. Задайте «Значения плейсхолдеров…» для превью. Сохранение оставляет шаблон.").arg(names->join(QStringLiteral(", "))));
             else gs1Status_->setText(e.gs1 ? QStringLiteral("Поля GS1 корректны. FNC1 и разделители добавляются автоматически.")
                                           : QStringLiteral("В данных можно использовать {{имя}} и [[имя]]."));
         }
@@ -2284,11 +2618,11 @@ void MainWindow::exportPng() {
 }
 void MainWindow::updateTitle() {
     const QString name = session_->filePath().isEmpty() ? QStringLiteral("Новая этикетка") : QFileInfo(session_->filePath()).fileName();
-    setWindowTitle(QStringLiteral("%1%2 — QtZpl Designer").arg(name, session_->modified() ? QStringLiteral(" *") : QString()));
+    setWindowTitle(QStringLiteral("%1%2 — %3").arg(name, session_->modified() ? QStringLiteral(" *") : QString(), applicationTitle()));
     if (documentName_) documentName_->setText(name + (session_->modified() ? QStringLiteral(" *") : QString()));
 }
 void MainWindow::updateHistoryActions() {
-    if (code_ && workspacePreferences_.editorLayout != EditorLayout::Single && code_->hasFocus()) {
+    if (code_ && code_->hasFocus()) {
         undoAction_->setEnabled(code_->document()->isUndoAvailable());
         redoAction_->setEnabled(code_->document()->isRedoAvailable());
         return;
@@ -2299,6 +2633,7 @@ void MainWindow::updateHistoryActions() {
 void MainWindow::setNotice(const QString& text) { notice_->setText(text); notice_->setToolTip(text); }
 void MainWindow::closeEvent(QCloseEvent* event) {
     if (maybeSave()) {
+        workspacePreferences_.windowGeometry = saveGeometry();
         rememberWorkspaceSizes(); persistWorkspace();
         session_->discardRecovery(); event->accept();
     } else event->ignore();

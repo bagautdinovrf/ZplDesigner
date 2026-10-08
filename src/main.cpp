@@ -1,5 +1,6 @@
 #include "main_window.hpp"
 #include "app_version.hpp"
+#include "ui_translations.hpp"
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
@@ -7,6 +8,10 @@
 
 int main(int argc, char* argv[]) {
     QApplication application(argc, argv);
+    if (!Designer::installRussianUiTranslations()) {
+        qCritical("Не удалось загрузить встроенный русский перевод интерфейса.");
+        return 1;
+    }
     application.setApplicationName(QStringLiteral("QtZpl Designer"));
     application.setOrganizationName(QStringLiteral("QtZpl"));
     application.setApplicationVersion(QString::fromLatin1(Designer::applicationVersion));

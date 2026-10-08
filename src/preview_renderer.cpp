@@ -87,7 +87,7 @@ std::expected<Preview, QString> renderPreviewImpl(const DesignDocument& template
         }
     }
     const auto resolved = resolveDataMatrixValues(templateDocument, editor);
-    if (!resolved) return std::unexpected(resolved.error() + u" Откройте «Значения…» для заполнения переменных этикетки."_s);
+    if (!resolved) return std::unexpected(resolved.error() + u" Откройте «Значения плейсхолдеров…» для заполнения переменных этикетки."_s);
     const auto& document = *resolved;
     if (!safeSize(document.width, document.height))
         return std::unexpected(u"Размер этикетки превышает 4096 × 4096 точек."_s);
@@ -112,7 +112,7 @@ std::expected<Preview, QString> renderPreviewImpl(const DesignDocument& template
             if (!templateDocument.previewValues.contains(name)) missing.append(name);
         preview.diagnostics.append(missing.isEmpty()
             ? u"Превью использует значения плейсхолдеров текущей сессии: %1. Сохранение ZPL сохраняет шаблон."_s.arg(names->join(u", "_s))
-            : u"В тексте показаны незаполненные переменные: %1. Заполните «Значения…» для печати и чистого превью."_s.arg(missing.join(u", "_s)));
+            : u"В тексте показаны незаполненные переменные: %1. Заполните «Значения плейсхолдеров…» для печати и чистого превью."_s.arg(missing.join(u", "_s)));
     }
     for (const auto& diagnostic : rendered->diagnostics) {
         if (diagnostic.severity == QtZpl::Severity::Error)

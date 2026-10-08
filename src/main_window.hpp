@@ -3,6 +3,7 @@
 #include "design_document.hpp"
 #include "designer_theme.hpp"
 #include "workspace_preferences.hpp"
+#include "zpl_source_map.hpp"
 #include <QMainWindow>
 
 class QCheckBox;
@@ -11,6 +12,7 @@ class QCloseEvent;
 class QComboBox;
 class QLabel;
 class QListWidget;
+class QMenu;
 class QPlainTextEdit;
 class QPushButton;
 class QSpinBox;
@@ -18,6 +20,7 @@ class QSplitter;
 class QTabWidget;
 class QTimer;
 class QToolButton;
+class QToolBar;
 class QUndoStack;
 
 namespace Designer {
@@ -49,6 +52,7 @@ private:
     friend class DocumentSession;
     void buildUi();
     void buildMenus();
+    void buildCommandPanels(QMenu* viewMenu);
     void setEditorLayout(EditorLayout layout);
     void updateEditorPresentation();
     void applyLiveSource();
@@ -85,6 +89,9 @@ private:
     [[nodiscard]] QSize elementSize(int index) const;
     void selectElement(int index);
     void syncSelection();
+    void syncSourceSelection(bool allowCaret = false);
+    void syncDesignSelection(bool reveal = false);
+    bool sourceMatchesDocument();
     void showGs1Builder();
     bool showPlaceholderValues();
     void exportResolvedZpl();
@@ -117,6 +124,12 @@ private:
     int selected_ = -1;
     bool updating_ = false;
     bool codePending_ = false;
+    bool sourceSelectionActive_ = false;
+    bool sourceCaretActive_ = false;
+    bool syncingSourceSelection_ = false;
+    QString mappedSource_;
+    int mappedSourceRevision_ = -1;
+    QList<SourceElementRange> sourceElementRanges_;
     QUndoStack* undo_ = nullptr;
     QAction* undoAction_ = nullptr;
     QAction* redoAction_ = nullptr;
@@ -130,6 +143,7 @@ private:
     QWidget* sourceSlot_ = nullptr;
     QComboBox* editorLayout_ = nullptr;
     QAction* swapEditorSides_ = nullptr;
+    QAction* syncEditorSelection_ = nullptr;
     QLabel* sourceStatus_ = nullptr;
     bool applyingEditorLayout_ = false;
     QTabWidget* inspectorTabs_ = nullptr;
@@ -147,6 +161,8 @@ private:
     QLabel* canvasSelection_ = nullptr;
     QWidget* contentSection_ = nullptr;
     QToolButton* fileButton_ = nullptr;
+    QToolBar* documentCommandPanel_ = nullptr;
+    QToolBar* editCommandPanel_ = nullptr;
     QLabel* focusSummary_ = nullptr;
     QAction* balanceAction_ = nullptr;
     QAction* focusAction_ = nullptr;

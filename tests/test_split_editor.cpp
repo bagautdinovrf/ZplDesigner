@@ -13,15 +13,18 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QListWidget>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
+#include <QScrollBar>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTextCursor>
+#include <QToolButton>
 #include <QUuid>
 #include <QtTest>
 
@@ -32,6 +35,34 @@ using namespace Qt::StringLiterals;
 
 namespace {
 const QString initialSource = u"^XA\n^PW400\n^LL300\n^FO40,48^GB80,56,2^FS\n^XZ\n"_s;
+
+using SourceRanges = QList<QPair<int, int>>;
+
+SourceRanges objectHighlightRanges(const QPlainTextEdit* editor)
+{
+    SourceRanges ranges;
+    for (const auto& extra : editor->extraSelections()) {
+        if (extra.cursor.hasSelection())
+            ranges.append({extra.cursor.selectionStart(), extra.cursor.selectionEnd() - extra.cursor.selectionStart()});
+    }
+    return ranges;
+}
+
+QPair<int, int> fieldRange(const QString& source, const QString& origin)
+{
+    const int start = static_cast<int>(source.indexOf(origin));
+    const int end = start < 0 ? -1 : static_cast<int>(source.indexOf(u"^FS", start));
+    return {start, end < 0 ? 0 : end + 3 - start};
+}
+
+void clickSourcePosition(QPlainTextEdit* editor, qsizetype position)
+{
+    editor->horizontalScrollBar()->setValue(0);
+    QTextCursor target(editor->document());
+    target.setPosition(static_cast<int>(position));
+    QTest::mouseClick(editor->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      editor->cursorRect(target).center());
+}
 
 QColor previewColorAt(QGraphicsView* view, QPoint point)
 {
@@ -60,6 +91,22 @@ private slots:
     void openingProjectRestartsPendingLiveApply();
     void preferencesRestoreModeAndSides();
     void focusSplitKeepsPropertiesOutsideTheEditors();
+    void sourceSelectionHighlightsIntersectingObjects();
+    void sourceSelectionSurvivesLiveApply();
+    void sourceSelectionTracksGeneratedDesign();
+    void sourceSelectionAfterRevertingRestoredDraft();
+    void canvasAndLayersHighlightSeparateSourceFields();
+    void groupsAndTablesHighlightAllOwnedFields();
+    void selectionSyncToggleKeepsIndependentSelections();
+    void selectionSyncPreferenceSurvivesReopening();
+    void sourceHighlightsPreserveCursorThemeAndNativeUndo();
+    void sourceHighlightsClearPendingAndReturnAfterApply();
+    void sourceCaretClicksSelectExactFieldsAndRowFallbacks();
+    void sourceCaretKeyboardKeepsMultiRangeSelection();
+    void sourceCaretReclickSelectsAfterCanvasChanges();
+    void sourceCaretDoesNotSyncWhenDisabledOrUnfocused();
+    void sourceCaretWaitsForPendingSourceToApply();
+    void sourceCaretDoesNotRetargetAfterPropertyShortensText();
     void corruptedPreferencesUseSafeDefaults_data();
     void corruptedPreferencesUseSafeDefaults();
     void optionalSplitScreenshots();
@@ -542,6 +589,13 @@ void SplitEditorTests::optionalSplitScreenshots()
         QTest::qWait(450);
         if (canvas_->isVisible()) canvas_->fitLabel();
         QApplication::processEvents();
+        if (name.startsWith(u"focus-code-left-design-properties")) {
+            const SourceRanges expected{fieldRange(source, u"^FO44,44"_s)};
+            if (objectHighlightRanges(code_) != expected) {
+                qWarning() << "Selected object's source highlight disappeared after event processing";
+                return false;
+            }
+        }
         QJsonObject widgets;
         for (const auto* objectName : {"editorLayout", "editorSplitter", "sourcePage", "zplEditor",
                                       "labelCanvas", "previewWidget", "inspectorTabs"}) {
@@ -586,6 +640,585 @@ void SplitEditorTests::optionalSplitScreenshots()
     QVERIFY(output.write(QJsonDocument(metrics).toJson()) > 0);
     QCOMPARE(code_->toPlainText(), source);
     QCOMPARE(toZpl(window_->document()), source);
+}
+
+void SplitEditorTests::sourceSelectionHighlightsIntersectingObjects()
+{
+    const auto source = u"^XA\n^PW400\n^LL300\n^FXComment^FS\n"
+        "^FO20,20^GB30,20,2^FS^FO80,20^GB30,20,2^FS\n"
+        "^FO140,20\n^GB30,20,2\n^FS\n^XZ\n"_s;
+    const auto parsed = fromZpl(source);
+    QVERIFY(parsed && parsed->visualEditable);
+    QCOMPARE(parsed->elements.size(), 3);
+    window_->setDocument(*parsed);
+    layout_->setCurrentIndex(1);
+    QSignalSpy sourceChanges(code_, &QPlainTextEdit::textChanged);
+    QSignalSpy documentChanges(session_, &DocumentSession::documentChanged);
+    const auto select = [this](qsizetype start, qsizetype end) {
+        QTextCursor cursor(code_->document());
+        cursor.setPosition(static_cast<int>(start));
+        cursor.setPosition(static_cast<int>(end), QTextCursor::KeepAnchor);
+        code_->setTextCursor(cursor);
+    };
+    const auto first = source.indexOf(u"^FO20"_s);
+    const auto second = source.indexOf(u"^FO80"_s);
+    const auto third = source.indexOf(u"^FO140"_s);
+    select(first + 3, first + 5);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    select(first, third); // Endpoint at the next line does not include it.
+    QCOMPARE(canvas_->selectedIndices(), (QList<int>{0, 1}));
+    select(second, source.indexOf(u"^XZ"_s));
+    QCOMPARE(canvas_->selectedIndices(), (QList<int>{1, 2}));
+    select(third + 10, third + 14); // A command on a later line of the field.
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{2});
+    layout_->setCurrentIndex(0);
+    tabs_->setCurrentIndex(0);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{2});
+    tabs_->setCurrentIndex(1);
+    select(source.indexOf(u"^FX"_s), first);
+    QVERIFY(canvas_->selectedIndices().isEmpty());
+    select(first, second);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    // A programmatic, unfocused collapse retains the previous selection-only
+    // contract; actual clicks and keyboard caret movement are covered below.
+    // The canvas is hidden on the single source tab, so focus a visible control.
+    layout_->setFocus();
+    QTRY_VERIFY(layout_->hasFocus());
+    select(first, first);
+    QVERIFY(canvas_->selectedIndices().isEmpty());
+    QCOMPARE(sourceChanges.count(), 0);
+    QCOMPARE(documentChanges.count(), 0);
+    QCOMPARE(code_->toPlainText(), source);
+    QCOMPARE(toZpl(window_->document()), source);
+}
+
+void SplitEditorTests::sourceSelectionSurvivesLiveApply()
+{
+    layout_->setCurrentIndex(1);
+    auto cursor = code_->textCursor();
+    const int start = static_cast<int>(initialSource.indexOf(u"40,48"_s));
+    cursor.setPosition(start);
+    cursor.setPosition(start + 2, QTextCursor::KeepAnchor);
+    cursor.insertText(u"68"_s);
+    code_->setTextCursor(cursor);
+    QVERIFY(session_->hasPendingSource());
+    cursor.setPosition(start);
+    cursor.setPosition(start + 2, QTextCursor::KeepAnchor);
+    code_->setTextCursor(cursor);
+    QVERIFY(canvas_->selectedIndices().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(!session_->hasPendingSource(), 2500);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    QCOMPARE(window_->document().elements[0].x, 68);
+    QCOMPARE(code_->textCursor().selectionStart(), start);
+    QCOMPARE(code_->textCursor().selectionEnd(), start + 2);
+}
+
+void SplitEditorTests::sourceSelectionTracksGeneratedDesign()
+{
+    DesignDocument document;
+    document.elements = {makeElement(ElementType::Box, {20, 20}),
+                         makeElement(ElementType::Box, {180, 20})};
+    window_->setDocument(document);
+    layout_->setCurrentIndex(1);
+    const auto selectSecond = [this] {
+        const int start = static_cast<int>(code_->toPlainText().indexOf(u"^FO180,"_s));
+        QVERIFY(start >= 0);
+        QTextCursor cursor(code_->document());
+        cursor.setPosition(start);
+        cursor.setPosition(start + 6, QTextCursor::KeepAnchor);
+        code_->setTextCursor(cursor);
+    };
+    selectSecond();
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{1});
+    canvas_->setSelectedIndex(0);
+    auto* x = window_->findChild<QSpinBox*>(u"elementX"_s);
+    QVERIFY(x);
+    x->setValue(100);
+    QCOMPARE(window_->document().elements[0].x, 100);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    auto cursor = code_->textCursor();
+    cursor.clearSelection();
+    code_->setTextCursor(cursor);
+    selectSecond();
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{1});
+    QVERIFY(!session_->hasPendingSource());
+}
+
+void SplitEditorTests::sourceSelectionAfterRevertingRestoredDraft()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto crlf = initialSource;
+    crlf.replace(u"\n"_s, u"\r\n"_s);
+    const auto parsed = fromZpl(crlf);
+    QVERIFY(parsed && parsed->visualEditable);
+    window_->setDocument(*parsed);
+    tabs_->setCurrentIndex(1);
+    auto draft = initialSource;
+    draft.replace(u"40,48"_s, u"68,48"_s);
+    code_->setPlainText(draft);
+    QVERIFY(session_->hasPendingSource());
+    const auto path = directory.filePath(u"selection-draft.qtzpl"_s);
+    QVERIFY(window_->saveFile(path));
+    window_->setDocument(initial_);
+    QVERIFY(window_->openFile(path));
+    QVERIFY(session_->hasPendingSource());
+    code_->setPlainText(initialSource);
+    QVERIFY(!session_->hasPendingSource());
+    QTextCursor cursor(code_->document());
+    const int start = static_cast<int>(initialSource.indexOf(u"^FO"_s));
+    cursor.setPosition(start);
+    cursor.setPosition(start + 6, QTextCursor::KeepAnchor);
+    code_->setTextCursor(cursor);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    QCOMPARE(toZpl(window_->document()), crlf);
+}
+
+void SplitEditorTests::canvasAndLayersHighlightSeparateSourceFields()
+{
+    DesignDocument document;
+    document.elements = {makeElement(ElementType::Box, {20, 20}),
+                         makeElement(ElementType::Box, {120, 20}),
+                         makeElement(ElementType::Box, {220, 20})};
+    window_->setDocument(document);
+    layout_->setCurrentIndex(1);
+    // Let the queued initial syntax highlighting and preview finish first.
+    QTest::qWait(150);
+    const auto source = code_->toPlainText();
+    QTextCursor cursor(code_->document());
+    cursor.setPosition(static_cast<int>(source.indexOf(u"^PW")));
+    cursor.setPosition(cursor.position() + 3, QTextCursor::KeepAnchor);
+    code_->setTextCursor(cursor);
+    canvas_->setFocus();
+    QTRY_VERIFY(canvas_->hasFocus());
+    QSignalSpy sourceChanges(code_, &QPlainTextEdit::textChanged);
+    QSignalSpy cursorSelections(code_, &QPlainTextEdit::selectionChanged);
+    QSignalSpy documentChanges(session_, &DocumentSession::documentChanged);
+    QSignalSpy canvasSelections(canvas_, &LabelCanvas::selectionSetChanged);
+    const int undoIndex = session_->undoStack()->index();
+
+    canvas_->setSelectedIndices({0, 2});
+    QCOMPARE(objectHighlightRanges(code_), (SourceRanges{
+        fieldRange(source, u"^FO20,"_s), fieldRange(source, u"^FO220,"_s)}));
+    QCOMPARE(canvas_->selectedIndices(), (QList<int>{0, 2}));
+    QCOMPARE(canvasSelections.count(), 1);
+    QCOMPARE(code_->textCursor().position(), cursor.position());
+    QCOMPARE(code_->textCursor().anchor(), cursor.anchor());
+    QVERIFY(canvas_->hasFocus());
+
+    auto* layers = window_->findChild<QListWidget*>(u"layerList"_s);
+    QVERIFY(layers);
+    layers->setCurrentRow(1, QItemSelectionModel::ClearAndSelect);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{1});
+    QCOMPARE(objectHighlightRanges(code_), SourceRanges{fieldRange(source, u"^FO120,"_s)});
+    QCOMPARE(code_->textCursor().position(), cursor.position());
+    QCOMPARE(code_->textCursor().anchor(), cursor.anchor());
+    QCOMPARE(sourceChanges.count(), 0);
+    QCOMPARE(cursorSelections.count(), 0);
+    QCOMPARE(documentChanges.count(), 0);
+    QCOMPARE(session_->undoStack()->index(), undoIndex);
+    QCOMPARE(code_->toPlainText(), source);
+    canvas_->setSelectedIndices({});
+    QVERIFY(objectHighlightRanges(code_).isEmpty());
+}
+
+void SplitEditorTests::groupsAndTablesHighlightAllOwnedFields()
+{
+    DesignDocument document;
+    auto groupedBox = makeElement(ElementType::Box, {20, 20});
+    auto unrelated = makeElement(ElementType::Box, {320, 20});
+    auto table = makeElement(ElementType::Table, {20, 160});
+    table.tableCells = {u"Альфа"_s, {}, u"Бета"_s, {}};
+    groupedBox.groupId = table.groupId = QUuid::createUuid();
+    document.elements = {groupedBox, unrelated, table};
+    window_->setDocument(document);
+    layout_->setCurrentIndex(1);
+    const auto source = code_->toPlainText();
+    canvas_->setSelectedIndex(0);
+    QVERIFY(canvas_->selectedIndices().contains(0));
+    QVERIFY(canvas_->selectedIndices().contains(2));
+    QVERIFY(!canvas_->selectedIndices().contains(1));
+    const auto ranges = objectHighlightRanges(code_);
+    const auto fields = tableElements(table);
+    QCOMPARE(ranges.size(), fields.size() + 1);
+    QCOMPARE(ranges.first(), fieldRange(source, u"^FO20,20"_s));
+    for (qsizetype index = 0; index < fields.size(); ++index) {
+        const auto& range = ranges[index + 1];
+        QCOMPARE(source.sliced(range.first, range.second), elementZpl(fields[index]).trimmed());
+        QVERIFY(!source.sliced(range.first, range.second).contains(u"^FX"));
+        QVERIFY(range.first >= ranges[index].first + ranges[index].second);
+    }
+    QVERIFY(!ranges.contains(fieldRange(source, u"^FO320,"_s)));
+}
+
+void SplitEditorTests::selectionSyncToggleKeepsIndependentSelections()
+{
+    DesignDocument document;
+    document.elements = {makeElement(ElementType::Box, {20, 20}),
+                         makeElement(ElementType::Box, {180, 20})};
+    window_->setDocument(document);
+    layout_->setCurrentIndex(1);
+    auto* sync = action("syncEditorSelection");
+    QVERIFY(sync);
+    QVERIFY(sync->isCheckable());
+    QVERIFY(sync->isChecked());
+    bool hasIconButton = false;
+    for (const auto* button : window_->findChildren<QToolButton*>())
+        if (button->defaultAction() == sync && !button->icon().isNull()) hasIconButton = true;
+    QVERIFY(hasIconButton);
+    const auto source = code_->toPlainText();
+    canvas_->setSelectedIndex(0);
+    QVERIFY(!objectHighlightRanges(code_).isEmpty());
+    sync->setChecked(false);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    QVERIFY(objectHighlightRanges(code_).isEmpty());
+
+    QTextCursor cursor(code_->document());
+    const auto second = fieldRange(source, u"^FO180,"_s);
+    cursor.setPosition(second.first);
+    cursor.setPosition(second.first + second.second, QTextCursor::KeepAnchor);
+    code_->setTextCursor(cursor);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    canvas_->setSelectedIndex(1);
+    QVERIFY(objectHighlightRanges(code_).isEmpty());
+    QCOMPARE(code_->textCursor().position(), cursor.position());
+    QCOMPARE(code_->textCursor().anchor(), cursor.anchor());
+    canvas_->setSelectedIndex(0);
+    canvas_->setFocus();
+    QTRY_VERIFY(canvas_->hasFocus());
+    sync->setChecked(true);
+    // An old source selection must not displace the currently focused design.
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    QCOMPARE(objectHighlightRanges(code_), SourceRanges{fieldRange(source, u"^FO20,"_s)});
+    QCOMPARE(code_->textCursor().position(), cursor.position());
+    QCOMPARE(code_->textCursor().anchor(), cursor.anchor());
+
+    sync->setChecked(false);
+    code_->setFocus();
+    QTRY_VERIFY(code_->hasFocus());
+    sync->setChecked(true);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{1});
+    QCOMPARE(objectHighlightRanges(code_), SourceRanges{second});
+    QCOMPARE(code_->textCursor().position(), cursor.position());
+    QCOMPARE(code_->textCursor().anchor(), cursor.anchor());
+    QCOMPARE(code_->toPlainText(), source);
+    QVERIFY(!session_->modified());
+}
+
+void SplitEditorTests::selectionSyncPreferenceSurvivesReopening()
+{
+    auto* sync = action("syncEditorSelection");
+    QVERIFY(sync && sync->isChecked());
+    sync->setChecked(false);
+    {
+        QSettings saved(QDir(settingsDirectory_).filePath(u"workspace.ini"_s), QSettings::IniFormat);
+        QCOMPARE(saved.value(u"editor/selectionSync"_s).toBool(), false);
+    }
+    window_.reset();
+    createWindow();
+    sync = action("syncEditorSelection");
+    QVERIFY(sync && !sync->isChecked());
+    layout_->setCurrentIndex(1);
+    canvas_->setSelectedIndex(0);
+    QVERIFY(objectHighlightRanges(code_).isEmpty());
+    sync->setChecked(true);
+    window_.reset();
+    createWindow();
+    sync = action("syncEditorSelection");
+    QVERIFY(sync && sync->isChecked());
+    canvas_->setSelectedIndex(0);
+    QVERIFY(!objectHighlightRanges(code_).isEmpty());
+}
+
+void SplitEditorTests::sourceHighlightsPreserveCursorThemeAndNativeUndo()
+{
+    layout_->setCurrentIndex(1);
+    QTextCursor cursor(code_->document());
+    const int origin = static_cast<int>(initialSource.indexOf(u"40,48"));
+    cursor.setPosition(origin);
+    cursor.setPosition(origin + 2, QTextCursor::KeepAnchor);
+    cursor.insertText(u"68"_s);
+    code_->setTextCursor(cursor);
+    QTRY_VERIFY_WITH_TIMEOUT(!session_->hasPendingSource(), 2500);
+    QVERIFY(code_->document()->isUndoAvailable());
+    const auto edited = code_->toPlainText();
+    cursor.setPosition(static_cast<int>(edited.indexOf(u"^PW")));
+    cursor.setPosition(cursor.position() + 3, QTextCursor::KeepAnchor);
+    code_->setTextCursor(cursor);
+    canvas_->setFocus();
+    QTRY_VERIFY(canvas_->hasFocus());
+    QSignalSpy sourceChanges(code_, &QPlainTextEdit::textChanged);
+    QSignalSpy cursorSelections(code_, &QPlainTextEdit::selectionChanged);
+    QSignalSpy documentChanges(session_, &DocumentSession::documentChanged);
+    canvas_->setSelectedIndex(0);
+    const auto ranges = objectHighlightRanges(code_);
+    QCOMPARE(ranges, SourceRanges{fieldRange(edited, u"^FO68,"_s)});
+    for (const bool dark : {true, false}) {
+        action("darkTheme")->setChecked(dark);
+        QApplication::processEvents();
+        QCOMPARE(objectHighlightRanges(code_), ranges);
+        canvas_->setSelectedIndices({});
+        QVERIFY(objectHighlightRanges(code_).isEmpty());
+        canvas_->setSelectedIndex(0);
+        QCOMPARE(objectHighlightRanges(code_), ranges);
+        QCOMPARE(code_->textCursor().position(), cursor.position());
+        QCOMPARE(code_->textCursor().anchor(), cursor.anchor());
+        QVERIFY(code_->document()->isUndoAvailable());
+        QVERIFY(canvas_->hasFocus());
+        for (const auto& extra : code_->extraSelections())
+            if (extra.cursor.hasSelection()) QVERIFY(extra.format.background().color().alpha() > 0);
+    }
+    QCOMPARE(sourceChanges.count(), 0);
+    QCOMPARE(cursorSelections.count(), 0);
+    QCOMPARE(documentChanges.count(), 0);
+    QCOMPARE(code_->toPlainText(), edited);
+    code_->undo();
+    QCOMPARE(code_->toPlainText(), initialSource);
+    QTRY_VERIFY_WITH_TIMEOUT(!session_->hasPendingSource(), 2500);
+    QCOMPARE(window_->document().elements.first().x, 40);
+}
+
+void SplitEditorTests::sourceHighlightsClearPendingAndReturnAfterApply()
+{
+    layout_->setCurrentIndex(1);
+    canvas_->setSelectedIndex(0);
+    QVERIFY(!objectHighlightRanges(code_).isEmpty());
+    QTextCursor cursor(code_->document());
+    const int origin = static_cast<int>(initialSource.indexOf(u"40,48"));
+    cursor.setPosition(origin);
+    cursor.setPosition(origin + 2, QTextCursor::KeepAnchor);
+    cursor.insertText(u"68"_s);
+    code_->setTextCursor(cursor);
+    QVERIFY(session_->hasPendingSource());
+    QVERIFY(objectHighlightRanges(code_).isEmpty());
+    cursor.setPosition(origin);
+    cursor.setPosition(origin + 2, QTextCursor::KeepAnchor);
+    code_->setTextCursor(cursor);
+    QVERIFY(objectHighlightRanges(code_).isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(!session_->hasPendingSource(), 2500);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    QCOMPARE(objectHighlightRanges(code_), SourceRanges{fieldRange(code_->toPlainText(), u"^FO68,"_s)});
+    QCOMPARE(code_->textCursor().selectionStart(), origin);
+    QCOMPARE(code_->textCursor().selectionEnd(), origin + 2);
+}
+
+void SplitEditorTests::sourceCaretClicksSelectExactFieldsAndRowFallbacks()
+{
+    const auto source = u"^XA\n^CI28^PW400\n^LL300\n^FXКомментарий^FS\n"
+        "  ^FO20,20^A0N,20,10^FDOne^FS^FO80,20^A0N,20,10^FDTwo^FS  \n"
+        "^FO140,20\n^A0N,20,10\n^FDThree^FS\n^XZ\n"_s;
+    const auto imported = fromZpl(source);
+    QVERIFY(imported && imported->visualEditable);
+    window_->setDocument(*imported);
+    layout_->setCurrentIndex(1);
+    QTest::qWait(150);
+    QSignalSpy documentChanges(session_, &DocumentSession::documentChanged);
+    QSignalSpy sourceChanges(code_, &QPlainTextEdit::textChanged);
+    const auto first = source.indexOf(u"^FO20,");
+    const auto second = source.indexOf(u"^FO80,");
+    const auto third = source.indexOf(u"^FO140,");
+
+    clickSourcePosition(code_, first + 4);
+    QVERIFY(code_->hasFocus());
+    QVERIFY(!code_->textCursor().hasSelection());
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    clickSourcePosition(code_, second + 4);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{1});
+    // Whitespace at the row edges belongs to the complete visible ZPL row.
+    QTest::keyClick(code_, Qt::Key_Home);
+    QVERIFY(!code_->textCursor().hasSelection());
+    QCOMPARE(canvas_->selectedIndices(), (QList<int>{0, 1}));
+    QTest::keyClick(code_, Qt::Key_End);
+    QCOMPARE(canvas_->selectedIndices(), (QList<int>{0, 1}));
+    clickSourcePosition(code_, source.indexOf(u"^A0", third) + 4);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{2});
+    clickSourcePosition(code_, source.indexOf(u"^FD", third) + 4);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{2});
+    clickSourcePosition(code_, source.indexOf(u"^FS", third) + 1);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{2});
+    clickSourcePosition(code_, source.indexOf(u"^FX") + 4);
+    QVERIFY(canvas_->selectedIndices().isEmpty());
+    clickSourcePosition(code_, first + 4);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    clickSourcePosition(code_, source.indexOf(u"^PW") + 4);
+    QVERIFY(canvas_->selectedIndices().isEmpty());
+    QCOMPARE(documentChanges.count(), 0);
+    QCOMPARE(sourceChanges.count(), 0);
+    QCOMPARE(code_->toPlainText(), source);
+    QCOMPARE(toZpl(window_->document()), source);
+}
+
+void SplitEditorTests::sourceCaretKeyboardKeepsMultiRangeSelection()
+{
+    const auto source = u"^XA\n^PW400\n^LL300\n"
+        "^FO20,20^GB30,20,2^FS\n^FO80,20^GB30,20,2^FS\n^FO140,20^GB30,20,2^FS\n^XZ\n"_s;
+    const auto imported = fromZpl(source);
+    QVERIFY(imported && imported->visualEditable);
+    window_->setDocument(*imported);
+    layout_->setCurrentIndex(1);
+    QTest::qWait(150);
+    const auto first = source.indexOf(u"^FO20,");
+    clickSourcePosition(code_, first + 4);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    QTest::keyClick(code_, Qt::Key_Down);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{1});
+    QTest::keyClick(code_, Qt::Key_Down);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{2});
+    QTest::keyClick(code_, Qt::Key_Up);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{1});
+    QTest::keyClick(code_, Qt::Key_Up);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+
+    QTest::keyClick(code_, Qt::Key_Down, Qt::ShiftModifier);
+    QVERIFY(code_->textCursor().hasSelection());
+    QCOMPARE(canvas_->selectedIndices(), (QList<int>{0, 1}));
+    QTest::keyClick(code_, Qt::Key_Down, Qt::ShiftModifier);
+    QCOMPARE(canvas_->selectedIndices(), (QList<int>{0, 1, 2}));
+    // Collapsing a focused selection returns to the object at the active caret.
+    QTest::keyClick(code_, Qt::Key_Right);
+    QVERIFY(!code_->textCursor().hasSelection());
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{2});
+    QCOMPARE(code_->toPlainText(), source);
+    QVERIFY(!session_->modified());
+}
+
+void SplitEditorTests::sourceCaretReclickSelectsAfterCanvasChanges()
+{
+    const auto source = u"^XA\n^PW400\n^LL300\n"
+        "^FO20,20^GB30,20,2^FS\n^FO80,20^GB30,20,2^FS\n^XZ\n"_s;
+    const auto imported = fromZpl(source);
+    QVERIFY(imported && imported->visualEditable);
+    window_->setDocument(*imported);
+    layout_->setCurrentIndex(1);
+    QTest::qWait(150);
+    clickSourcePosition(code_, source.indexOf(u"^FO80,") + 4);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{1});
+    const int clickedPosition = code_->textCursor().position();
+    canvas_->setFocus();
+    QTRY_VERIFY(canvas_->hasFocus());
+    canvas_->setSelectedIndex(0);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    QCOMPARE(code_->textCursor().position(), clickedPosition);
+    QSignalSpy caretMoves(code_, &QPlainTextEdit::cursorPositionChanged);
+    clickSourcePosition(code_, clickedPosition);
+    QVERIFY(code_->hasFocus());
+    QCOMPARE(code_->textCursor().position(), clickedPosition);
+    QCOMPARE(caretMoves.count(), 0);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{1});
+    QCOMPARE(objectHighlightRanges(code_), SourceRanges{fieldRange(source, u"^FO80,"_s)});
+}
+
+void SplitEditorTests::sourceCaretDoesNotSyncWhenDisabledOrUnfocused()
+{
+    const auto source = u"^XA\n^PW400\n^LL300\n"
+        "^FO20,20^GB30,20,2^FS\n^FO80,20^GB30,20,2^FS\n^FO140,20^GB30,20,2^FS\n^XZ\n"_s;
+    const auto imported = fromZpl(source);
+    QVERIFY(imported && imported->visualEditable);
+    window_->setDocument(*imported);
+    layout_->setCurrentIndex(1);
+    QTest::qWait(150);
+    canvas_->setFocus();
+    QTRY_VERIFY(canvas_->hasFocus());
+    canvas_->setSelectedIndex(0);
+    QTextCursor cursor(code_->document());
+    cursor.setPosition(static_cast<int>(source.indexOf(u"^FO80,")) + 4);
+    code_->setTextCursor(cursor);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    auto* sync = action("syncEditorSelection");
+    QVERIFY(sync && sync->isChecked());
+    sync->setChecked(false);
+    clickSourcePosition(code_, cursor.position());
+    QVERIFY(code_->hasFocus());
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    QTest::keyClick(code_, Qt::Key_Down);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    QVERIFY(objectHighlightRanges(code_).isEmpty());
+    const int thirdPosition = code_->textCursor().position();
+    sync->setChecked(true);
+    clickSourcePosition(code_, thirdPosition);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{2});
+    QCOMPARE(code_->toPlainText(), source);
+}
+
+void SplitEditorTests::sourceCaretWaitsForPendingSourceToApply()
+{
+    const auto source = u"^XA\n^PW400\n^LL300\n"
+        "^FO40,48^GB30,20,2^FS\n^FO180,48^GB30,20,2^FS\n^XZ\n"_s;
+    const auto imported = fromZpl(source);
+    QVERIFY(imported && imported->visualEditable);
+    window_->setDocument(*imported);
+    layout_->setCurrentIndex(1);
+    QTest::qWait(150);
+    clickSourcePosition(code_, source.indexOf(u"^FO40,") + 4);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    QTextCursor cursor(code_->document());
+    const int origin = static_cast<int>(source.indexOf(u"40,48"));
+    cursor.setPosition(origin);
+    cursor.setPosition(origin + 2, QTextCursor::KeepAnchor);
+    cursor.insertText(u"68"_s);
+    code_->setTextCursor(cursor);
+    QVERIFY(session_->hasPendingSource());
+    clickSourcePosition(code_, code_->toPlainText().indexOf(u"^FO180,") + 4);
+    QVERIFY(!code_->textCursor().hasSelection());
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    QVERIFY(objectHighlightRanges(code_).isEmpty());
+    const int clickedPosition = code_->textCursor().position();
+    QTRY_VERIFY_WITH_TIMEOUT(!session_->hasPendingSource(), 2500);
+    QCOMPARE(window_->document().elements.first().x, 68);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{1});
+    QCOMPARE(code_->textCursor().position(), clickedPosition);
+    QVERIFY(!code_->textCursor().hasSelection());
+    QCOMPARE(objectHighlightRanges(code_), SourceRanges{fieldRange(code_->toPlainText(), u"^FO180,"_s)});
+}
+
+void SplitEditorTests::sourceCaretDoesNotRetargetAfterPropertyShortensText()
+{
+    DesignDocument document;
+    auto first = makeElement(ElementType::Text, {20, 20});
+    first.text = QString(48, u'A');
+    first.fontHeight = 20;
+    first.fontWidth = 10;
+    auto second = makeElement(ElementType::Text, {20, 100});
+    second.text = QString(80, u'B');
+    second.fontHeight = 20;
+    second.fontWidth = 10;
+    document.elements = {first, second};
+    window_->setDocument(document);
+    layout_->setCurrentIndex(1);
+    QTest::qWait(150);
+    const auto source = code_->toPlainText();
+    const auto firstOrigin = source.indexOf(u"^FO20,20");
+    clickSourcePosition(code_, firstOrigin + 4);
+    QTest::keyClick(code_, Qt::Key_End);
+    for (int move = 0; move < 4; ++move) QTest::keyClick(code_, Qt::Key_Left);
+    const int previousPosition = code_->textCursor().position();
+    QCOMPARE(previousPosition, source.indexOf(u"^FS", firstOrigin) - 1);
+    QVERIFY(!code_->textCursor().hasSelection());
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+
+    auto* content = window_->findChild<QPlainTextEdit*>(u"elementContent"_s);
+    QVERIFY(content && content->isEnabled());
+    content->setFocus();
+    QTRY_VERIFY(content->hasFocus());
+    content->selectAll();
+    QTest::keyClicks(content, "X");
+    QCOMPARE(window_->document().elements[0].text, u"X"_s);
+    QCOMPARE(window_->document().elements[1].text, second.text);
+    const auto regenerated = code_->toPlainText();
+    const auto secondRange = fieldRange(regenerated, u"^FO20,100"_s);
+    // The preserved numeric caret now lies in field 2. A property edit must
+    // preserve its object selection instead of reinterpreting that old offset.
+    QVERIFY(previousPosition >= secondRange.first);
+    QVERIFY(previousPosition < secondRange.first + secondRange.second);
+    QCOMPARE(code_->textCursor().position(), previousPosition);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    QCOMPARE(objectHighlightRanges(code_), SourceRanges{fieldRange(regenerated, u"^FO20,20"_s)});
+    QCOMPARE(content->toPlainText(), u"X"_s);
+    QVERIFY(content->hasFocus());
+    QVERIFY(!session_->hasPendingSource());
+    QTest::qWait(150);
+    QCOMPARE(canvas_->selectedIndices(), QList<int>{0});
+    QCOMPARE(objectHighlightRanges(code_), SourceRanges{fieldRange(regenerated, u"^FO20,20"_s)});
 }
 
 QTEST_MAIN(SplitEditorTests)

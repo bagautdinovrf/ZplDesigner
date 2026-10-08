@@ -2,9 +2,11 @@
 #include "document_session.hpp"
 #include "label_canvas.hpp"
 #include "main_window.hpp"
+#include "workspace_preferences.hpp"
 
 #include <QAction>
 #include <QApplication>
+#include <QComboBox>
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
@@ -33,10 +35,12 @@ private slots:
     void cleanup();
     void focusGivesSpaceToCanvasAndRestoresBalance();
     void panelsCanBeReopenedWithoutLeavingFocus();
+    void focusPropertiesAvoidSourceAndPreview();
     void modeSwitchPreservesPendingSourceAndHistory();
     void themeChangesColorsWithoutRebuildingEditors();
     void themeAndModePreservePrinterGeometryAndWhitePaper();
     void preferencesRestoreAcrossWindows();
+    void toolbarPreferencesDefaultVisibleAndPersistHiddenCommands();
     void optionalWorkspaceScreenshots();
 
 private:
@@ -177,6 +181,90 @@ void WorkspaceTests::panelsCanBeReopenedWithoutLeavingFocus()
     QVERIFY(inspector->isVisible());
     QVERIFY(!action("workspaceLayers")->isChecked());
     QVERIFY(action("workspaceProperties")->isChecked());
+}
+
+void WorkspaceTests::focusPropertiesAvoidSourceAndPreview()
+{
+    auto* tabs = window_->findChild<QTabWidget*>(u"editorTabs"_s);
+    auto* inspector = window_->findChild<QTabWidget*>(u"inspectorTabs"_s);
+    auto* card = window_->findChild<QWidget*>(u"focusInspectorCard"_s);
+    auto* slot = window_->findChild<QWidget*>(u"inspectorSlot"_s);
+    auto* focusBar = window_->findChild<QWidget*>(u"focusContextBar"_s);
+    auto* layout = window_->findChild<QComboBox*>(u"editorLayout"_s);
+    auto* editorSplitter = window_->findChild<QSplitter*>(u"editorSplitter"_s);
+    auto* code = window_->findChild<QPlainTextEdit*>(u"zplEditor"_s);
+    auto* canvas = window_->findChild<LabelCanvas*>();
+    auto* session = window_->findChild<DocumentSession*>();
+    QVERIFY(tabs); QVERIFY(inspector); QVERIFY(card); QVERIFY(slot); QVERIFY(focusBar);
+    QVERIFY(layout); QVERIFY(editorSplitter); QVERIFY(code); QVERIFY(canvas); QVERIFY(session);
+    canvas->setSelectedIndex(0);
+    const auto source = code->toPlainText();
+    const auto selection = canvas->selectedIndices();
+    QSignalSpy sourceChanges(code, &QPlainTextEdit::textChanged);
+    QSignalSpy documentChanges(session, &DocumentSession::documentChanged);
+    const auto bounds = [this](const QWidget* widget) {
+        return QRect(widget->mapTo(window_.get(), QPoint{}), widget->size());
+    };
+
+    action("workspaceFocus")->trigger();
+    action("workspaceProperties")->trigger();
+    QApplication::processEvents();
+    const int designWidth = canvas->width();
+    QVERIFY(card->isVisible());
+    QVERIFY(card->isAncestorOf(inspector));
+    QVERIFY(!slot->isVisible());
+    QVERIFY(focusBar->isVisible());
+
+    for (const int tab : {1, 2, 1}) {
+        tabs->setCurrentIndex(tab);
+        QApplication::processEvents();
+        QVERIFY(action("workspaceFocus")->isChecked());
+        QVERIFY(action("workspaceProperties")->isChecked());
+        QVERIFY(inspector->isVisible());
+        QVERIFY(slot->isVisible());
+        QVERIFY(slot->isAncestorOf(inspector));
+        QVERIFY(!card->isVisible());
+        QVERIFY(!focusBar->isVisible());
+        QVERIFY(!bounds(slot).intersects(bounds(tabs->currentWidget())));
+        QVERIFY(!bounds(slot).intersects(bounds(editorSplitter)));
+        QVERIFY(editorSplitter->width() < designWidth);
+    }
+
+    action("workspaceProperties")->trigger();
+    QApplication::processEvents();
+    const int sourceWithoutProperties = editorSplitter->width();
+    QVERIFY(!inspector->isVisible());
+    QVERIFY(!slot->isVisible());
+    action("workspaceProperties")->trigger();
+    QApplication::processEvents();
+    QVERIFY(slot->isVisible());
+    QVERIFY(editorSplitter->width() < sourceWithoutProperties);
+    QVERIFY(!bounds(slot).intersects(bounds(code)));
+
+    tabs->setCurrentIndex(0);
+    QApplication::processEvents();
+    QVERIFY(card->isVisible());
+    QVERIFY(card->isAncestorOf(inspector));
+    QVERIFY(!slot->isVisible());
+    QVERIFY(focusBar->isVisible());
+    QCOMPARE(canvas->width(), designWidth);
+
+    for (const int mode : {1, 2}) {
+        layout->setCurrentIndex(mode);
+        QApplication::processEvents();
+        QCOMPARE(editorSplitter->count(), 2);
+        QVERIFY(slot->isVisible());
+        QVERIFY(inspector->isVisible());
+        QVERIFY(slot->isAncestorOf(inspector));
+        QVERIFY(!card->isVisible());
+        QVERIFY(!focusBar->isVisible());
+        QVERIFY(!bounds(slot).intersects(bounds(code)));
+        QVERIFY(!bounds(slot).intersects(bounds(tabs->currentWidget())));
+    }
+    QCOMPARE(code->toPlainText(), source);
+    QCOMPARE(canvas->selectedIndices(), selection);
+    QCOMPARE(sourceChanges.count(), 0);
+    QCOMPARE(documentChanges.count(), 0);
 }
 
 void WorkspaceTests::modeSwitchPreservesPendingSourceAndHistory()
@@ -362,6 +450,21 @@ void WorkspaceTests::preferencesRestoreAcrossWindows()
     QVERIFY(layers->isVisible());
     QVERIFY(inspector->isVisible());
     QCOMPARE(window_->findChild<QSplitter*>(u"workspaceSplitter"_s)->sizes(), balancedSizes);
+}
+
+void WorkspaceTests::toolbarPreferencesDefaultVisibleAndPersistHiddenCommands()
+{
+    window_.reset();
+    const auto path = workspacePreferencesPath();
+    if (QFile::exists(path)) QVERIFY(QFile::remove(path));
+    const auto defaults = loadWorkspacePreferences();
+    QVERIFY(defaults.hiddenToolbarCommands.isEmpty());
+    auto preferences = defaults;
+    preferences.hiddenToolbarCommands = {u"save"_s, u"undo"_s, u"group"_s};
+    QVERIFY(saveWorkspacePreferences(preferences));
+    QCOMPARE(loadWorkspacePreferences().hiddenToolbarCommands, preferences.hiddenToolbarCommands);
+    QVERIFY(saveWorkspacePreferences(defaults));
+    QVERIFY(loadWorkspacePreferences().hiddenToolbarCommands.isEmpty());
 }
 
 void WorkspaceTests::optionalWorkspaceScreenshots()

@@ -302,7 +302,7 @@ std::expected<PreparedLabelPrint, QString> prepareLabelPrint(const DesignDocumen
         return std::unexpected(u"Для печати выберите 203, 300 или 600 dpi в формате этикетки."_s);
 
     auto resolved = resolveDataMatrixValues(document);
-    if (!resolved) return std::unexpected(resolved.error() + u" Заполните «Значения…» перед печатью."_s);
+    if (!resolved) return std::unexpected(resolved.error() + u" Заполните «Значения плейсхолдеров…» перед печатью."_s);
     const auto valid = validateForExport(*resolved, !resolved->visualEditable);
     if (!valid) return std::unexpected(valid.error());
     const QString source = toZpl(*resolved, false);

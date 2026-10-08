@@ -511,7 +511,8 @@ void DocumentTest::concreteDataMatrixSourceIsReadable()
     int fields = 0;
     for (const auto& command : parsed->labels().first().commands()) {
         if (const auto* data = std::get_if<QtZpl::FieldData>(&command.payload)) {
-            QCOMPARE(data->data.toLatin1(), payload.toUtf8());
+            // QtZpl decodes ^CI28/^FH into Unicode; compare its UTF-8 bytes.
+            QCOMPARE(data->data.toUtf8(), payload.toUtf8());
             ++fields;
         }
     }
@@ -592,11 +593,12 @@ void DocumentTest::legacyHexDataMatrixRemainsEditable()
 void DocumentTest::dataMatrixUtf8BytesRoundTrip()
 {
     DesignDocument document;
-    auto element = makeElement(ElementType::DataMatrix);
+    auto element = makeElement(ElementType::DataMatrix, {40, 40});
     element.gs1 = false;
     element.text = u"Код é |1 ^FS"_s;
     document.elements = {element};
     const QString source = toZpl(document);
+    const auto expectedBytes = QByteArray::fromHex("D09AD0BED0B420C3A9207C7C31205E4653");
     const auto parsed = QtZpl::parse(source);
     QVERIFY(parsed.has_value());
     bool found = false;
@@ -604,7 +606,9 @@ void DocumentTest::dataMatrixUtf8BytesRoundTrip()
         if (const auto* data = std::get_if<QtZpl::FieldData>(&command.payload)) {
             QString escapedMarkers = element.text;
             escapedMarkers.replace(u"|"_s, u"||"_s);
-            QCOMPARE(data->data.toLatin1(), escapedMarkers.toUtf8());
+            QCOMPARE(data->data, escapedMarkers);
+            QCOMPARE(data->data.toUtf8(), expectedBytes);
+            QCOMPARE(command.source, u"^FD_D0_9A_D0_BE_D0_B4_20_C3_A9_20_7C_7C_31_20_5E_46_53"_s);
             found = true;
         }
     QVERIFY(found);
@@ -614,8 +618,21 @@ void DocumentTest::dataMatrixUtf8BytesRoundTrip()
     QCOMPARE(loaded->elements.first().text, element.text);
     loaded->originalZpl.clear();
     QCOMPARE(toZpl(*loaded), source);
-    const auto preview = renderPreview(*loaded);
-    QVERIFY(preview.has_value());
+
+    // Moving forces field regeneration instead of reusing the imported bytes.
+    loaded->elements.first().x += 8;
+    QString movedSource = source;
+    movedSource.replace(u"^FO40,40"_s, u"^FO48,40"_s);
+    QCOMPARE(toZpl(*loaded).toUtf8(), movedSource.toUtf8());
+    const auto reopened = fromZpl(toZpl(*loaded));
+    QVERIFY(reopened.has_value());
+    QVERIFY2(reopened->visualEditable, qPrintable(reopened->importNotes.join(u'\n')));
+    QCOMPARE(reopened->elements.size(), 1);
+    QCOMPARE(reopened->elements.first().x, 48);
+    QCOMPARE(reopened->elements.first().text, element.text);
+
+    const auto preview = renderPreview(*reopened);
+    QVERIFY2(preview.has_value(), preview ? "" : qPrintable(preview.error()));
     QVERIFY2(preview->diagnostics.isEmpty(), qPrintable(preview->diagnostics.join(u'\n')));
 }
 
@@ -1273,7 +1290,10 @@ void DocumentTest::barcodeResizeKeepsCaptionAndModules()
         for (const bool caption : {false, true}) {
             DesignDocument document;
             document.width = document.height = 600;
-            Element original = makeElement(ElementType::Code128, {20, 20});
+            // ^FO anchors the bar body; the rotated caption can extend left
+            // or above it. Keep the complete symbol inside the label so this
+            // test measures resizing rather than clipping at the label edge.
+            Element original = makeElement(ElementType::Code128, {100, 100});
             original.text = u"123456"_s;
             original.moduleWidth = 2;
             original.height = 60;
@@ -1282,6 +1302,7 @@ void DocumentTest::barcodeResizeKeepsCaptionAndModules()
             document.elements = {original};
             const auto before = renderPreview(document);
             QVERIFY(before.has_value());
+            QVERIFY(before->image.rect().contains(before->bounds.first().adjusted(-1, -1, 1, 1)));
             const QSize current = before->bounds.first().size();
             const bool rotated = orientation == u'R' || orientation == u'B';
             QSize requested = current;
@@ -1306,6 +1327,7 @@ void DocumentTest::barcodeResizeKeepsCaptionAndModules()
             document.elements = {wider};
             const auto widerPreview = renderPreview(document);
             QVERIFY(widerPreview.has_value());
+            QVERIFY(widerPreview->image.rect().contains(widerPreview->bounds.first().adjusted(-1, -1, 1, 1)));
             auto wideBounds = widerPreview->bounds.first().size();
             if (rotated) { wideBounds.transpose(); requested.transpose(); }
             QVERIFY(qAbs(wideBounds.height() - requested.height()) <= 3);

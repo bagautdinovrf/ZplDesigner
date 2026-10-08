@@ -7,10 +7,12 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QResizeEvent>
+#include <QScrollBar>
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSyntaxHighlighter>
@@ -18,6 +20,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <utility>
 
 namespace Designer {
 using namespace Qt::StringLiterals;
@@ -93,6 +96,20 @@ ZplSourceEditor::ZplSourceEditor(QWidget* parent) : QPlainTextEdit(parent)
         highlightCurrentLine();
         lineNumbers_->update();
     });
+    connect(document(), &QTextDocument::contentsChanged, this, [this] {
+        // Listen to the document so programmatic source replacement also clears
+        // offsets while the editor's own signals are blocked. Format-only
+        // changes, including syntax highlighting and theme changes, keep them.
+        // contentsChange runs before the document layout has been rebuilt:
+        // setExtraSelections there can query invalidated text layout geometry.
+        if (!objectHighlights_.isEmpty() && toPlainText() != highlightedSource_) {
+            objectHighlights_.clear();
+            highlightedSource_.clear();
+            // setPlainText also temporarily removes the control's edit cursor.
+            // Paint only after it has restored the cursor and finished layout.
+            QMetaObject::invokeMethod(this, [this] { highlightCurrentLine(); }, Qt::QueuedConnection);
+        }
+    });
     const auto shortcut = [this](const QKeySequence& key, auto callback) {
         auto* action = new QShortcut(key, this);
         action->setContext(Qt::WidgetWithChildrenShortcut);
@@ -122,6 +139,12 @@ void ZplSourceEditor::resizeEvent(QResizeEvent* event)
 {
     QPlainTextEdit::resizeEvent(event);
     updateLineNumberWidth();
+}
+
+void ZplSourceEditor::mouseReleaseEvent(QMouseEvent* event)
+{
+    QPlainTextEdit::mouseReleaseEvent(event);
+    if (event->button() == Qt::LeftButton) emit sourceCursorActivated();
 }
 
 void ZplSourceEditor::changeEvent(QEvent* event)
@@ -165,12 +188,64 @@ void ZplSourceEditor::paintLineNumbers(QPaintEvent* event)
 
 void ZplSourceEditor::highlightCurrentLine()
 {
+    QList<QTextEdit::ExtraSelection> selections;
+    selections.reserve(objectHighlights_.size() + 1);
     QTextEdit::ExtraSelection selection;
     selection.format.setBackground(palette().brush(QPalette::AlternateBase));
     selection.format.setProperty(QTextFormat::FullWidthSelection, true);
     selection.cursor = textCursor();
     selection.cursor.clearSelection();
-    setExtraSelections({selection});
+    selections.append(selection);
+    // Highlight is already the theme's pale selection tint. Blend the accent
+    // itself so object ranges remain visible in both light and dark palettes.
+    auto highlight = palette().color(QPalette::Link);
+    highlight.setAlpha(72);
+    for (const auto& [offset, length] : objectHighlights_) {
+        QTextEdit::ExtraSelection match;
+        match.format.setBackground(highlight);
+        match.cursor = QTextCursor(document());
+        match.cursor.setPosition(offset);
+        match.cursor.setPosition(offset + length, QTextCursor::KeepAnchor);
+        selections.append(match);
+    }
+    setExtraSelections(selections);
+}
+
+void ZplSourceEditor::setObjectHighlights(const QList<QPair<int, int>>& ranges, bool reveal)
+{
+    QList<QPair<int, int>> valid;
+    valid.reserve(ranges.size());
+    const int sourceLength = std::max(0, document()->characterCount() - 1);
+    for (const auto& [offset, length] : ranges) {
+        if (offset < 0 || offset >= sourceLength || length <= 0) continue;
+        valid.append({offset, std::min(length, sourceLength - offset)});
+    }
+    if (objectHighlights_ != valid) {
+        if (valid.isEmpty()) highlightedSource_.clear();
+        else if (objectHighlights_.isEmpty()) highlightedSource_ = toPlainText();
+        objectHighlights_ = std::move(valid);
+        highlightCurrentLine();
+    }
+    if (reveal && !objectHighlights_.isEmpty()) revealObjectHighlight();
+}
+
+void ZplSourceEditor::revealObjectHighlight()
+{
+    QTextCursor match(document());
+    match.setPosition(objectHighlights_.first().first);
+    auto rectangle = cursorRect(match);
+    if (rectangle.top() < 0 || rectangle.bottom() >= viewport()->height()) {
+        // QPlainTextEdit's vertical scrollbar counts visual lines, not pixels.
+        // This editor does not wrap; the block's first line is the target line.
+        verticalScrollBar()->setValue(match.block().firstLineNumber());
+        rectangle = cursorRect(match);
+    }
+    constexpr int margin = 8;
+    if (rectangle.left() < margin)
+        horizontalScrollBar()->setValue(horizontalScrollBar()->value() + rectangle.left() - margin);
+    else if (rectangle.right() >= viewport()->width() - margin)
+        horizontalScrollBar()->setValue(horizontalScrollBar()->value() + rectangle.right()
+                                        - viewport()->width() + margin);
 }
 
 void ZplSourceEditor::goToSourceOffset(int offset)

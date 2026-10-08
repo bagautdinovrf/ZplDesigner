@@ -70,6 +70,7 @@ WorkspacePreferences loadWorkspacePreferences()
     const auto path = workspacePreferencesPath();
     if (path.isEmpty()) return preferences;
     const QSettings settings(path, QSettings::IniFormat);
+    preferences.windowGeometry = settings.value(u"window/geometry"_s).toByteArray();
     preferences.focus = settings.value(u"focus"_s, preferences.focus).toBool();
     preferences.dark = settings.value(u"dark"_s, preferences.dark).toBool();
     preferences.balanceLayers = settings.value(u"balance/layers"_s, preferences.balanceLayers).toBool();
@@ -80,7 +81,9 @@ WorkspacePreferences loadWorkspacePreferences()
     preferences.focusSizes = readSizes(settings, u"focus/sizes"_s);
     preferences.editorLayout = normalizedEditorLayout(settings.value(u"editor/layout"_s, 0).toString().toInt());
     preferences.codeOnLeft = readCodeOnLeft(settings);
+    preferences.selectionSync = settings.value(u"editor/selectionSync"_s, true).toBool();
     preferences.editorSizes = readSizes(settings, u"editor/sizes"_s, {500, 500});
+    preferences.hiddenToolbarCommands = settings.value(u"toolbar/hiddenCommands"_s).toStringList();
     // Version 1 used the larger platform-style panels. Apply the concept's
     // initial widths once; later operator resizing remains persistent.
     if (settings.value(u"metricsVersion"_s, 0).toInt() < 2) {
@@ -95,6 +98,7 @@ bool saveWorkspacePreferences(const WorkspacePreferences& preferences)
     const auto path = workspacePreferencesPath();
     if (path.isEmpty() || !QDir().mkpath(QFileInfo(path).absolutePath())) return false;
     QSettings settings(path, QSettings::IniFormat);
+    settings.setValue(u"window/geometry"_s, preferences.windowGeometry);
     settings.setValue(u"metricsVersion"_s, 2);
     settings.setValue(u"focus"_s, preferences.focus);
     settings.setValue(u"dark"_s, preferences.dark);
@@ -106,7 +110,9 @@ bool saveWorkspacePreferences(const WorkspacePreferences& preferences)
     settings.setValue(u"focus/sizes"_s, encodedSizes(preferences.focusSizes));
     settings.setValue(u"editor/layout"_s, static_cast<int>(normalizedEditorLayout(static_cast<int>(preferences.editorLayout))));
     settings.setValue(u"editor/codeOnLeft"_s, preferences.codeOnLeft);
+    settings.setValue(u"editor/selectionSync"_s, preferences.selectionSync);
     settings.setValue(u"editor/sizes"_s, encodedSizes(preferences.editorSizes, {500, 500}));
+    settings.setValue(u"toolbar/hiddenCommands"_s, preferences.hiddenToolbarCommands);
     settings.sync();
     return settings.status() == QSettings::NoError;
 }

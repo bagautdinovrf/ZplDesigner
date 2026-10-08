@@ -5,6 +5,7 @@
 #include <QComboBox>
 #include <QFont>
 #include <QFontMetrics>
+#include <QMenu>
 #include <QPainter>
 #include <QPalette>
 #include <QPointer>
@@ -91,18 +92,29 @@ class DesignerStyle final : public QProxyStyle {
 public:
     DesignerStyle() : QProxyStyle(QStyleFactory::create(QStringLiteral("Fusion"))) {}
 
+    void polish(QWidget* widget) override
+    {
+        QProxyStyle::polish(widget);
+        if (qobject_cast<QMenu*>(widget)) {
+            // Windows needs a frameless popup for per-pixel transparent corners.
+            widget->setWindowFlag(Qt::FramelessWindowHint);
+            widget->setAttribute(Qt::WA_TranslucentBackground);
+        }
+    }
+
     int pixelMetric(PixelMetric metric, const QStyleOption* option, const QWidget* widget) const override
     {
         switch (metric) {
         case PM_DefaultFrameWidth: case PM_SpinBoxFrameWidth: case PM_ComboBoxFrameWidth:
         case PM_MenuPanelWidth: case PM_SplitterWidth: return 1;
+        case PM_MenuHMargin: case PM_MenuVMargin: return 7;
         case PM_ButtonMargin: return compact(widget) ? 7 : 9;
         case PM_ButtonDefaultIndicator: case PM_ButtonShiftHorizontal: case PM_ButtonShiftVertical:
         case PM_TabBarTabShiftHorizontal: case PM_TabBarTabShiftVertical:
         case PM_TabBarTabOverlap: case PM_TabBarBaseOverlap: case PM_TabBarBaseHeight:
         case PM_ToolBarFrameWidth: case PM_ToolBarItemMargin: case PM_MenuBarPanelWidth:
         case PM_FocusFrameHMargin: case PM_FocusFrameVMargin: return 0;
-        case PM_ToolBarItemSpacing: return 6;
+        case PM_ToolBarItemSpacing: return widget && widget->property("commandPanel").toBool() ? 0 : 6;
         case PM_ToolBarSeparatorExtent: return 11;
         case PM_ToolBarIconSize: case PM_ButtonIconSize: case PM_SmallIconSize: case PM_TabBarIconSize: return 16;
         case PM_IndicatorWidth: case PM_IndicatorHeight: case PM_ExclusiveIndicatorWidth: case PM_ExclusiveIndicatorHeight: return 13;
@@ -124,6 +136,7 @@ public:
         case SH_EtchDisabledText: case SH_DitherDisabledText: case SH_UnderlineShortcut:
         case SH_ItemView_ActivateItemOnSingleClick: case SH_Widget_Animate: case SH_ComboBox_Popup: return 0;
         case SH_TabBar_Alignment: return Qt::AlignLeft;
+        case SH_Menu_SupportsSections: case SH_Menu_Scrollable: return 1;
         default: return QProxyStyle::styleHint(hint, option, widget, result);
         }
     }
@@ -151,12 +164,35 @@ public:
             return {textWidth + iconWidth + buttonsWidth + (inspectorTabBar(widget) ? 12 : 26), 37};
         }
         case CT_MenuBarItem: return {contents.width() + 18, 29};
+        case CT_MenuItem: {
+            const auto* item = qstyleoption_cast<const QStyleOptionMenuItem*>(option);
+            if (!item) break;
+            if (item->menuItemType == QStyleOptionMenuItem::Separator)
+                return {contents.width() + 20, item->text.isEmpty() ? 9 : 30};
+            const int checkWidth = item->menuHasCheckableItems ? 20 : 0;
+            const int iconWidth = item->maxIconWidth > 0 ? item->maxIconWidth + 8 : 0;
+            // QMenu adds the widest shortcut after measuring all action labels.
+            return {contents.width() + checkWidth + iconWidth + 44,
+                    std::max(32, contents.height() + 12)};
+        }
         default: return QProxyStyle::sizeFromContents(type, option, contents, widget);
         }
+        return QProxyStyle::sizeFromContents(type, option, contents, widget);
     }
 
     QRect subElementRect(SubElement element, const QStyleOption* option, const QWidget* widget) const override
     {
+        if (element == SE_ItemViewItemDecoration || element == SE_ItemViewItemFocusRect) {
+            const auto* item = qstyleoption_cast<const QStyleOptionViewItem*>(option);
+            if (item && item->features.testFlag(QStyleOptionViewItem::HasDecoration)
+                && !item->features.testFlag(QStyleOptionViewItem::HasDisplay)
+                && !item->features.testFlag(QStyleOptionViewItem::HasCheckIndicator)) {
+                // Icon-only items have no caption area to lay out or focus below the icon.
+                return element == SE_ItemViewItemDecoration
+                    ? alignedRect(item->direction, Qt::AlignCenter, item->decorationSize, item->rect)
+                    : item->rect.adjusted(1, 1, -1, -1);
+            }
+        }
         if (element == SE_LineEditContents)
             return embeddedEditor(widget) ? option->rect : option->rect.adjusted(8, 1, -8, -1);
         if (element == SE_PushButtonContents) return option->rect.adjusted(8, 3, -8, -3);
@@ -217,9 +253,12 @@ public:
             }
             roundedRect(painter, rect, designerColor(DesignerColor::Control),
                 option->state.testFlag(State_HasFocus) ? designerColor(DesignerColor::Accent) : border); return;
-        case PE_Frame: case PE_FrameMenu: case PE_FrameDockWidget: case PE_FrameGroupBox:
+        case PE_FrameMenu: return; // PE_PanelMenu paints the rounded border once.
+        case PE_Frame: case PE_FrameDockWidget: case PE_FrameGroupBox:
             roundedRect(painter, rect, Qt::transparent, border); return;
-        case PE_PanelMenu: case PE_PanelTipLabel:
+        case PE_PanelMenu:
+            roundedRect(painter, rect, designerColor(DesignerColor::Panel), border, 8); return;
+        case PE_PanelTipLabel:
             roundedRect(painter, rect, designerColor(DesignerColor::Panel), border); return;
         case PE_FrameTabWidget:
             painter->fillRect(rect, designerColor(DesignerColor::Panel));
@@ -227,6 +266,7 @@ public:
         case PE_FrameTabBarBase:
             painter->fillRect(QRect(rect.left(), rect.bottom(), rect.width(), 1), border); return;
         case PE_PanelToolBar: case PE_PanelMenuBar:
+            if (widget && widget->property("commandPanel").toBool()) return;
             painter->fillRect(rect, designerColor(DesignerColor::Panel));
             painter->fillRect(QRect(rect.left(), rect.bottom(), rect.width(), 1), border); return;
         case PE_PanelStatusBar:
@@ -347,6 +387,15 @@ public:
             painter->restore(); return;
         }
         case CE_MenuBarEmptyArea: painter->fillRect(option->rect, designerColor(DesignerColor::Panel)); return;
+        case CE_MenuItem: {
+            const auto* item = qstyleoption_cast<const QStyleOptionMenuItem*>(option);
+            if (!item) break;
+            if (item->menuItemType == QStyleOptionMenuItem::Scroller
+                || item->menuItemType == QStyleOptionMenuItem::TearOff
+                || item->menuItemType == QStyleOptionMenuItem::EmptyArea) break;
+            paintMenuItem(item, painter);
+            return;
+        }
         case CE_ToolBar: drawPrimitive(PE_PanelToolBar, option, painter, widget); return;
         case CE_Splitter: painter->fillRect(option->rect, designerColor(DesignerColor::Border)); return;
         case CE_HeaderSection: case CE_HeaderEmptyArea:
@@ -406,6 +455,83 @@ public:
     }
 
 private:
+    void paintMenuItem(const QStyleOptionMenuItem* item, QPainter* painter) const
+    {
+        const QRect rect = item->rect;
+        painter->save();
+        painter->setFont(item->font);
+        if (item->menuItemType == QStyleOptionMenuItem::Separator) {
+            const bool section = !item->text.isEmpty();
+            if (section) {
+                QFont font = item->font;
+                font.setPixelSize(11);
+                font.setBold(false);
+                painter->setFont(font);
+                painter->setPen(designerColor(DesignerColor::Muted));
+                painter->drawText(rect.adjusted(10, 0, -10, -4),
+                    Qt::AlignVCenter | Qt::AlignLeading | Qt::TextHideMnemonic, item->text);
+            }
+            painter->setPen(designerColor(DesignerColor::Border));
+            const int y = section ? rect.bottom() - 2 : rect.center().y();
+            painter->drawLine(rect.left(), y, rect.right(), y);
+            painter->restore();
+            return;
+        }
+
+        const bool enabled = item->state.testFlag(State_Enabled);
+        const bool selected = enabled && item->state.testFlag(State_Selected);
+        if (selected)
+            roundedRect(painter, rect.adjusted(0, 1, 0, -1), designerColor(DesignerColor::Tint));
+        if (!enabled) painter->setOpacity(painter->opacity() * 0.48);
+        const QColor ink = designerColor(selected ? DesignerColor::Accent : DesignerColor::Ink);
+        const auto visual = [item, rect](const QRect& logical) {
+            return QStyle::visualRect(item->direction, rect, logical);
+        };
+        QRect content = rect.adjusted(10, 0, -10, 0);
+        if (item->menuHasCheckableItems) {
+            const QRect check = visual(QRect(content.left(), content.center().y() - 7, 14, 14));
+            if (item->checked) {
+                painter->setRenderHint(QPainter::Antialiasing);
+                painter->setPen(QPen(ink, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+                if (item->checkType == QStyleOptionMenuItem::Exclusive) {
+                    painter->setBrush(ink);
+                    painter->drawEllipse(QRectF(check).adjusted(4, 4, -4, -4));
+                } else {
+                    const QPointF origin = check.topLeft();
+                    painter->drawPolyline(QPolygonF{origin + QPointF(2, 7), origin + QPointF(5, 10), origin + QPointF(12, 3)});
+                }
+            }
+            content.adjust(20, 0, 0, 0);
+        }
+        if (item->maxIconWidth > 0) {
+            const QRect iconRect = visual(QRect(content.left(), content.top(), item->maxIconWidth, content.height()));
+            item->icon.paint(painter, iconRect, Qt::AlignCenter, enabled ? QIcon::Normal : QIcon::Disabled,
+                             item->checked ? QIcon::On : QIcon::Off);
+            content.adjust(item->maxIconWidth + 8, 0, 0, 0);
+        }
+        if (item->menuItemType == QStyleOptionMenuItem::SubMenu) {
+            chevron(painter, visual(QRect(content.right() - 12, content.top(), 13, content.height())),
+                    item->direction == Qt::RightToLeft ? Qt::LeftArrow : Qt::RightArrow,
+                    selected ? ink : designerColor(DesignerColor::Muted));
+        }
+        const auto separator = item->text.indexOf(u'\t');
+        const QString label = item->text.left(separator);
+        const int shortcutWidth = item->reservedShortcutWidth;
+        if (separator >= 0) {
+            const QRect shortcut = visual(QRect(content.right() - shortcutWidth + 1, content.top(), shortcutWidth, content.height()));
+            painter->setPen(designerColor(DesignerColor::Muted));
+            painter->drawText(shortcut, Qt::AlignVCenter | Qt::AlignTrailing | Qt::TextSingleLine,
+                              item->text.mid(separator + 1));
+        }
+        content.adjust(0, 0, -(shortcutWidth > 0 ? shortcutWidth + 24 : 16), 0);
+        if (item->menuItemType == QStyleOptionMenuItem::DefaultItem) {
+            QFont font = item->font; font.setBold(true); painter->setFont(font);
+        }
+        painter->setPen(ink);
+        painter->drawText(visual(content), Qt::AlignVCenter | Qt::AlignLeading | Qt::TextHideMnemonic | Qt::TextSingleLine, label);
+        painter->restore();
+    }
+
     void paintButton(const QStyleOption* option, QPainter* painter, const QWidget* widget, bool tool) const
     {
         const auto* button = qstyleoption_cast<const QStyleOptionButton*>(option);
@@ -438,7 +564,8 @@ private:
         if (!enabled) painter->setOpacity(painter->opacity() * 0.48);
         if (compact(widget)) { QFont font = painter->font(); font.setPixelSize(11); painter->setFont(font); }
         painter->setPen(designerColor(selected ? DesignerColor::Accent : DesignerColor::Ink));
-        QRect content = option->rect.adjusted(compact(widget) ? 7 : 9, 2, compact(widget) ? -7 : -9, -2);
+        const int inset = widget && widget->property("commandButton").toBool() ? 4 : compact(widget) ? 7 : 9;
+        QRect content = option->rect.adjusted(inset, 2, -inset, -2);
         if (menu) {
             chevron(painter, QRect(content.right() - 10, content.top(), 11, content.height()), Qt::DownArrow, designerColor(DesignerColor::Muted));
             content.adjust(0, 0, -15, 0);
