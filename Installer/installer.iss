@@ -104,10 +104,11 @@ Source: "{#PackageDir}\*"; DestDir: "{app}"; Excludes: "QtZplDesigner.exe,Qt6Cor
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\setup.ico"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\setup.ico"; Tasks: desktopicon
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\setup.ico"; Tasks: desktopicon; Check: DesktopShortcutNeedsUpdate(ExpandConstant('{autodesktop}\{#AppName}.lnk'), ExpandConstant('{app}\{#AppExeName}'))
 
 [Run]
 Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Description: "Запустить {#AppName}"; Flags: postinstall nowait skipifsilent; Check: CanLaunchApplication
 
 [Code]
+#include "desktop_shortcut.iss"
 #include "vc_runtime.iss"

@@ -95,8 +95,9 @@ QString applicationTitle() {
 // The HTML concept uses painted flat surfaces rather than platform chrome.
 class WorkspaceSurface final : public QWidget {
 public:
-    explicit WorkspaceSurface(QWidget* parent = nullptr, bool alternate = false, bool rounded = false)
-        : QWidget(parent), alternate_(alternate), rounded_(rounded) {}
+    explicit WorkspaceSurface(QWidget* parent = nullptr, bool alternate = false, bool rounded = false,
+                              bool bottomSeparator = true)
+        : QWidget(parent), alternate_(alternate), rounded_(rounded), bottomSeparator_(bottomSeparator) {}
 protected:
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);
@@ -104,11 +105,15 @@ protected:
         p.setPen(designerColor(DesignerColor::Border));
         p.setBrush(designerColor(alternate_ ? DesignerColor::PanelAlternate : DesignerColor::Panel));
         if (rounded_) p.drawRoundedRect(QRectF(rect()).adjusted(.5, .5, -.5, -.5), 7, 7);
-        else { p.fillRect(rect(), p.brush()); p.drawLine(0, height() - 1, width(), height() - 1); }
+        else {
+            p.fillRect(rect(), p.brush());
+            if (bottomSeparator_) p.drawLine(0, height() - 1, width(), height() - 1);
+        }
     }
 private:
     bool alternate_;
     bool rounded_;
+    bool bottomSeparator_;
 };
 
 class InspectorTabs final : public QTabWidget {
@@ -597,7 +602,7 @@ void MainWindow::buildUi() {
         propertiesAction_->setChecked(true); inspectorTabs_->setCurrentIndex(1);
     });
     addTool(commandRow, diagnosticsAction_, true); outer->addWidget(formatBar);
-    auto* labelPage = new WorkspaceSurface(central);
+    auto* labelPage = new WorkspaceSurface(central, false, false, false);
     auto* labelLayout = new QVBoxLayout(labelPage); labelLayout->setContentsMargins(0, 0, 0, 0); labelLayout->setSpacing(0);
     auto* labelHeading = heading(QStringLiteral("Формат этикетки"), labelPage); labelHeading->setContentsMargins(13, 12, 13, 12); labelLayout->addWidget(labelHeading);
     auto* formatSection = new WorkspaceSurface(labelPage); auto* formatLayout = new QVBoxLayout(formatSection); formatLayout->setContentsMargins(13, 12, 13, 12); formatLayout->setSpacing(10);
@@ -752,6 +757,7 @@ void MainWindow::buildUi() {
     });
     editorSplitter_ = new QSplitter(Qt::Horizontal, center);
     editorSplitter_->setObjectName(QStringLiteral("editorSplitter"));
+    editorSplitter_->installEventFilter(this);
     editorSplitter_->setChildrenCollapsible(false);
     editorSplitter_->setHandleWidth(5);
     editorSplitter_->addWidget(editorTabs_);
@@ -809,7 +815,10 @@ void MainWindow::buildUi() {
     inspectorTabs_->tabBar()->setExpanding(false); inspectorTabs_->tabBar()->setProperty("compact", true);
     auto inspectorFont = inspectorTabs_->tabBar()->font(); inspectorFont.setPixelSize(11); inspectorTabs_->tabBar()->setFont(inspectorFont);
     auto* scroll = new QScrollArea(inspectorTabs_); scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::NoFrame);
-    auto* properties = new WorkspaceSurface(scroll); auto* propertiesLayout = new QVBoxLayout(properties);
+    scroll->setObjectName(QStringLiteral("propertiesScrollArea"));
+    // Page backgrounds do not need a section separator: the floating card owns
+    // the outer border, including its rounded bottom corners.
+    auto* properties = new WorkspaceSurface(scroll, false, false, false); auto* propertiesLayout = new QVBoxLayout(properties);
     propertiesLayout->setContentsMargins(0, 0, 0, 0); propertiesLayout->setSpacing(0);
     auto* summary = new WorkspaceSurface(properties); auto* summaryLayout = new QVBoxLayout(summary); summaryLayout->setContentsMargins(13, 12, 13, 12); summaryLayout->setSpacing(10);
     summaryLayout->addWidget(heading(QStringLiteral("Выбранный объект"), summary));
@@ -1340,17 +1349,26 @@ void MainWindow::applyWorkspaceLayout() {
 void MainWindow::refreshFocusSummary() {
     if (!focusSummary_) return;
     const auto indices = canvas_->selectedIndices();
+    const bool validSelection = selected_ >= 0 && selected_ < session_->document().elements.size();
     QString text;
     if (indices.isEmpty()) text = QStringLiteral("Выберите объект на этикетке");
     else if (indices.size() > 1) text = QStringLiteral("Выбрано объектов: %1").arg(indices.size());
-    else if (selected_ >= 0 && selected_ < session_->document().elements.size()) {
+    else if (validSelection) {
         const auto& element = session_->document().elements[selected_];
-        text = QStringLiteral("%1   ·   X %2   Y %3 dots")
-            .arg(element.name.isEmpty() ? elementTypeName(element.type) : element.name).arg(element.x).arg(element.y);
+        const bool millimeters = session_->layoutSettings().unit == CanvasUnit::Millimeters;
+        const auto coordinate = [this, millimeters](int dots) {
+            return millimeters ? locale().toString(dots * 25.4 / std::max(1, session_->document().dpi), 'f', 2)
+                               : locale().toString(dots);
+        };
+        text = QStringLiteral("%1   ·   X %2   Y %3 %4")
+            .arg(element.name.isEmpty() ? elementTypeName(element.type) : element.name,
+                 coordinate(element.x), coordinate(element.y),
+                 millimeters ? QStringLiteral("мм") : QStringLiteral("dots"));
     }
     focusSummary_->setText(text);
     focusSummary_->setToolTip(text);
-    if (canvasSelection_) canvasSelection_->setText(indices.isEmpty() ? QStringLiteral("Выберите объект") : selected_ >= 0 ? session_->document().elements[selected_].name : QString());
+    if (canvasSelection_) canvasSelection_->setText(indices.isEmpty() ? QStringLiteral("Выберите объект")
+        : validSelection ? session_->document().elements[selected_].name : QString());
     positionWorkspaceOverlays();
 }
 
@@ -1360,13 +1378,18 @@ void MainWindow::positionWorkspaceOverlays() {
     const int stripWidth = std::min(area.width() - 30, focusBar_->sizeHint().width());
     focusBar_->setGeometry((area.width() - stripWidth) / 2, area.height() - 16 - 41,
                           std::max(1, stripWidth), 41);
-    inspectorCard_->setGeometry(area.width() - 14 - 238, 54, 238, std::max(200, area.height() - 90));
+    const QRect editorArea(editorSplitter_->mapTo(workspaceCenter_, QPoint{}), editorSplitter_->size());
+    constexpr int cardMargin = 14;
+    const int cardTop = editorArea.top() + 18;
+    inspectorCard_->setGeometry(area.width() - cardMargin - 238, cardTop, 238,
+                               std::max(1, editorArea.bottom() + 1 - cardMargin - cardTop));
     if (focusBar_->isVisible()) focusBar_->raise();
     if (inspectorCard_->isVisible()) inspectorCard_->raise();
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
-    if (watched == workspaceCenter_ && event->type() == QEvent::Resize)
+    if ((watched == workspaceCenter_ && event->type() == QEvent::Resize)
+        || (watched == editorSplitter_ && (event->type() == QEvent::Resize || event->type() == QEvent::Move)))
         positionWorkspaceOverlays();
     return QMainWindow::eventFilter(watched, event);
 }
@@ -1484,7 +1507,8 @@ void MainWindow::buildMenus() {
     fileButton_->setMenu(commandMenu); menuBar()->hide();
     auto* help = menuBar()->addMenu(QStringLiteral("Справка")); commandMenu->addMenu(help);
     help->addAction(QStringLiteral("О программе"), this, [this] {
-        QMessageBox::about(this, QStringLiteral("QtZpl Designer %1").arg(QCoreApplication::applicationVersion()), QStringLiteral(
+        QMessageBox about(QMessageBox::NoIcon,
+            QStringLiteral("QtZpl Designer %1").arg(QCoreApplication::applicationVersion()), QStringLiteral(
             "Версия %1\n\n"
             "Визуальный редактор этикеток на Qt Widgets.\n\n"
             "Перетащите элемент на лист; свойства справа.\n"
@@ -1494,8 +1518,13 @@ void MainWindow::buildMenus() {
             "Превью рисует локальная библиотека QtZpl.\n"
             "Сложные ZPL доступны в режиме кода с сохранением исходника.\n"
             "Одна визуально редактируемая этикетка. Печать ZPL или растра через Windows и по IP.")
-            .arg(QCoreApplication::applicationVersion()));
-    });
+            .arg(QCoreApplication::applicationVersion()), QMessageBox::Close, this);
+        about.setObjectName(QStringLiteral("aboutDialog"));
+        about.setTextFormat(Qt::PlainText);
+        about.button(QMessageBox::Close)->setText(QStringLiteral("Закрыть"));
+        if (!windowIcon().isNull()) about.setIconPixmap(windowIcon().pixmap(64, 64));
+        about.exec();
+    })->setObjectName(QStringLiteral("aboutApplication"));
     buildCommandPanels(view);
 }
 
@@ -2501,9 +2530,13 @@ void MainWindow::refreshCanvasLayout() {
     const QSignalBlocker gridSignals(grid_), snapSignals(snap_);
     grid_->setChecked(settings.gridVisible);
     snap_->setChecked(settings.snapEnabled);
-    snap_->setToolTip(QStringLiteral("Шаг сетки: %1 dots. Привязка к направляющим, отступу, краям и центрам соседних объектов. Alt — временно отключить.").arg(settings.gridStep));
+    const QString step = settings.unit == CanvasUnit::Millimeters
+        ? QStringLiteral("%1 мм").arg(locale().toString(settings.gridStep * 25.4 / std::max(1, session_->document().dpi), 'f', 2))
+        : QStringLiteral("%1 dots").arg(settings.gridStep);
+    snap_->setToolTip(QStringLiteral("Шаг сетки: %1. Привязка к направляющим, отступу, краям и центрам соседних объектов. Alt — временно отключить.").arg(step));
     canvas_->setLayoutSettings(settings);
     refreshPropertyUnits();
+    refreshFocusSummary();
     updateTitle(); updateHistoryActions();
 }
 

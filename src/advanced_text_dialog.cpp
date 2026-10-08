@@ -5,6 +5,7 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QLabel>
+#include <QPushButton>
 #include <QVBoxLayout>
 
 namespace Designer {
@@ -48,6 +49,7 @@ AdvancedTextDialog::AdvancedTextDialog(const Element& element, CanvasUnit unit, 
     });
     auto* error = new QLabel(this); error->setWordWrap(true); layout->addWidget(error);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this); layout->addWidget(buttons);
+    buttons->button(QDialogButtonBox::Ok)->setText(tr("Применить"));
     connect(inherit, &QCheckBox::toggled, orientation, [orientation](bool value) { orientation->setEnabled(!value); });
     connect(buttons, &QDialogButtonBox::accepted, this, [this, origin, anchor, inherit, orientation, direction, spacing, error] {
         element_.baselineOrigin = origin->currentData().toBool();

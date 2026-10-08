@@ -107,7 +107,8 @@ public:
         switch (metric) {
         case PM_DefaultFrameWidth: case PM_SpinBoxFrameWidth: case PM_ComboBoxFrameWidth:
         case PM_MenuPanelWidth: case PM_SplitterWidth: return 1;
-        case PM_MenuHMargin: case PM_MenuVMargin: return 7;
+        case PM_MenuHMargin: return 7;
+        case PM_MenuVMargin: return 4;
         case PM_ButtonMargin: return compact(widget) ? 7 : 9;
         case PM_ButtonDefaultIndicator: case PM_ButtonShiftHorizontal: case PM_ButtonShiftVertical:
         case PM_TabBarTabShiftHorizontal: case PM_TabBarTabShiftVertical:
@@ -167,13 +168,21 @@ public:
         case CT_MenuItem: {
             const auto* item = qstyleoption_cast<const QStyleOptionMenuItem*>(option);
             if (!item) break;
-            if (item->menuItemType == QStyleOptionMenuItem::Separator)
-                return {contents.width() + 20, item->text.isEmpty() ? 9 : 30};
+            if (item->menuItemType == QStyleOptionMenuItem::Separator) {
+                QFont sectionFont = item->font;
+                sectionFont.setPixelSize(11);
+                const int height = item->text.isEmpty() ? 5
+                    : std::max(22, QFontMetrics(sectionFont).height() + 6);
+                return {contents.width() + 20, height};
+            }
+            if (item->menuItemType == QStyleOptionMenuItem::Scroller
+                || item->menuItemType == QStyleOptionMenuItem::TearOff
+                || item->menuItemType == QStyleOptionMenuItem::EmptyArea) break;
             const int checkWidth = item->menuHasCheckableItems ? 20 : 0;
             const int iconWidth = item->maxIconWidth > 0 ? item->maxIconWidth + 8 : 0;
             // QMenu adds the widest shortcut after measuring all action labels.
             return {contents.width() + checkWidth + iconWidth + 44,
-                    std::max(32, contents.height() + 12)};
+                    std::max({25, contents.height() + 6, item->fontMetrics.height() + 6})};
         }
         default: return QProxyStyle::sizeFromContents(type, option, contents, widget);
         }
@@ -468,11 +477,11 @@ private:
                 font.setBold(false);
                 painter->setFont(font);
                 painter->setPen(designerColor(DesignerColor::Muted));
-                painter->drawText(rect.adjusted(10, 0, -10, -4),
+                painter->drawText(rect.adjusted(10, 0, -10, -3),
                     Qt::AlignVCenter | Qt::AlignLeading | Qt::TextHideMnemonic, item->text);
             }
             painter->setPen(designerColor(DesignerColor::Border));
-            const int y = section ? rect.bottom() - 2 : rect.center().y();
+            const int y = section ? rect.bottom() - 1 : rect.center().y();
             painter->drawLine(rect.left(), y, rect.right(), y);
             painter->restore();
             return;

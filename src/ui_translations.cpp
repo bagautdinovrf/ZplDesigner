@@ -19,7 +19,7 @@ public:
                       const char* disambiguation = nullptr, int n = -1) const override
     {
         if (qstrcmp(context, "QPlatformTheme") == 0) {
-            if (qstrcmp(sourceText, "OK") == 0) return QStringLiteral("ОК");
+            if (qstrcmp(sourceText, "OK") == 0) return QStringLiteral("Принять");
             // Qt's generic "Отклонить" is ambiguous in a save confirmation.
             if (qstrcmp(sourceText, "Discard") == 0) return QStringLiteral("Не сохранять");
         }

@@ -213,7 +213,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--qt-version", default="6.11.2")
     parser.add_argument("--compiler", default="msvc2022_64")
-    parser.add_argument("--build-dir", type=Path, default=PROJECT_ROOT / "build_agent_release")
+    parser.add_argument("--build-dir", type=Path, default=build_helper.BUILD_ROOT / "build_agent_release")
     parser.add_argument("--qtzpl-source-dir", type=Path, default=PROJECT_ROOT.parent / "qt-zpl")
     parser.add_argument("--parallel", type=int, default=4)
     parser.add_argument("--iscc", type=Path, help="Path to Inno Setup 6.4+ ISCC.exe")
@@ -226,9 +226,9 @@ def main() -> int:
     if args.parallel < 1:
         parser.error("--parallel must be positive")
     build_dir = build_helper.checked_build_dir(args.build_dir)
-    staging_root = build_helper.checked_build_dir(PROJECT_ROOT / "build_installer")
+    staging_root = build_helper.checked_build_dir(build_helper.BUILD_ROOT / "build_installer")
     if build_dir == staging_root:
-        parser.error("--build-dir cannot be build_installer; that directory is reserved for packaging")
+        parser.error("--build-dir cannot be build_agent/build_installer; that directory is reserved for packaging")
     source_dir = args.qtzpl_source_dir.resolve()
     qt_dir = (build_helper.QT_ROOT / args.qt_version / args.compiler).resolve()
     version_string = (PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip()

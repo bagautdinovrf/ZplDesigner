@@ -12,6 +12,7 @@
 #include <QImageReader>
 #include <QKeyEvent>
 #include <QKeySequence>
+#include <QLocale>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
@@ -202,11 +203,11 @@ LabelCanvas::LabelCanvas(QWidget* parent)
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setRenderHint(QPainter::SmoothPixmapTransform, false);
     setMinimumSize(320, 260);
-    setAccessibleName(tr("Label design canvas"));
-    setAccessibleDescription(tr("Drag elements to arrange them. Ctrl/Shift + click or drag an empty area to select several.\n"
-                  "Drag an edge or corner handle to resize a single element. Ctrl + A: select all.\n"
-                  "Ctrl + wheel: zoom · Space + drag: pan · Alt: bypass snap\n"
-                  "Arrow keys: move 1 dot · Shift + arrow: move 10 dots"));
+    setAccessibleName(tr("Холст этикетки"));
+    setAccessibleDescription(tr("Перетаскивайте элементы для перемещения. Ctrl/Shift + щелчок или рамка на пустом месте — выделение нескольких элементов.\n"
+                  "Потяните маркер на стороне или в углу, чтобы изменить размер элемента. Ctrl + A — выделить всё.\n"
+                  "Ctrl + колесо — масштаб · Пробел + перетаскивание — перемещение вида · Alt — без привязки\n"
+                  "Стрелки — перемещение на 1 точку принтера · Shift + стрелки — на 10 точек"));
     m_horizontalRuler = new QWidget(viewport());
     m_verticalRuler = new QWidget(viewport());
     m_horizontalRuler->setObjectName(QStringLiteral("horizontalRuler"));
@@ -849,7 +850,9 @@ void LabelCanvas::paintSmartGuides(QPainter* painter, const QRectF& bounds) cons
         const QPoint tick = side < 2 ? QPoint(0, 3) : QPoint(3, 0);
         painter->drawLine(from - tick, from + tick);
         painter->drawLine(to - tick, to + tick);
-        const QString text = tr("%1 dots").arg(qRound(distance.dots));
+        const QString text = m_layout.unit == CanvasUnit::Millimeters
+            ? tr("%1 мм").arg(locale().toString(distance.dots * 25.4 / std::max(1, m_document.dpi), 'f', 2))
+            : tr("%1 dots").arg(locale().toString(qRound(distance.dots)));
         const QSize size(painter->fontMetrics().horizontalAdvance(text) + 8,
                          painter->fontMetrics().height() + 4);
         const QPoint center = (from + to) / 2;

@@ -18,6 +18,7 @@ from uuid import uuid4
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+BUILD_ROOT = PROJECT_ROOT / "build_agent"
 QT_ROOT = Path(os.environ.get("QT_ROOT", "C:/Qt"))
 QT_TOOLS = QT_ROOT / "Tools"
 
@@ -72,10 +73,10 @@ def capture_environment(qt_dir: Path, compiler: str) -> dict[str, str]:
 
 
 def checked_build_dir(path: Path) -> Path:
-    """Limit generated trees, including all deletion, to project build_* dirs."""
+    """Limit generated trees and deletion to build_* children of build_agent."""
     resolved = path.resolve()
-    if resolved.parent != PROJECT_ROOT or not resolved.name.startswith("build_"):
-        raise ValueError(f"Build directory must be a build_* child of {PROJECT_ROOT}: {resolved}")
+    if BUILD_ROOT.resolve() != BUILD_ROOT or resolved.parent != BUILD_ROOT or not resolved.name.startswith("build_"):
+        raise ValueError(f"Build directory must be a build_* child of {BUILD_ROOT}: {resolved}")
     return resolved
 
 
@@ -91,14 +92,26 @@ def cached_compiler(build_dir: Path) -> Path | None:
 
 def run(command: list[str], environment: dict[str, str]) -> None:
     print("+", subprocess.list2cmdline(command), flush=True)
-    result = subprocess.run(command, cwd=PROJECT_ROOT, env=environment, check=False)
+    BUILD_ROOT.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(command, cwd=BUILD_ROOT, env=environment, check=False)
     if result.returncode:
         raise SystemExit(result.returncode)
 
 
 def configure(args: argparse.Namespace, environment: dict[str, str], qt_dir: Path) -> None:
+    fresh = []
+    cache = args.build_dir / "CMakeCache.txt"
+    if cache.is_file():
+        for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("CMAKE_CACHEFILE_DIR:INTERNAL="):
+                if Path(line.split("=", 1)[1]).resolve() != args.build_dir.resolve():
+                    # CMake caches contain absolute paths. Regenerate after a move,
+                    # preserving logs, screenshots, and other build artifacts.
+                    fresh = ["--fresh"]
+                break
     run([
         str(QT_TOOLS / "CMake_64/bin/cmake.exe"),
+        *fresh,
         "-S", str(PROJECT_ROOT), "-B", str(args.build_dir), "-G", "Ninja",
         f"-DCMAKE_BUILD_TYPE={args.config}",
         f"-DCMAKE_PREFIX_PATH={qt_dir}",
@@ -143,7 +156,7 @@ def main() -> int:
     parser.add_argument("--qt-version", default="6.11.2")
     parser.add_argument("--compiler", default="msvc2022_64")
     parser.add_argument("--qtzpl-source-dir", type=Path, default=PROJECT_ROOT.parent / "qt-zpl")
-    parser.add_argument("--build-dir", type=Path, help="Project-local build_* directory")
+    parser.add_argument("--build-dir", type=Path, help="build_* directory directly inside the project's build_agent")
     parser.add_argument("--target", default="all")
     parser.add_argument("--parallel", type=int, default=4)
     parser.add_argument("--clean", action="store_true")
@@ -156,7 +169,7 @@ def main() -> int:
         parser.error("This helper initializes a Windows Qt/MSVC kit; use CMake directly on other platforms")
     if args.parallel < 1:
         parser.error("--parallel must be positive")
-    args.build_dir = checked_build_dir(args.build_dir or PROJECT_ROOT / f"build_agent_{args.config.casefold()}")
+    args.build_dir = checked_build_dir(args.build_dir or BUILD_ROOT / f"build_agent_{args.config.casefold()}")
     args.qtzpl_source_dir = args.qtzpl_source_dir.resolve()
     qt_dir = (QT_ROOT / args.qt_version / args.compiler).resolve()
     if not qt_dir.is_dir():

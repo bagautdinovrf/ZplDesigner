@@ -114,6 +114,7 @@ BarcodeOptionsDialog::BarcodeOptionsDialog(const Element& element, CanvasUnit un
     }
     status_ = new QLabel(this); status_->setWordWrap(true); layout->addWidget(status_);
     buttons_ = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this); layout->addWidget(buttons_);
+    buttons_->button(QDialogButtonBox::Ok)->setText(tr("Применить"));
     connect(buttons_, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons_, &QDialogButtonBox::rejected, this, &QDialog::reject);
     validateOptions();

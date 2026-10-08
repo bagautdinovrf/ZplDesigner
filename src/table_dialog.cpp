@@ -57,6 +57,7 @@ TableDialog::TableDialog(const Element& element, CanvasUnit unit, int dpi, QWidg
     result_ = new QLabel(this); result_->setWordWrap(true); result_->setObjectName(QStringLiteral("tableSizeResult"));
     layout->addWidget(result_);
     buttons_ = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    buttons_->button(QDialogButtonBox::Ok)->setText(tr("Применить"));
     layout->addWidget(buttons_);
     connect(buttons_, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons_, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -131,7 +132,7 @@ void TableDialog::validateSize() {
         for (int width : element_.tableColumnWidths) valid = valid && element_.thickness <= width;
         for (int height : element_.tableRowHeights) valid = valid && element_.thickness <= height;
     }
-    result_->setText(valid ? tr("%1 × %2 dots · %3 × %4 мм. Текст ограничен размерами ячейки. Уменьшение числа строк/колонок удаляет соответствующие ячейки после нажатия OK.")
+    result_->setText(valid ? tr("%1 × %2 dots · %3 × %4 мм. Текст ограничен размерами ячейки. Уменьшение числа строк/колонок удаляет соответствующие ячейки после нажатия «Применить».")
         .arg(element_.width).arg(element_.height).arg(element_.width * 25.4 / dpi_, 0, 'f', 3)
         .arg(element_.height * 25.4 / dpi_, 0, 'f', 3)
         : tr("Проверьте размеры: до 4096 dots на сторону; высота строки должна вмещать буквы и отступы, толщина границ — помещаться в ячейку; до 1024 символов в ячейке."));

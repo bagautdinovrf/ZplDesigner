@@ -1,15 +1,23 @@
 #include "ui_translations.hpp"
+#include "print_dialog.hpp"
 
 #include <QAbstractButton>
 #include <QApplication>
+#include <QComboBox>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QInputDialog>
+#include <QLineEdit>
 #include <QLocale>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QScopeGuard>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QTranslator>
+#include <QUuid>
 #include <QtTest>
 
 using namespace Designer;
@@ -24,6 +32,7 @@ private slots:
     void standardButtonsAreRussian();
     void messageDetailsAndInputButtonsAreRussian();
     void staticMessagesAreRussian();
+    void printerProfileNameDialogsAreRussian();
 };
 
 void UiTranslationTests::initTestCase()
@@ -41,7 +50,7 @@ void UiTranslationTests::standardButtonsAreRussian_data()
 {
     QTest::addColumn<int>("standardButton");
     QTest::addColumn<QString>("caption");
-    QTest::newRow("ok") << int(QMessageBox::Ok) << u"ОК"_s;
+    QTest::newRow("ok") << int(QMessageBox::Ok) << u"Принять"_s;
     QTest::newRow("save") << int(QMessageBox::Save) << u"Сохранить"_s;
     QTest::newRow("save-all") << int(QMessageBox::SaveAll) << u"Сохранить все"_s;
     QTest::newRow("open") << int(QMessageBox::Open) << u"Открыть"_s;
@@ -89,7 +98,7 @@ void UiTranslationTests::messageDetailsAndInputButtonsAreRussian()
     QCOMPARE(details->text(), u"Скрыть подробности..."_s);
 
     QInputDialog input;
-    QCOMPARE(input.okButtonText(), u"ОК"_s);
+    QCOMPARE(input.okButtonText(), u"Принять"_s);
     QCOMPARE(input.cancelButtonText(), u"Отмена"_s);
 }
 
@@ -111,7 +120,7 @@ void UiTranslationTests::staticMessagesAreRussian()
 
     dismiss.start();
     QCOMPARE(QMessageBox::information(nullptr, u"Готово"_s, u"Этикетка напечатана"_s), QMessageBox::Ok);
-    QCOMPARE(captions, QStringList{u"ОК"_s});
+    QCOMPARE(captions, QStringList{u"Принять"_s});
     captions.clear();
     dismiss.start();
     QCOMPARE(QMessageBox::question(nullptr, u"Сохранить изменения?"_s, u"Этикетка изменена"_s,
@@ -121,6 +130,71 @@ void UiTranslationTests::staticMessagesAreRussian()
     QStringList expected{u"Сохранить"_s, u"Не сохранять"_s, u"Отмена"_s};
     expected.sort();
     QCOMPARE(captions, expected);
+}
+
+void UiTranslationTests::printerProfileNameDialogsAreRussian()
+{
+    const auto previousName = QCoreApplication::applicationName();
+    const bool previousTestMode = QStandardPaths::isTestModeEnabled();
+    QStandardPaths::setTestModeEnabled(true);
+    QCoreApplication::setApplicationName(u"profile-translation-%1"_s.arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+    const auto path = printerProfilesPath();
+    const auto restore = qScopeGuard([&] {
+        QFile::remove(path);
+        QDir().rmdir(QFileInfo(path).absolutePath());
+        QCoreApplication::setApplicationName(previousName);
+        QStandardPaths::setTestModeEnabled(previousTestMode);
+    });
+
+    PrintDialog dialog(sampleDocument());
+    auto* destination = dialog.findChild<QComboBox*>(u"printDestination"_s);
+    auto* host = dialog.findChild<QLineEdit*>(u"printHost"_s);
+    auto* profiles = dialog.findChild<QComboBox*>(u"printProfiles"_s);
+    auto* save = dialog.findChild<QPushButton*>(u"printSaveProfile"_s);
+    auto* rename = dialog.findChild<QPushButton*>(u"printRenameProfile"_s);
+    QVERIFY(destination && host && profiles && save && rename);
+    destination->setCurrentIndex(destination->findData(int(PrintConnection::Tcp)));
+    host->setText(u"192.0.2.5"_s);
+
+    QStringList captions;
+    QString initialName;
+    const auto editName = [&](QPushButton* action, const QString& name, bool accept) {
+        captions.clear();
+        initialName.clear();
+        QTimer::singleShot(0, &dialog, [&, name, accept] {
+            auto* input = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+            if (!input) return;
+            captions = {input->okButtonText(), input->cancelButtonText()};
+            initialName = input->textValue();
+            input->setTextValue(name);
+            auto* buttons = input->findChild<QDialogButtonBox*>();
+            if (buttons) buttons->button(accept ? QDialogButtonBox::Ok : QDialogButtonBox::Cancel)->click();
+            else input->reject();
+        });
+        action->click();
+    };
+
+    editName(save, u"Отменённый профиль"_s, false);
+    QCOMPARE(captions, (QStringList{u"Сохранить"_s, u"Отмена"_s}));
+    QVERIFY(!QFile::exists(path));
+    editName(save, u"  Склад  "_s, true);
+    QCOMPARE(captions, (QStringList{u"Сохранить"_s, u"Отмена"_s}));
+    auto stored = loadPrinterProfiles();
+    QVERIFY(stored && stored->size() == 1);
+    QCOMPARE(stored->front().name, u"Склад"_s);
+    QCOMPARE(profiles->currentText(), u"Склад"_s);
+
+    editName(rename, u"  Новый склад  "_s, true);
+    QCOMPARE(captions, (QStringList{u"Переименовать"_s, u"Отмена"_s}));
+    QCOMPARE(initialName, u"Склад"_s);
+    stored = loadPrinterProfiles();
+    QVERIFY(stored && stored->size() == 1);
+    QCOMPARE(stored->front().name, u"Новый склад"_s);
+    editName(rename, u"Отменённое имя"_s, false);
+    QCOMPARE(captions, (QStringList{u"Переименовать"_s, u"Отмена"_s}));
+    stored = loadPrinterProfiles();
+    QVERIFY(stored && stored->size() == 1);
+    QCOMPARE(stored->front().name, u"Новый склад"_s);
 }
 
 QTEST_MAIN(UiTranslationTests)

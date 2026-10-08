@@ -91,7 +91,7 @@ QrPayloadDialog::QrPayloadDialog(const QString& current, QWidget* parent) : QDia
     security->addItem(QStringLiteral("WEP"), QStringLiteral("WEP"));
     security->addItem(tr("Без пароля"), QStringLiteral("nopass")); form->addRow(tr("Защита"), security);
     field(QStringLiteral("name"), tr("Имя")); field(QStringLiteral("phone"), tr("Телефон"));
-    field(QStringLiteral("email"), tr("Email")); field(QStringLiteral("company"), tr("Организация"));
+    field(QStringLiteral("email"), tr("Эл. почта")); field(QStringLiteral("company"), tr("Организация"));
     auto* preview = new QPlainTextEdit(this); preview->setReadOnly(true); preview->setObjectName(QStringLiteral("qrPayloadPreview"));
     layout->addWidget(new QLabel(tr("Итоговое содержимое (включая пароль Wi-Fi)"), this)); layout->addWidget(preview);
     auto* error = new QLabel(this); error->setWordWrap(true); layout->addWidget(error);

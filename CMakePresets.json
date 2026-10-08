@@ -5,7 +5,7 @@
       "name": "debug",
       "displayName": "QtZpl Designer Debug",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build_agent_debug",
+      "binaryDir": "${sourceDir}/build_agent/build_agent_debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "QTZPL_SOURCE_DIR": "${sourceDir}/../qt-zpl",
@@ -16,7 +16,7 @@
       "name": "release",
       "displayName": "QtZpl Designer Release",
       "inherits": "debug",
-      "binaryDir": "${sourceDir}/build_agent_release",
+      "binaryDir": "${sourceDir}/build_agent/build_agent_release",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
     }
   ],

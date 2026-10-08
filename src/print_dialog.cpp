@@ -349,17 +349,22 @@ void PrintDialog::selectProfile()
 void PrintDialog::saveProfile()
 {
     if (!catalogueWritable_) return;
-    bool accepted = false;
     auto profile = currentProfile();
-    profile.name = QInputDialog::getText(this, u"Сохранить профиль"_s,
-        u"Имя профиля (существующее имя заменит его настройки)"_s, QLineEdit::Normal, profile.name, &accepted).trimmed();
-    if (!accepted) return;
+    QInputDialog nameDialog(this);
+    nameDialog.setObjectName(u"savePrinterProfileDialog"_s);
+    nameDialog.setWindowTitle(u"Сохранить профиль"_s);
+    nameDialog.setLabelText(u"Имя профиля (существующее имя заменит его настройки)"_s);
+    nameDialog.setTextValue(profile.name);
+    nameDialog.setOkButtonText(u"Сохранить"_s);
+    nameDialog.setCancelButtonText(u"Отмена"_s);
+    if (nameDialog.exec() != QDialog::Accepted) return;
+    profile.name = nameDialog.textValue().trimmed();
     auto updated = catalogue_;
     const auto it = std::ranges::find_if(updated, [&](const auto& entry) { return entry.name.compare(profile.name, Qt::CaseInsensitive) == 0; });
     if (it == updated.end()) updated.append(profile);
     else *it = profile;
     const auto saved = savePrinterProfiles(updated);
-    if (!saved) { QMessageBox::warning(this, u"Профили принтеров"_s, saved.error()); return; }
+    if (!saved) { QMessageBox::warning(this, u"Профили принтеров"_s, saved.error(), QMessageBox::Close); return; }
     catalogue_ = std::move(updated);
     refreshProfiles(profile.name);
     status_->setText(u"Профиль «%1» сохранён локально."_s.arg(profile.name));
@@ -368,16 +373,22 @@ void PrintDialog::saveProfile()
 void PrintDialog::renameProfile()
 {
     if (!catalogueWritable_ || profiles_->currentIndex() <= 0) return;
-    bool accepted = false;
     const auto oldName = profiles_->currentData().toString();
-    const auto name = QInputDialog::getText(this, u"Имя профиля"_s, u"Новое имя"_s, QLineEdit::Normal, oldName, &accepted).trimmed();
-    if (!accepted) return;
+    QInputDialog nameDialog(this);
+    nameDialog.setObjectName(u"renamePrinterProfileDialog"_s);
+    nameDialog.setWindowTitle(u"Имя профиля"_s);
+    nameDialog.setLabelText(u"Новое имя"_s);
+    nameDialog.setTextValue(oldName);
+    nameDialog.setOkButtonText(u"Переименовать"_s);
+    nameDialog.setCancelButtonText(u"Отмена"_s);
+    if (nameDialog.exec() != QDialog::Accepted) return;
+    const auto name = nameDialog.textValue().trimmed();
     auto updated = catalogue_;
     const auto it = std::ranges::find(updated, oldName, &PrinterProfile::name);
     if (it == updated.end()) return;
     it->name = name;
     const auto saved = savePrinterProfiles(updated);
-    if (!saved) { QMessageBox::warning(this, u"Профили принтеров"_s, saved.error()); return; }
+    if (!saved) { QMessageBox::warning(this, u"Профили принтеров"_s, saved.error(), QMessageBox::Close); return; }
     catalogue_ = std::move(updated);
     refreshProfiles(name);
     status_->setText(u"Профиль переименован."_s);
@@ -390,7 +401,7 @@ void PrintDialog::deleteProfile()
     auto updated = catalogue_;
     updated.removeIf([&](const auto& entry) { return entry.name == name; });
     const auto saved = savePrinterProfiles(updated);
-    if (!saved) { QMessageBox::warning(this, u"Профили принтеров"_s, saved.error()); return; }
+    if (!saved) { QMessageBox::warning(this, u"Профили принтеров"_s, saved.error(), QMessageBox::Close); return; }
     catalogue_ = std::move(updated);
     refreshProfiles();
     // Keep the current job settings, but do not leave a phantom selected profile.
@@ -445,6 +456,7 @@ void PrintDialog::editPrinterParameters()
     auto* length = spin(u"Макс. длина носителя, dots"_s, u"printerMaximumLength"_s, parameters_.maximumLength, 1, 32000);
     layout->addLayout(form);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(u"Применить"_s);
     auto* reset = buttons->addButton(u"Все по умолчанию"_s, QDialogButtonBox::ResetRole);
     connect(reset, &QPushButton::clicked, &dialog, [=] {
         for (auto* editor : {darkness, speed, tear, top, shift, length}) editor->setValue(editor->minimum());
@@ -502,8 +514,8 @@ void PrintDialog::submit()
             dialog->buttons_->button(QDialogButtonBox::Close)->setText(u"Закрыть"_s);
             dialog->status_->setText(*result ? result->value().message : result->error());
             dialog->refreshOptions();
-        } else if (*result) QMessageBox::information(messageParent, u"Печать этикетки"_s, result->value().message);
-        else QMessageBox::warning(messageParent, u"Печать этикетки"_s, result->error());
+        } else if (*result) QMessageBox::information(messageParent, u"Печать этикетки"_s, result->value().message, QMessageBox::Close);
+        else QMessageBox::warning(messageParent, u"Печать этикетки"_s, result->error(), QMessageBox::Close);
     });
     connect(qApp, &QCoreApplication::aboutToQuit, worker, [worker, quitting] {
         quitting->store(true);

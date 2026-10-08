@@ -1301,6 +1301,23 @@ void CanvasTests::smartGuidesAndDistanceHintsAreTransientOverlays()
     const QRect gap(qRound(gapViewport.x() * dpr), qRound(gapViewport.y() * dpr),
                     qRound(gapViewport.width() * dpr), qRound(gapViewport.height() * dpr));
     QVERIFY(guided.copy(gap) != bypassed.copy(gap));
+
+    // Units and printer DPI affect only the transient distance annotation.
+    // Keep the same live drag and crop inside the paper, away from its caption.
+    QTest::mouseEvent(QTest::MouseMove, canvas_->viewport(), Qt::NoButton, Qt::NoModifier, viewPoint({64, 52}));
+    settings.unit = Designer::CanvasUnit::Dots;
+    canvas_->setLayoutSettings(settings);
+    const QImage dots = canvas_->viewport()->grab().toImage().copy(gap);
+    QVERIFY(dots != guided.copy(gap));
+    auto highDpi = document_;
+    highDpi.dpi = 300;
+    canvas_->setDocument(highDpi, preview_);
+    QCOMPARE(canvas_->viewport()->grab().toImage().copy(gap), dots);
+    settings.unit = Designer::CanvasUnit::Millimeters;
+    canvas_->setLayoutSettings(settings);
+    QVERIFY(canvas_->viewport()->grab().toImage().copy(gap) != guided.copy(gap));
+    canvas_->setDocument(document_, preview_);
+    QCOMPARE(canvas_->viewport()->grab().toImage().copy(gap), guided.copy(gap));
     QCOMPARE(Designer::toZpl(document_), source);
     QCOMPARE(Designer::renderPreview(document_)->image, preview_.image);
     QTest::keyClick(canvas_.get(), Qt::Key_Escape);

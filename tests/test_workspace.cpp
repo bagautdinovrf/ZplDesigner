@@ -11,6 +11,7 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLabel>
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QSpinBox>
@@ -36,6 +37,9 @@ private slots:
     void focusGivesSpaceToCanvasAndRestoresBalance();
     void panelsCanBeReopenedWithoutLeavingFocus();
     void focusPropertiesAvoidSourceAndPreview();
+    void focusPropertiesKeepClearOfZoomControls();
+    void focusCoordinatesFollowDisplayUnits();
+    void focusSummarySurvivesDocumentReset();
     void modeSwitchPreservesPendingSourceAndHistory();
     void themeChangesColorsWithoutRebuildingEditors();
     void themeAndModePreservePrinterGeometryAndWhitePaper();
@@ -265,6 +269,78 @@ void WorkspaceTests::focusPropertiesAvoidSourceAndPreview()
     QCOMPARE(canvas->selectedIndices(), selection);
     QCOMPARE(sourceChanges.count(), 0);
     QCOMPARE(documentChanges.count(), 0);
+}
+
+void WorkspaceTests::focusPropertiesKeepClearOfZoomControls()
+{
+    auto* card = window_->findChild<QWidget*>(u"focusInspectorCard"_s);
+    auto* inspector = window_->findChild<QTabWidget*>(u"inspectorTabs"_s);
+    auto* zoom = window_->findChild<QWidget*>(u"canvasZoomControls"_s);
+    auto* editor = window_->findChild<QSplitter*>(u"editorSplitter"_s);
+    QVERIFY(card); QVERIFY(inspector); QVERIFY(zoom); QVERIFY(editor);
+    action("workspaceFocus")->trigger();
+    action("workspaceProperties")->trigger();
+    for (const auto size : {QSize(1360, 850), QSize(1000, 650), QSize(1200, 760)}) {
+        window_->resize(size);
+        for (const int tab : {0, 1}) {
+            inspector->setCurrentIndex(tab);
+            QApplication::processEvents();
+            const QRect cardBounds(card->mapTo(window_.get(), QPoint{}), card->size());
+            const QRect editorBounds(editor->mapTo(window_.get(), QPoint{}), editor->size());
+            const int zoomTop = zoom->mapTo(window_.get(), QPoint{}).y();
+            QVERIFY(card->isVisible());
+            QVERIFY(editorBounds.contains(cardBounds));
+            QVERIFY(zoomTop - cardBounds.bottom() - 1 >= 14);
+        }
+    }
+}
+
+void WorkspaceTests::focusCoordinatesFollowDisplayUnits()
+{
+    auto* canvas = window_->findChild<LabelCanvas*>();
+    auto* session = window_->findChild<DocumentSession*>();
+    auto* summary = window_->findChild<QLabel*>(u"focusSelectionSummary"_s);
+    QVERIFY(canvas); QVERIFY(session); QVERIFY(summary);
+    canvas->setSelectedIndex(0);
+    action("workspaceFocus")->trigger();
+    const auto source = toZpl(session->document());
+    for (const int dpi : {203, 300, 600}) {
+        auto document = session->document();
+        document.dpi = dpi;
+        session->commit(document, u"Разрешение"_s);
+        for (const auto unit : {CanvasUnit::Dots, CanvasUnit::Millimeters}) {
+            auto settings = session->layoutSettings();
+            settings.unit = unit;
+            session->setLayoutSettings(settings);
+            const auto coordinate = [&](int dots) {
+                return unit == CanvasUnit::Millimeters
+                    ? window_->locale().toString(dots * 25.4 / dpi, 'f', 2)
+                    : window_->locale().toString(dots);
+            };
+            const auto& element = session->document().elements[0];
+            QVERIFY(summary->text().contains(u"X %1   Y %2 %3"_s.arg(coordinate(element.x), coordinate(element.y),
+                unit == CanvasUnit::Millimeters ? u"мм"_s : u"dots"_s)));
+            QCOMPARE(toZpl(session->document()), source);
+        }
+    }
+}
+
+void WorkspaceTests::focusSummarySurvivesDocumentReset()
+{
+    auto* canvas = window_->findChild<LabelCanvas*>();
+    auto* session = window_->findChild<DocumentSession*>();
+    auto* summary = window_->findChild<QLabel*>(u"focusSelectionSummary"_s);
+    QVERIFY(canvas); QVERIFY(session); QVERIFY(summary);
+    action("workspaceFocus")->trigger();
+    canvas->setSelectedIndex(0);
+    QVERIFY(summary->text().contains(u"X "));
+    // File open/recovery resets layout before notifying the new document.
+    // Its previous selection is still on the canvas during that first signal.
+    auto empty = session->document();
+    empty.elements.clear();
+    session->reset(empty);
+    QVERIFY(canvas->selectedIndices().isEmpty());
+    QCOMPARE(summary->text(), u"Выберите объект на этикетке"_s);
 }
 
 void WorkspaceTests::modeSwitchPreservesPendingSourceAndHistory()

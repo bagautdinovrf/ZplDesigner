@@ -33,7 +33,7 @@ CanvasLayoutDialog::CanvasLayoutDialog(CanvasLayoutSettings settings, QSize page
     auto* units = new QComboBox(this);
     units->setObjectName(u"canvasUnits"_s);
     units->addItem(u"Миллиметры"_s, int(CanvasUnit::Millimeters));
-    units->addItem(u"Dots"_s, int(CanvasUnit::Dots));
+    units->addItem(u"Точки"_s, int(CanvasUnit::Dots));
     units->setCurrentIndex(units->findData(int(settings_.unit)));
     form->addRow(u"Единицы линеек и настроек"_s, units);
     auto* visibility = new QHBoxLayout;
