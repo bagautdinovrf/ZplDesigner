@@ -60,6 +60,7 @@ private:
     void applyWorkspaceLayout();
     void rememberWorkspaceSizes();
     void persistWorkspace();
+    void restoreCanvasZoom();
     void refreshFocusSummary();
     void positionWorkspaceOverlays();
     bool eventFilter(QObject* watched, QEvent* event) override;

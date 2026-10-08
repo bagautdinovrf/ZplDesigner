@@ -24,6 +24,7 @@ struct WorkspacePreferences {
     bool codeOnLeft = true;
     bool selectionSync = true;
     QList<int> editorSizes{500, 500};
+    int canvasZoomPercent = 0; // 0 keeps the label fitted to the canvas.
     QStringList hiddenToolbarCommands;
 };
 

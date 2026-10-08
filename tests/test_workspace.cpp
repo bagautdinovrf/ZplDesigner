@@ -14,12 +14,15 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QPlainTextEdit>
+#include <QSettings>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QTabWidget>
+#include <QTemporaryDir>
 #include <QTextCursor>
 #include <QUuid>
+#include <QWheelEvent>
 #include <QtTest>
 #include <QtMath>
 
@@ -44,6 +47,9 @@ private slots:
     void themeChangesColorsWithoutRebuildingEditors();
     void themeAndModePreservePrinterGeometryAndWhitePaper();
     void preferencesRestoreAcrossWindows();
+    void canvasZoomPreferencesValidateStoredValues_data();
+    void canvasZoomPreferencesValidateStoredValues();
+    void canvasZoomSurvivesWindowAndDocumentLifecycle();
     void toolbarPreferencesDefaultVisibleAndPersistHiddenCommands();
     void optionalWorkspaceScreenshots();
 
@@ -526,6 +532,151 @@ void WorkspaceTests::preferencesRestoreAcrossWindows()
     QVERIFY(layers->isVisible());
     QVERIFY(inspector->isVisible());
     QCOMPARE(window_->findChild<QSplitter*>(u"workspaceSplitter"_s)->sizes(), balancedSizes);
+}
+
+void WorkspaceTests::canvasZoomPreferencesValidateStoredValues_data()
+{
+    QTest::addColumn<QVariant>("storedValue");
+    QTest::addColumn<int>("expectedPercent");
+    QTest::newRow("missing") << QVariant{} << 0;
+    QTest::newRow("fit") << QVariant(0) << 0;
+    QTest::newRow("minimum") << QVariant(10) << 10;
+    QTest::newRow("preset") << QVariant(150) << 150;
+    QTest::newRow("custom") << QVariant(137) << 137;
+    QTest::newRow("maximum") << QVariant(800) << 800;
+    QTest::newRow("negative") << QVariant(-1) << 0;
+    QTest::newRow("below-minimum") << QVariant(9) << 0;
+    QTest::newRow("above-maximum") << QVariant(801) << 0;
+    QTest::newRow("fractional") << QVariant(u"150.5"_s) << 0;
+    QTest::newRow("malformed") << QVariant(u"invalid"_s) << 0;
+}
+
+void WorkspaceTests::canvasZoomPreferencesValidateStoredValues()
+{
+    QFETCH(QVariant, storedValue);
+    QFETCH(int, expectedPercent);
+    window_.reset();
+    {
+        QSettings settings(workspacePreferencesPath(), QSettings::IniFormat);
+        settings.remove(u"canvas/zoomPercent"_s);
+        if (storedValue.isValid()) settings.setValue(u"canvas/zoomPercent"_s, storedValue);
+        settings.sync();
+        QCOMPARE(settings.status(), QSettings::NoError);
+    }
+    QCOMPARE(loadWorkspacePreferences().canvasZoomPercent, expectedPercent);
+    bool integer = false;
+    const int percent = storedValue.toString().toInt(&integer);
+    if (integer) {
+        auto preferences = loadWorkspacePreferences();
+        preferences.canvasZoomPercent = percent;
+        QVERIFY(saveWorkspacePreferences(preferences));
+        QCOMPARE(loadWorkspacePreferences().canvasZoomPercent, expectedPercent);
+    }
+}
+
+void WorkspaceTests::canvasZoomSurvivesWindowAndDocumentLifecycle()
+{
+    auto* canvas = window_->findChild<LabelCanvas*>();
+    auto* zoom = window_->findChild<QComboBox*>(u"canvasZoom"_s);
+    QVERIFY(canvas); QVERIFY(zoom);
+    const auto originalSource = toZpl(window_->document());
+    const int fixedIndex = zoom->findData(150);
+    QVERIFY(fixedIndex > 0);
+    zoom->setCurrentIndex(fixedIndex - 1);
+    QTest::keyClick(zoom, Qt::Key_Down);
+    QCOMPARE(zoom->currentData().toInt(), 150);
+    QVERIFY(!canvas->isFitMode());
+    QCOMPARE(canvas->transform().m11(), 1.5);
+    QCOMPARE(loadWorkspacePreferences().canvasZoomPercent, 150);
+    QCOMPARE(toZpl(window_->document()), originalSource);
+
+    window_.reset();
+    createWindow();
+    canvas = window_->findChild<LabelCanvas*>();
+    zoom = window_->findChild<QComboBox*>(u"canvasZoom"_s);
+    QVERIFY(canvas); QVERIFY(zoom);
+    // Drain startup callbacks and delayed preview/layout work before checking
+    // that a queued fit did not overwrite the selected manual percentage.
+    QTest::qWait(150);
+    window_->resize(1100, 700);
+    QTest::qWait(150);
+    QVERIFY(!canvas->isFitMode());
+    QCOMPARE(canvas->transform().m11(), 1.5);
+    QCOMPARE(zoom->currentData().toInt(), 150);
+    QCOMPARE(loadWorkspacePreferences().canvasZoomPercent, 150);
+
+    QTemporaryDir directory(QDir(settingsDirectory_).filePath(u"zoom-label-XXXXXX"_s));
+    QVERIFY(directory.isValid());
+    const auto labelPath = directory.filePath(u"different-size.zpl"_s);
+    {
+        QFile label(labelPath);
+        QVERIFY(label.open(QIODevice::WriteOnly));
+        const QByteArray source("^XA\n^PW720\n^LL480\n^FO20,20^GB80,40,2^FS\n^XZ\n");
+        QCOMPARE(label.write(source), source.size());
+    }
+    QVERIFY(window_->openFile(labelPath));
+    QTest::qWait(150);
+    QCOMPARE(window_->document().width, 720);
+    QVERIFY(!canvas->isFitMode());
+    QCOMPARE(canvas->transform().m11(), 1.5);
+    QCOMPARE(loadWorkspacePreferences().canvasZoomPercent, 150);
+
+    const QPoint cursor = canvas->viewport()->rect().center();
+    QWheelEvent wheel(cursor, canvas->viewport()->mapToGlobal(cursor), {}, {0, 120},
+                      Qt::NoButton, Qt::ControlModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(canvas->viewport(), &wheel);
+    QVERIFY(!canvas->isFitMode());
+    QCOMPARE(qRound(canvas->transform().m11() * 100), 180);
+    QCOMPARE(zoom->currentData().toInt(), 180);
+    QCOMPARE(loadWorkspacePreferences().canvasZoomPercent, 180);
+
+    window_.reset();
+    createWindow();
+    canvas = window_->findChild<LabelCanvas*>();
+    zoom = window_->findChild<QComboBox*>(u"canvasZoom"_s);
+    QVERIFY(canvas); QVERIFY(zoom);
+    QTest::qWait(150);
+    QVERIFY(!canvas->isFitMode());
+    QCOMPARE(canvas->transform().m11(), 1.8);
+    QCOMPARE(zoom->currentData().toInt(), 180);
+    QAction* fresh = nullptr;
+    for (auto* candidate : window_->findChildren<QAction*>()) {
+        if (candidate->shortcut() == QKeySequence(QKeySequence::New)) {
+            fresh = candidate;
+            break;
+        }
+    }
+    QVERIFY(fresh);
+    fresh->trigger();
+    QTest::qWait(150);
+    QCOMPARE(window_->document().width, DesignDocument{}.width);
+    QVERIFY(!canvas->isFitMode());
+    QCOMPARE(canvas->transform().m11(), 1.8);
+    auto* width = window_->findChild<QSpinBox*>(u"labelWidth"_s);
+    QVERIFY(width);
+    width->setValue(width->value() + 32);
+    QTest::qWait(150);
+    QVERIFY(!canvas->isFitMode());
+    QCOMPARE(canvas->transform().m11(), 1.8);
+
+    // Selecting Fit must store the mode, not the percentage it calculated for
+    // this particular paper and viewport.
+    QTest::keyClick(zoom, Qt::Key_Home);
+    QVERIFY(canvas->isFitMode());
+    QCOMPARE(zoom->currentData().toInt(), 0);
+    QCOMPARE(loadWorkspacePreferences().canvasZoomPercent, 0);
+    window_.reset();
+    createWindow();
+    canvas = window_->findChild<LabelCanvas*>();
+    QVERIFY(canvas);
+    QTest::qWait(150);
+    QVERIFY(canvas->isFitMode());
+    const qreal fittedScale = canvas->transform().m11();
+    window_->resize(1100, 700);
+    QTest::qWait(150);
+    QVERIFY(canvas->isFitMode());
+    QVERIFY(canvas->transform().m11() < fittedScale);
+    QCOMPARE(loadWorkspacePreferences().canvasZoomPercent, 0);
 }
 
 void WorkspaceTests::toolbarPreferencesDefaultVisibleAndPersistHiddenCommands()

@@ -462,7 +462,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // saved placement if its screen is no longer available.
     if (!workspacePreferences_.windowGeometry.isEmpty())
         restoreGeometry(workspacePreferences_.windowGeometry);
-    QTimer::singleShot(0, canvas_, &LabelCanvas::fitLabel);
+    // Initial layout/document fitting must not overwrite the saved choice.
+    restoreCanvasZoom();
+    connect(canvas_, &LabelCanvas::zoomChanged, this, [this](int percent) {
+        const int choice = canvas_->isFitMode() ? 0 : percent;
+        if (workspacePreferences_.canvasZoomPercent == choice) return;
+        workspacePreferences_.canvasZoomPercent = choice;
+        persistWorkspace();
+    });
+    QTimer::singleShot(0, this, &MainWindow::restoreCanvasZoom);
 }
 
 MainWindow::~MainWindow() {
@@ -1308,6 +1316,15 @@ void MainWindow::persistWorkspace() {
     workspacePreferences_.dark = designerTheme() == DesignerTheme::Dark;
     if (!saveWorkspacePreferences(workspacePreferences_))
         statusBar()->showMessage(QStringLiteral("Не удалось сохранить настройки рабочего пространства."), 5000);
+}
+
+void MainWindow::restoreCanvasZoom() {
+    if (workspacePreferences_.canvasZoomPercent == 0) {
+        canvas_->fitLabel();
+    } else {
+        canvas_->setZoomPercent(workspacePreferences_.canvasZoomPercent);
+        canvas_->centerOn(session_->document().width / 2.0, session_->document().height / 2.0);
+    }
 }
 
 void MainWindow::setWorkspaceMode(bool focus) {
@@ -2443,7 +2460,7 @@ void MainWindow::showRecoveryDialog(bool startup) {
     if (dialog.exec() != QDialog::Accepted || !list->currentItem() || !maybeSave()) return;
     const auto result = session_->recover(list->currentItem()->data(Qt::UserRole).toString());
     if (!result) { setNotice(result.error()); return; }
-    restoreDocument(session_->document()); selectElement(-1); refreshCanvasLayout(); refreshPreview(); canvas_->fitLabel();
+    restoreDocument(session_->document()); selectElement(-1); refreshCanvasLayout(); refreshPreview(); restoreCanvasZoom();
     if (session_->hasPendingSource()) editorTabs_->setCurrentIndex(1);
     setNotice(QStringLiteral("Черновик восстановлен. Сохраните проект, чтобы сохранить изменения."));
 }
@@ -2522,7 +2539,7 @@ void MainWindow::showLabelSetup() {
     next.width = qRound(width->value() * next.dpi / 25.4); next.height = qRound(height->value() * next.dpi / 25.4);
     if (next.width == session_->document().width && next.height == session_->document().height && next.dpi == session_->document().dpi) return;
     commitDocument(std::move(next), QStringLiteral("Формат этикетки в миллиметрах"));
-    canvas_->fitLabel();
+    restoreCanvasZoom();
 }
 
 void MainWindow::refreshCanvasLayout() {
@@ -2568,7 +2585,7 @@ bool MainWindow::applySource() {
 bool MainWindow::openFile(const QString& path) {
     auto result = session_->open(path);
     if (!result) { setNotice(result.error()); return false; }
-    selectElement(-1); codePending_ = session_->hasPendingSource(); refreshPreview(); canvas_->fitLabel(); updateTitle();
+    selectElement(-1); codePending_ = session_->hasPendingSource(); refreshPreview(); restoreCanvasZoom(); updateTitle();
     if (codePending_) { restoreDocument(session_->document()); editorTabs_->setCurrentIndex(1); }
     if (!session_->layoutWarning().isEmpty()) setNotice(session_->layoutWarning());
     return true;
@@ -2610,7 +2627,7 @@ bool MainWindow::maybeSave() {
 
 void MainWindow::newDocument() {
     if (!maybeSave()) return;
-    setDocument(DesignDocument{}); canvas_->fitLabel();
+    setDocument(DesignDocument{}); restoreCanvasZoom();
 }
 void MainWindow::chooseOpen() {
     if (!maybeSave()) return;
@@ -2625,7 +2642,7 @@ bool MainWindow::openPreset(const QString& path, int index) {
     auto imported = fromZpl(presets->at(index).source);
     if (!imported) { setNotice(imported.error()); return false; }
     setDocument(*imported);
-    canvas_->fitLabel();
+    restoreCanvasZoom();
     statusBar()->showMessage(QStringLiteral("Шаблон «%1» открыт. Сохранение создаст отдельный ZPL.").arg(presets->at(index).name), 10000);
     return true;
 }

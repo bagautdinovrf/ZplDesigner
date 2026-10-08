@@ -51,6 +51,18 @@ EditorLayout normalizedEditorLayout(int layout)
     }
 }
 
+int normalizedCanvasZoomPercent(int zoomPercent)
+{
+    return zoomPercent >= 10 && zoomPercent <= 800 ? zoomPercent : 0;
+}
+
+int readCanvasZoomPercent(const QSettings& settings)
+{
+    bool valid = false;
+    const int zoomPercent = settings.value(u"canvas/zoomPercent"_s, 0).toString().toInt(&valid);
+    return valid ? normalizedCanvasZoomPercent(zoomPercent) : 0;
+}
+
 bool readCodeOnLeft(const QSettings& settings)
 {
     const auto value = settings.value(u"editor/codeOnLeft"_s, true).toString().toLower();
@@ -83,6 +95,7 @@ WorkspacePreferences loadWorkspacePreferences()
     preferences.codeOnLeft = readCodeOnLeft(settings);
     preferences.selectionSync = settings.value(u"editor/selectionSync"_s, true).toBool();
     preferences.editorSizes = readSizes(settings, u"editor/sizes"_s, {500, 500});
+    preferences.canvasZoomPercent = readCanvasZoomPercent(settings);
     preferences.hiddenToolbarCommands = settings.value(u"toolbar/hiddenCommands"_s).toStringList();
     // Version 1 used the larger platform-style panels. Apply the concept's
     // initial widths once; later operator resizing remains persistent.
@@ -112,6 +125,7 @@ bool saveWorkspacePreferences(const WorkspacePreferences& preferences)
     settings.setValue(u"editor/codeOnLeft"_s, preferences.codeOnLeft);
     settings.setValue(u"editor/selectionSync"_s, preferences.selectionSync);
     settings.setValue(u"editor/sizes"_s, encodedSizes(preferences.editorSizes, {500, 500}));
+    settings.setValue(u"canvas/zoomPercent"_s, normalizedCanvasZoomPercent(preferences.canvasZoomPercent));
     settings.setValue(u"toolbar/hiddenCommands"_s, preferences.hiddenToolbarCommands);
     settings.sync();
     return settings.status() == QSettings::NoError;

@@ -36,6 +36,23 @@ constexpr int rulerThickness = 24;
 constexpr int maximumGuides = 128;
 constexpr qreal minimumZoom = 0.1;
 constexpr qreal maximumZoom = 8.0;
+constexpr int dimensionCaptionSpace = 36;
+
+QFont rulerFont(QFont font)
+{
+    font.setPixelSize(9);
+    return font;
+}
+
+QString rulerEndLabel(int dots, int dpi, CanvasUnit unit, const QLocale& locale)
+{
+    if (unit == CanvasUnit::Dots) return locale.toString(dots);
+    const qreal millimeters = dots * 25.4 / std::max(1, dpi);
+    QString text = locale.toString(millimeters, 'f', millimeters < 0.1 ? 2 : 1);
+    while (text.endsWith(locale.zeroDigit())) text.chop(locale.zeroDigit().size());
+    if (text.endsWith(locale.decimalPoint())) text.chop(locale.decimalPoint().size());
+    return text;
+}
 
 // Editor annotations are drawn on white paper in both themes. Keep their ink
 // dark enough for that surface while deriving its hue from the active palette.
@@ -422,9 +439,14 @@ void LabelCanvas::fitLabel()
     // Fit mode keeps a stable viewport; manual zoom restores scrollable bars.
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    const QRectF available(m_workspaceInsets.left(), m_workspaceInsets.top(),
-        std::max(1, viewport()->width() - m_workspaceInsets.left() - m_workspaceInsets.right()),
-        std::max(1, viewport()->height() - m_workspaceInsets.top() - m_workspaceInsets.bottom()));
+    const int rulerWidth = QFontMetrics(rulerFont(font())).horizontalAdvance(
+        rulerEndLabel(m_document.height, m_document.dpi, m_layout.unit, locale())) + 9;
+    const int leftInset = m_layout.rulersVisible ? std::max(m_workspaceInsets.left(), rulerWidth)
+                                               : m_workspaceInsets.left();
+    const QRectF available(leftInset, m_workspaceInsets.top(),
+        std::max(1, viewport()->width() - leftInset - m_workspaceInsets.right()),
+        std::max(1, viewport()->height() - m_workspaceInsets.top() - m_workspaceInsets.bottom()
+                        - dimensionCaptionSpace));
     const qreal scale = std::clamp(std::min(available.width() / m_document.width,
                                           available.height() / m_document.height),
                                    minimumZoom, maximumZoom);
@@ -967,21 +989,8 @@ void LabelCanvas::drawForeground(QPainter* painter, const QRectF& exposed)
     painter->setPen(cosmeticPen(designerColor(DesignerColor::Border)));
     painter->drawRect(page);
 
-    // Decorations use viewport coordinates to remain legible at every zoom.
-    painter->save();
-    painter->setWorldTransform(viewportTransform().inverted(), true);
-    const QRect viewportPage = mapFromScene(page).boundingRect();
     QFont captionFont = font();
     captionFont.setPixelSize(10);
-    painter->setFont(captionFont);
-    painter->setPen(designerColor(DesignerColor::Muted));
-    const QString caption = tr("%1 × %2 dots · %3 × %4 мм")
-        .arg(m_document.width).arg(m_document.height)
-        .arg(m_document.width * 25.4 / std::max(1, m_document.dpi), 0, 'f', 2)
-        .arg(m_document.height * 25.4 / std::max(1, m_document.dpi), 0, 'f', 2);
-    painter->drawText(QRect(viewportPage.left() - 60, viewportPage.bottom() + 14,
-                            viewportPage.width() + 120, 22), Qt::AlignCenter, caption);
-    painter->restore();
 
     // Invalid data is an editor annotation, never pixels in the QtZpl raster.
     const QColor errorColor(185, 47, 47);
@@ -1072,16 +1081,46 @@ void LabelCanvas::drawForeground(QPainter* painter, const QRectF& exposed)
         painter->setBrush(translucent(accentColor, 30));
         painter->drawEllipse(position, 8 / scale, 8 / scale);
     }
+
+    // Keep final dimensions readable even when zoom/pan moves the paper edge
+    // off screen or the paper is too small to accommodate the full caption.
+    painter->save();
+    painter->setWorldTransform(viewportTransform().inverted(), true);
+    painter->setFont(captionFont);
+    const QString caption = tr("%1 × %2 dots · %3 × %4 мм")
+        .arg(locale().toString(m_document.width), locale().toString(m_document.height),
+             locale().toString(m_document.width * 25.4 / std::max(1, m_document.dpi), 'f', 2),
+             locale().toString(m_document.height * 25.4 / std::max(1, m_document.dpi), 'f', 2));
+    const QRect viewportPage = mapFromScene(page).boundingRect();
+    const QRect available = viewport()->rect().marginsRemoved(QMargins(
+        8, 8, std::max(8, m_workspaceInsets.right()), std::max(8, m_workspaceInsets.bottom())));
+    const int captionWidth = std::min(painter->fontMetrics().horizontalAdvance(caption) + 12,
+                                      std::max(13, available.width()));
+    const QRect textBounds = painter->fontMetrics().boundingRect(
+        QRect(0, 0, captionWidth - 12, 0), Qt::AlignCenter | Qt::TextWordWrap, caption);
+    const QSize captionSize(captionWidth, std::max(22, textBounds.height() + 6));
+    const QPoint preferred(viewportPage.center().x() - captionSize.width() / 2,
+                           viewportPage.bottom() + 14);
+    const QRect captionRect(QPoint(
+        std::clamp(preferred.x(), available.left(), std::max(available.left(), available.right() - captionSize.width() + 1)),
+        std::clamp(preferred.y(), available.top(), std::max(available.top(), available.bottom() - captionSize.height() + 1))),
+        captionSize);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(designerColor(DesignerColor::Canvas));
+    painter->drawRoundedRect(captionRect, 3, 3);
+    painter->setPen(designerColor(DesignerColor::Muted));
+    painter->drawText(captionRect.adjusted(6, 3, -6, -3), Qt::AlignCenter | Qt::TextWordWrap, caption);
+    painter->restore();
     painter->restore();
 }
 
 void LabelCanvas::changeEvent(QEvent* event)
 {
     QGraphicsView::changeEvent(event);
-    if (event->type() != QEvent::PaletteChange) return;
+    if (event->type() != QEvent::PaletteChange && event->type() != QEvent::LocaleChange
+        && event->type() != QEvent::FontChange) return;
     viewport()->update();
-    for (auto* ruler : {m_horizontalRuler, m_verticalRuler})
-        if (ruler) ruler->update();
+    updateRulers();
 }
 
 void LabelCanvas::updateRulers()
@@ -1093,9 +1132,16 @@ void LabelCanvas::updateRulers()
     // Rulers belong to the paper, so panning never leaves a detached L-shaped
     // frame at the viewport edges. Child widgets preserve guide drag gestures.
     const QRect paper = mapFromScene(labelRect()).boundingRect();
-    m_horizontalRuler->setGeometry(paper.left(), paper.top() - rulerThickness,
-                                   paper.width(), 17);
-    m_verticalRuler->setGeometry(paper.left() - 30, paper.top(), rulerThickness, paper.height());
+    const QFontMetrics metrics(rulerFont(font()));
+    const int horizontalWidth = std::max(paper.width(), metrics.horizontalAdvance(
+        rulerEndLabel(m_document.width, m_document.dpi, m_layout.unit, locale())));
+    const int verticalWidth = std::max(rulerThickness, metrics.horizontalAdvance(
+        rulerEndLabel(m_document.height, m_document.dpi, m_layout.unit, locale())) + 3);
+    const int verticalHeight = std::max(paper.height(), metrics.height());
+    m_horizontalRuler->setGeometry(paper.right() - horizontalWidth + 1, paper.top() - rulerThickness,
+                                   horizontalWidth, 17);
+    m_verticalRuler->setGeometry(paper.left() - verticalWidth - 6, paper.bottom() - verticalHeight + 1,
+                                 verticalWidth, verticalHeight);
     for (auto* ruler : {m_horizontalRuler, m_verticalRuler}) {
         ruler->raise();
         ruler->update();
@@ -1106,9 +1152,7 @@ void LabelCanvas::paintRuler(QWidget* ruler, bool horizontal)
 {
     QPainter painter(ruler);
     paintWorkspaceBackdrop(&painter, ruler->rect(), m_layout.gridVisible, ruler->pos());
-    QFont rulerFont = font();
-    rulerFont.setPixelSize(9);
-    painter.setFont(rulerFont);
+    painter.setFont(rulerFont(font()));
     painter.setPen(designerColor(DesignerColor::Muted));
     if (!m_hasDocument) return;
     const qreal scale = std::max(minimumZoom, transform().m11());
@@ -1126,6 +1170,19 @@ void LabelCanvas::paintRuler(QWidget* ruler, bool horizontal)
     const QPointF first = mapToScene(QPoint(0, 0));
     const QPointF last = mapToScene(viewport()->rect().bottomRight());
     const int extent = horizontal ? m_document.width : m_document.height;
+    const QString endLabel = rulerEndLabel(extent, m_document.dpi, m_layout.unit, locale());
+    const int endWidth = painter.fontMetrics().horizontalAdvance(endLabel);
+    const int textHeight = painter.fontMetrics().height();
+    const QRect endRect = horizontal
+        ? QRect(ruler->width() - endWidth, 0, endWidth, ruler->height() - 2)
+        : QRect(0, ruler->height() - textHeight, ruler->width() - 3, textHeight);
+    const QRect reservedEnd = endRect.adjusted(-6, -6, 6, 6);
+    const auto drawTick = [&](int pixel) {
+        if (horizontal)
+            painter.drawLine(pixel, ruler->height() - 4, pixel, ruler->height() - 1);
+        else
+            painter.drawLine(ruler->width() - 3, pixel, ruler->width() - 1, pixel);
+    };
     const qreal start = std::max(0.0, horizontal ? first.x() : first.y());
     const qreal end = std::min(qreal(extent), horizontal ? last.x() : last.y());
     const int firstTick = static_cast<int>(std::ceil(start / stepDots));
@@ -1137,17 +1194,26 @@ void LabelCanvas::paintRuler(QWidget* ruler, bool horizontal)
                                                 : mapFromScene(QPointF(0, coordinate));
         const QPoint point = ruler->mapFrom(viewport(), viewportPoint);
         const int pixel = horizontal ? point.x() : point.y();
-        const QString label = QString::number(coordinate / dotsPerUnit, 'f', majorStep < 1 ? 1 : 0);
+        const QString label = locale().toString(coordinate / dotsPerUnit, 'f', majorStep < 1 ? 1 : 0);
         const int textWidth = painter.fontMetrics().horizontalAdvance(label);
-        const int textHeight = painter.fontMetrics().height();
         if (horizontal) {
             const int x = std::clamp(pixel - textWidth / 2, 0, std::max(0, ruler->width() - textWidth));
-            painter.drawText(QRect(x, 0, textWidth, ruler->height() - 2), Qt::AlignTop, label);
+            const QRect textRect(x, 0, textWidth, ruler->height() - 2);
+            if (!textRect.intersects(reservedEnd)) {
+                painter.drawText(textRect, Qt::AlignTop, label);
+                drawTick(pixel);
+            }
         } else {
             const int y = std::clamp(pixel - textHeight / 2, 0, std::max(0, ruler->height() - textHeight));
-            painter.drawText(QRect(0, y, ruler->width() - 3, textHeight), Qt::AlignRight, label);
+            const QRect textRect(0, y, ruler->width() - 3, textHeight);
+            if (!textRect.intersects(reservedEnd)) {
+                painter.drawText(textRect, Qt::AlignRight, label);
+                drawTick(pixel);
+            }
         }
     }
+    painter.drawText(endRect, horizontal ? Qt::AlignTop : Qt::AlignRight, endLabel);
+    drawTick(horizontal ? ruler->width() - 1 : ruler->height() - 1);
     painter.setPen(designerColor(DesignerColor::Border));
     if (horizontal)
         painter.drawLine(0, ruler->height() - 1, ruler->width(), ruler->height() - 1);

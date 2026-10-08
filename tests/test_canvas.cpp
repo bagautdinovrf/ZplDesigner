@@ -1,10 +1,15 @@
 #include "label_canvas.hpp"
+#include "designer_theme.hpp"
 
 #include <QApplication>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QEvent>
+#include <QFontMetrics>
 #include <QMimeData>
+#include <QLocale>
+#include <QPainter>
+#include <QPixmap>
 #include <QSignalSpy>
 #include <QScrollBar>
 #include <QTemporaryDir>
@@ -91,6 +96,8 @@ private slots:
     void rulerDragsCreateGuides();
     void guidesMoveDeleteAndCancel();
     void rulerDragTracksZoomAndPan();
+    void rulersShowFinalLabelDimensions_data();
+    void rulersShowFinalLabelDimensions();
     void guideAndMarginSnappingUsesScreenTolerance();
     void resizingSnapsToGuides();
     void layoutSettingsAreBounded();
@@ -871,6 +878,111 @@ void CanvasTests::configuredGridUsesPrinterDotsAtZoom()
     drag(corner, corner + QPointF(21, 15));
     QCOMPARE(resized.size(), 1);
     QCOMPARE(resized.front().at(1).toSize(), QSize(102, 68));
+}
+
+void CanvasTests::rulersShowFinalLabelDimensions_data()
+{
+    QTest::addColumn<QSize>("dots");
+    QTest::addColumn<bool>("millimeters");
+    QTest::addColumn<QString>("localeName");
+    QTest::addColumn<int>("zoomPercent");
+    QTest::addColumn<QString>("widthText");
+    QTest::addColumn<QString>("heightText");
+    QTest::newRow("millimeters-minimum-zoom")
+        << QSize(1180, 591) << true << QStringLiteral("en_US") << 10
+        << QStringLiteral("99.9") << QStringLiteral("50");
+    QTest::newRow("millimeters-fit")
+        << QSize(1180, 591) << true << QStringLiteral("en_US") << 0
+        << QStringLiteral("99.9") << QStringLiteral("50");
+    QTest::newRow("russian-millimeters-fit")
+        << QSize(1180, 591) << true << QStringLiteral("ru_RU") << 0
+        << QStringLiteral("99,9") << QStringLiteral("50");
+    QTest::newRow("russian-portrait-fit")
+        << QSize(591, 1180) << true << QStringLiteral("ru_RU") << 0
+        << QStringLiteral("50") << QStringLiteral("99,9");
+    // The nearby 100 / 50 major marks must not overlap the final dimensions.
+    QTest::newRow("beside-100-millimeter-mark")
+        << QSize(1182, 1182) << true << QStringLiteral("en_US") << 10
+        << QStringLiteral("100.1") << QStringLiteral("100.1");
+    QTest::newRow("beside-50-millimeter-mark")
+        << QSize(592, 592) << true << QStringLiteral("en_US") << 25
+        << QStringLiteral("50.1") << QStringLiteral("50.1");
+    QTest::newRow("long-dot-dimensions")
+        << QSize(4096, 3071) << false << QStringLiteral("en_US") << 10
+        << QLocale(QStringLiteral("en_US")).toString(4096)
+        << QLocale(QStringLiteral("en_US")).toString(3071);
+    QTest::newRow("labels-larger-than-paper")
+        << QSize(1, 1) << true << QStringLiteral("en_US") << 10
+        << QStringLiteral("0.08") << QStringLiteral("0.08");
+}
+
+void CanvasTests::rulersShowFinalLabelDimensions()
+{
+    QFETCH(QSize, dots);
+    QFETCH(bool, millimeters);
+    QFETCH(QString, localeName);
+    QFETCH(int, zoomPercent);
+    QFETCH(QString, widthText);
+    QFETCH(QString, heightText);
+    document_.elements.clear();
+    document_.width = dots.width();
+    document_.height = dots.height();
+    document_.dpi = 300;
+    canvas_->syncDocument(document_);
+    canvas_->setLocale(QLocale(localeName));
+    auto settings = canvas_->layoutSettings();
+    settings.gridVisible = false;
+    settings.unit = millimeters ? Designer::CanvasUnit::Millimeters : Designer::CanvasUnit::Dots;
+    canvas_->setLayoutSettings(settings);
+    if (zoomPercent == 0)
+        canvas_->fitLabel();
+    else
+        canvas_->setZoomPercent(zoomPercent);
+    QApplication::processEvents();
+
+    for (const bool horizontal : {true, false}) {
+        auto* ruler = canvas_->findChild<QWidget*>(horizontal ? QStringLiteral("horizontalRuler")
+                                                            : QStringLiteral("verticalRuler"));
+        QVERIFY(ruler);
+        QVERIFY(ruler->isVisible());
+        const QString text = horizontal ? widthText : heightText;
+        QFont font = canvas_->font();
+        font.setPixelSize(9);
+        const QFontMetrics metrics(font);
+        const int textWidth = metrics.horizontalAdvance(text);
+        const int textHeight = metrics.height();
+        QVERIFY(ruler->width() >= textWidth + (horizontal ? 0 : 3));
+        QVERIFY(ruler->height() >= textHeight);
+        const QRect textRect = horizontal
+            ? QRect(ruler->width() - textWidth, 0, textWidth, ruler->height() - 2)
+            : QRect(0, ruler->height() - textHeight, ruler->width() - 3, textHeight);
+
+        const QPixmap actual = ruler->grab();
+        QPixmap expected(actual.size());
+        expected.setDevicePixelRatio(actual.devicePixelRatio());
+        expected.fill(Designer::designerColor(Designer::DesignerColor::Canvas));
+        {
+            QPainter painter(&expected);
+            painter.setFont(font);
+            painter.setPen(Designer::designerColor(Designer::DesignerColor::Muted));
+            painter.drawText(textRect, horizontal ? Qt::AlignTop : Qt::AlignRight, text);
+            if (horizontal)
+                painter.drawLine(ruler->width() - 1, ruler->height() - 4,
+                                 ruler->width() - 1, ruler->height() - 1);
+            else
+                painter.drawLine(ruler->width() - 3, ruler->height() - 1,
+                                 ruler->width() - 1, ruler->height() - 1);
+        }
+        // Check actual painted glyphs and the gap before them. The latter also
+        // detects a regular ruler mark painted through the final dimension.
+        const QRect checked = (horizontal ? textRect.adjusted(-6, 0, 0, 0)
+                                          : textRect.adjusted(0, -6, 3, 0)).intersected(ruler->rect());
+        const qreal dpr = actual.devicePixelRatio();
+        const QRect pixels(qRound(checked.x() * dpr), qRound(checked.y() * dpr),
+                           qRound(checked.width() * dpr), qRound(checked.height() * dpr));
+        QCOMPARE(actual.toImage().copy(pixels).convertToFormat(QImage::Format_ARGB32),
+                 expected.toImage().copy(pixels).convertToFormat(QImage::Format_ARGB32));
+    }
 }
 
 void CanvasTests::rulerDragsCreateGuides_data()
