@@ -1,0 +1,5 @@
+#pragma once
+
+namespace Designer {
+inline constexpr char applicationVersion[] = "@PROJECT_VERSION@";
+} // namespace Designer

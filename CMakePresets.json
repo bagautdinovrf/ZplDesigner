@@ -1,0 +1,34 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "debug",
+      "displayName": "QtZpl Designer Debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build_agent_debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "DESIGNER_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "QtZpl Designer Release",
+      "inherits": "debug",
+      "binaryDir": "${sourceDir}/build_agent_release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "debug", "configurePreset": "debug" },
+    { "name": "release", "configurePreset": "release" }
+  ],
+  "testPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "environment": { "QT_QPA_PLATFORM": "offscreen" },
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

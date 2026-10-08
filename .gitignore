@@ -1,0 +1,10 @@
+/build*/
+/dist/
+/CMakeUserPresets.json
+/.qtcreator/
+*.user
+*.user.*
+__pycache__/
+*.pyc
+*.log
+/recovery/
