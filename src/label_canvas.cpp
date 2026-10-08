@@ -12,6 +12,7 @@
 #include <QImageReader>
 #include <QKeyEvent>
 #include <QKeySequence>
+#include <QLabel>
 #include <QLocale>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -36,7 +37,6 @@ constexpr int rulerThickness = 24;
 constexpr int maximumGuides = 128;
 constexpr qreal minimumZoom = 0.1;
 constexpr qreal maximumZoom = 8.0;
-constexpr int dimensionCaptionSpace = 36;
 
 QFont rulerFont(QFont font)
 {
@@ -239,6 +239,13 @@ LabelCanvas::LabelCanvas(QWidget* parent)
     }
     m_horizontalRuler->setCursor(Qt::SplitVCursor);
     m_verticalRuler->setCursor(Qt::SplitHCursor);
+    m_dimensionsCaption = new QLabel(this);
+    m_dimensionsCaption->setObjectName(QStringLiteral("labelDimensionsCaption"));
+    m_dimensionsCaption->setAccessibleName(tr("Размеры этикетки"));
+    m_dimensionsCaption->setTextFormat(Qt::PlainText);
+    m_dimensionsCaption->setAlignment(Qt::AlignCenter);
+    m_dimensionsCaption->setAutoFillBackground(true);
+    updateDimensionsCaption();
     updateRulers();
 }
 
@@ -292,9 +299,10 @@ void LabelCanvas::syncDocument(const DesignDocument& document)
     }
     setSelectedIndices(nextSelection);
     if (pageChanged) {
-        m_scene.setSceneRect(labelRect().adjusted(-120, -100, 120, 100));
         if (m_fitMode) fitLabel();
+        else positionView(m_viewCenter);
     }
+    updateDimensionsCaption();
     viewport()->update();
     updateRulers();
 }
@@ -326,9 +334,10 @@ void LabelCanvas::setDocument(const DesignDocument& document, const Preview& pre
         m_interaction = Interaction::None;
     setSelectedIndices(nextSelection);
     if (pageChanged) {
-        m_scene.setSceneRect(labelRect().adjusted(-120, -100, 120, 100));
         if (m_fitMode) fitLabel();
+        else positionView(m_viewCenter);
     }
+    updateDimensionsCaption();
     viewport()->update();
     updateRulers();
 }
@@ -439,28 +448,48 @@ void LabelCanvas::fitLabel()
     // Fit mode keeps a stable viewport; manual zoom restores scrollable bars.
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    const int rulerWidth = QFontMetrics(rulerFont(font())).horizontalAdvance(
-        rulerEndLabel(m_document.height, m_document.dpi, m_layout.unit, locale())) + 9;
-    const int leftInset = m_layout.rulersVisible ? std::max(m_workspaceInsets.left(), rulerWidth)
-                                               : m_workspaceInsets.left();
-    const QRectF available(leftInset, m_workspaceInsets.top(),
-        std::max(1, viewport()->width() - leftInset - m_workspaceInsets.right()),
-        std::max(1, viewport()->height() - m_workspaceInsets.top() - m_workspaceInsets.bottom()
-                        - dimensionCaptionSpace));
+    const QRectF available = availableViewportRect();
     const qreal scale = std::clamp(std::min(available.width() / m_document.width,
                                           available.height() / m_document.height),
                                    minimumZoom, maximumZoom);
     setTransform(QTransform::fromScale(scale, scale));
-    const QPointF viewCenter = labelRect().center()
-        + (QRectF(viewport()->rect()).center() - available.center()) / scale;
-    // Keep enough navigable scene around an asymmetric workspace. Otherwise
-    // QGraphicsView's alignment would override centerOn when the scene fits.
-    const QSizeF visibleSize(viewport()->width() / scale, viewport()->height() / scale);
-    const QRectF visibleScene(viewCenter - QPointF(visibleSize.width() / 2, visibleSize.height() / 2), visibleSize);
-    m_scene.setSceneRect(visibleScene.united(labelRect()).adjusted(-120, -100, 120, 100));
-    centerOn(viewCenter);
-    updateRulers();
+    centerLabel();
     emit zoomChanged(qRound(scale * 100));
+}
+
+QRectF LabelCanvas::availableViewportRect() const
+{
+    const int rulerWidth = QFontMetrics(rulerFont(font())).horizontalAdvance(
+        rulerEndLabel(m_document.height, m_document.dpi, m_layout.unit, locale())) + 9;
+    const int leftInset = m_layout.rulersVisible ? std::max(m_workspaceInsets.left(), rulerWidth)
+                                               : m_workspaceInsets.left();
+    return QRectF(leftInset, m_workspaceInsets.top(),
+        std::max(1, viewport()->width() - leftInset - m_workspaceInsets.right()),
+        std::max(1, viewport()->height() - m_workspaceInsets.top() - m_workspaceInsets.bottom()));
+}
+
+void LabelCanvas::positionView(QPointF center)
+{
+    const QScopedValueRollback positioning(m_positioningView, true);
+    const qreal scale = std::max(minimumZoom, transform().m11());
+    // A scene smaller than the viewport makes Qt align the scene itself and
+    // ignore centerOn(). Recompute its navigable bounds at the current zoom,
+    // including after startup/maximize, rather than keeping a hidden fit's bounds.
+    const QSizeF visibleSize(viewport()->width() / scale, viewport()->height() / scale);
+    const QRectF visibleScene(center - QPointF(visibleSize.width() / 2, visibleSize.height() / 2), visibleSize);
+    m_scene.setSceneRect(visibleScene.united(labelRect()).adjusted(-120, -100, 120, 100));
+    centerOn(center);
+    m_viewCenter = center;
+    updateRulers();
+    positionDimensionsCaption();
+}
+
+void LabelCanvas::centerLabel()
+{
+    if (!m_hasDocument) return;
+    const qreal scale = std::max(minimumZoom, transform().m11());
+    positionView(labelRect().center()
+        + (QRectF(viewport()->rect()).center() - availableViewportRect().center()) / scale);
 }
 
 void LabelCanvas::actualSize()
@@ -483,12 +512,18 @@ void LabelCanvas::setWorkspaceInsets(const QMargins& insets)
     const QMargins bounded(std::max(0, insets.left()), std::max(0, insets.top()),
                            std::max(0, insets.right()), std::max(0, insets.bottom()));
     if (m_workspaceInsets == bounded) return;
+    const qreal scale = std::max(minimumZoom, transform().m11());
+    const QPointF previousCenter = availableViewportRect().center();
     m_workspaceInsets = bounded;
     if (m_fitMode) fitLabel();
+    else if (m_hasDocument)
+        positionView(m_viewCenter + (previousCenter - availableViewportRect().center()) / scale);
+    positionDimensionsCaption();
 }
 
 void LabelCanvas::applyZoom(qreal scale, bool keepMouseAnchor)
 {
+    const QScopedValueRollback positioning(m_positioningView, true);
     scale = std::clamp(scale, minimumZoom, maximumZoom);
     const QPoint anchor = keepMouseAnchor ? viewport()->mapFromGlobal(QCursor::pos())
                                         : viewport()->rect().center();
@@ -499,10 +534,7 @@ void LabelCanvas::applyZoom(qreal scale, bool keepMouseAnchor)
     setTransform(QTransform::fromScale(scale, scale));
     const QPoint nextAnchor = keepMouseAnchor ? viewport()->mapFromGlobal(QCursor::pos())
                                             : viewport()->rect().center();
-    const QPointF nextPosition = mapToScene(nextAnchor);
-    const QPointF center = mapToScene(viewport()->rect().center());
-    centerOn(center + previousPosition - nextPosition);
-    updateRulers();
+    positionView(previousPosition + QPointF(viewport()->rect().center() - nextAnchor) / scale);
     emit zoomChanged(qRound(scale * 100));
 }
 
@@ -1082,36 +1114,33 @@ void LabelCanvas::drawForeground(QPainter* painter, const QRectF& exposed)
         painter->drawEllipse(position, 8 / scale, 8 / scale);
     }
 
-    // Keep final dimensions readable even when zoom/pan moves the paper edge
-    // off screen or the paper is too small to accommodate the full caption.
-    painter->save();
-    painter->setWorldTransform(viewportTransform().inverted(), true);
-    painter->setFont(captionFont);
-    const QString caption = tr("%1 × %2 dots · %3 × %4 мм")
+    painter->restore();
+}
+
+void LabelCanvas::updateDimensionsCaption()
+{
+    if (!m_dimensionsCaption) return;
+    QFont captionFont = font();
+    captionFont.setPixelSize(10);
+    m_dimensionsCaption->setFont(captionFont);
+    QPalette colors = palette();
+    colors.setColor(QPalette::Window, designerColor(DesignerColor::Canvas));
+    colors.setColor(QPalette::WindowText, designerColor(DesignerColor::Muted));
+    m_dimensionsCaption->setPalette(colors);
+    m_dimensionsCaption->setText(m_hasDocument ? tr("%1 × %2 dots · %3 × %4 мм")
         .arg(locale().toString(m_document.width), locale().toString(m_document.height),
              locale().toString(m_document.width * 25.4 / std::max(1, m_document.dpi), 'f', 2),
-             locale().toString(m_document.height * 25.4 / std::max(1, m_document.dpi), 'f', 2));
-    const QRect viewportPage = mapFromScene(page).boundingRect();
-    const QRect available = viewport()->rect().marginsRemoved(QMargins(
-        8, 8, std::max(8, m_workspaceInsets.right()), std::max(8, m_workspaceInsets.bottom())));
-    const int captionWidth = std::min(painter->fontMetrics().horizontalAdvance(caption) + 12,
-                                      std::max(13, available.width()));
-    const QRect textBounds = painter->fontMetrics().boundingRect(
-        QRect(0, 0, captionWidth - 12, 0), Qt::AlignCenter | Qt::TextWordWrap, caption);
-    const QSize captionSize(captionWidth, std::max(22, textBounds.height() + 6));
-    const QPoint preferred(viewportPage.center().x() - captionSize.width() / 2,
-                           viewportPage.bottom() + 14);
-    const QRect captionRect(QPoint(
-        std::clamp(preferred.x(), available.left(), std::max(available.left(), available.right() - captionSize.width() + 1)),
-        std::clamp(preferred.y(), available.top(), std::max(available.top(), available.bottom() - captionSize.height() + 1))),
-        captionSize);
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(designerColor(DesignerColor::Canvas));
-    painter->drawRoundedRect(captionRect, 3, 3);
-    painter->setPen(designerColor(DesignerColor::Muted));
-    painter->drawText(captionRect.adjusted(6, 3, -6, -3), Qt::AlignCenter | Qt::TextWordWrap, caption);
-    painter->restore();
-    painter->restore();
+             locale().toString(m_document.height * 25.4 / std::max(1, m_document.dpi), 'f', 2)) : QString{});
+    const int height = std::max(26, m_dimensionsCaption->fontMetrics().height() + 12);
+    if (viewportMargins().bottom() != height) setViewportMargins(0, 0, 0, height);
+    positionDimensionsCaption();
+}
+
+void LabelCanvas::positionDimensionsCaption()
+{
+    if (!m_dimensionsCaption) return;
+    const QRect area = viewport()->geometry();
+    m_dimensionsCaption->setGeometry(area.left(), area.bottom() + 1, area.width(), viewportMargins().bottom());
 }
 
 void LabelCanvas::changeEvent(QEvent* event)
@@ -1120,6 +1149,7 @@ void LabelCanvas::changeEvent(QEvent* event)
     if (event->type() != QEvent::PaletteChange && event->type() != QEvent::LocaleChange
         && event->type() != QEvent::FontChange) return;
     viewport()->update();
+    updateDimensionsCaption();
     updateRulers();
 }
 
@@ -1314,15 +1344,23 @@ void LabelCanvas::finishGuide(QPoint viewportPosition)
 void LabelCanvas::scrollContentsBy(int dx, int dy)
 {
     QGraphicsView::scrollContentsBy(dx, dy);
+    if (!m_positioningView && !m_fitting)
+        m_viewCenter = mapToScene(viewport()->rect().center());
     updateRulers();
 }
 
 void LabelCanvas::resizeEvent(QResizeEvent* event)
 {
+    const bool reposition = !m_positioningView && !m_fitting;
+    const QPointF center = m_viewCenter;
+    const QScopedValueRollback positioning(m_positioningView, true);
     QGraphicsView::resizeEvent(event);
-    if (m_fitMode)
+    if (reposition && m_fitMode)
         fitLabel();
+    else if (reposition && m_hasDocument)
+        positionView(center);
     updateRulers();
+    positionDimensionsCaption();
 }
 
 void LabelCanvas::mousePressEvent(QMouseEvent* event)

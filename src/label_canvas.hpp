@@ -8,6 +8,8 @@
 #include <QMargins>
 #include <optional>
 
+class QLabel;
+
 namespace Designer {
 
 // Scene coordinates are printer dots. The image is always rendered by QtZpl;
@@ -34,6 +36,7 @@ public:
     void fitLabel();
     void actualSize();
     void setZoomPercent(int percent);
+    void centerLabel();
     [[nodiscard]] bool isFitMode() const;
     // Reserve space for workspace chrome without changing printer geometry.
     void setWorkspaceInsets(const QMargins& insets);
@@ -103,6 +106,10 @@ private:
     [[nodiscard]] QPoint dragPosition(QPointF delta, bool bypass) const;
     [[nodiscard]] QSize resizedDimensions(QPointF delta, bool bypass) const;
     void applyZoom(qreal scale, bool keepMouseAnchor);
+    [[nodiscard]] QRectF availableViewportRect() const;
+    void positionView(QPointF center);
+    void updateDimensionsCaption();
+    void positionDimensionsCaption();
     void updatePointer(QPoint viewportPosition);
     void cancelInteraction();
     void updateRulers();
@@ -120,6 +127,7 @@ private:
     CanvasLayoutSettings m_layout;
     QWidget* m_horizontalRuler = nullptr;
     QWidget* m_verticalRuler = nullptr;
+    QLabel* m_dimensionsCaption = nullptr;
     QMargins m_workspaceInsets{35, 50, 35, 45};
     bool m_guideHorizontal = false;
     bool m_guideInside = false;
@@ -127,6 +135,8 @@ private:
     int m_guidePosition = 0;
     bool m_fitMode = true;
     bool m_fitting = false;
+    bool m_positioningView = false;
+    QPointF m_viewCenter;
     bool m_spaceDown = false;
     bool m_dropActive = false;
     bool m_hasDocument = false;

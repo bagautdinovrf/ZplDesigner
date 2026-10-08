@@ -477,6 +477,7 @@ MainWindow::~MainWindow() {
     // Reparented overlay pages can change focus/selection while QWidget tears
     // down the window, after the MainWindow part has already been destroyed.
     if (workspaceCenter_) workspaceCenter_->removeEventFilter(this);
+    if (canvas_) canvas_->viewport()->removeEventFilter(this);
     QObject::disconnect(qApp, nullptr, this, nullptr);
     // The session's stack is a value member, not a QObject child. It emits
     // history signals as it clears commands during session destruction.
@@ -725,6 +726,7 @@ void MainWindow::buildUi() {
     propertiesTool->setToolTip(QStringLiteral("Показать или скрыть свойства · Ctrl+Alt+P"));
     centerLayout->addWidget(canvasHeader);
     canvas_ = new LabelCanvas(editorTabs_); canvas_->setObjectName(QStringLiteral("labelCanvas"));
+    canvas_->viewport()->installEventFilter(this);
     editorTabs_->addTab(canvas_, QStringLiteral("  Дизайн  "));
     sourceSlot_ = new QWidget(editorTabs_);
     auto* sourceSlotLayout = new QVBoxLayout(sourceSlot_);
@@ -1323,7 +1325,7 @@ void MainWindow::restoreCanvasZoom() {
         canvas_->fitLabel();
     } else {
         canvas_->setZoomPercent(workspacePreferences_.canvasZoomPercent);
-        canvas_->centerOn(session_->document().width / 2.0, session_->document().height / 2.0);
+        canvas_->centerLabel();
     }
 }
 
@@ -1392,20 +1394,23 @@ void MainWindow::refreshFocusSummary() {
 void MainWindow::positionWorkspaceOverlays() {
     if (!workspaceCenter_ || !focusBar_ || !inspectorCard_) return;
     const auto area = workspaceCenter_->rect();
-    const int stripWidth = std::min(area.width() - 30, focusBar_->sizeHint().width());
-    focusBar_->setGeometry((area.width() - stripWidth) / 2, area.height() - 16 - 41,
+    const QRect canvasArea(canvas_->viewport()->mapTo(workspaceCenter_, QPoint{}), canvas_->viewport()->size());
+    const int stripWidth = std::min(canvasArea.width() - 30, focusBar_->sizeHint().width());
+    focusBar_->setGeometry(canvasArea.left() + (canvasArea.width() - stripWidth) / 2,
+                          canvasArea.bottom() + 1 - 16 - 41,
                           std::max(1, stripWidth), 41);
     const QRect editorArea(editorSplitter_->mapTo(workspaceCenter_, QPoint{}), editorSplitter_->size());
     constexpr int cardMargin = 14;
     const int cardTop = editorArea.top() + 18;
     inspectorCard_->setGeometry(area.width() - cardMargin - 238, cardTop, 238,
-                               std::max(1, editorArea.bottom() + 1 - cardMargin - cardTop));
+                               std::max(1, std::min(editorArea.bottom(), canvasArea.bottom()) + 1 - cardMargin - cardTop));
     if (focusBar_->isVisible()) focusBar_->raise();
     if (inspectorCard_->isVisible()) inspectorCard_->raise();
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
     if ((watched == workspaceCenter_ && event->type() == QEvent::Resize)
+        || (canvas_ && watched == canvas_->viewport() && event->type() == QEvent::Resize)
         || (watched == editorSplitter_ && (event->type() == QEvent::Resize || event->type() == QEvent::Move)))
         positionWorkspaceOverlays();
     return QMainWindow::eventFilter(watched, event);

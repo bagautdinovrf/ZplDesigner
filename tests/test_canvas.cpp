@@ -103,6 +103,8 @@ private slots:
     void layoutSettingsAreBounded();
     void fitViewportSettlesAcrossResizeAndLayoutChanges();
     void fitModeKeepsPanAndRestoresManualZoomScrollbars();
+    void manualZoomKeepsPannedSceneCenterAfterResize();
+    void dimensionCaptionStaysOutsidePaperViewport();
     void invalidDataMatrixMarkerIsEditorOnlyAndFollowsIdentity();
     void persistentGroupsSelectAndToggleAtomically();
     void persistentGroupsExpandRubberBandAndFollowModel();
@@ -1202,6 +1204,63 @@ void CanvasTests::fitModeKeepsPanAndRestoresManualZoomScrollbars()
     canvas_->zoomIn();
     QCOMPARE(canvas_->horizontalScrollBarPolicy(), Qt::ScrollBarAsNeeded);
     QCOMPARE(canvas_->verticalScrollBarPolicy(), Qt::ScrollBarAsNeeded);
+}
+
+void CanvasTests::manualZoomKeepsPannedSceneCenterAfterResize()
+{
+    canvas_->setZoomPercent(200);
+    QApplication::processEvents();
+    const QPoint start = canvas_->viewport()->rect().center();
+    const QPointF unpanned = canvas_->mapToScene(start);
+    QTest::mousePress(canvas_->viewport(), Qt::MiddleButton, Qt::NoModifier, start);
+    QTest::mouseMove(canvas_->viewport(), start - QPoint(70, 44));
+    QTest::mouseRelease(canvas_->viewport(), Qt::MiddleButton, Qt::NoModifier, start - QPoint(70, 44));
+    const QPointF panned = canvas_->mapToScene(canvas_->viewport()->rect().center());
+    QVERIFY(qAbs(panned.x() - unpanned.x()) > 20);
+    QVERIFY(qAbs(panned.y() - unpanned.y()) > 10);
+
+    canvas_->resize(820, 600);
+    QApplication::processEvents();
+    const QPointF resized = canvas_->mapToScene(canvas_->viewport()->rect().center());
+    QVERIFY(!canvas_->isFitMode());
+    QCOMPARE(canvas_->transform().m11(), 2.0);
+    QVERIFY(qAbs(resized.x() - panned.x()) <= 1);
+    QVERIFY(qAbs(resized.y() - panned.y()) <= 1);
+}
+
+void CanvasTests::dimensionCaptionStaysOutsidePaperViewport()
+{
+    auto* caption = canvas_->findChild<QWidget*>(QStringLiteral("labelDimensionsCaption"));
+    QVERIFY(caption);
+    const auto verifyCaption = [&] {
+        QApplication::processEvents();
+        QVERIFY(caption->isVisible());
+        const QRect captionBounds(caption->mapTo(canvas_.get(), QPoint{}), caption->size());
+        const QRect viewportBounds(canvas_->viewport()->mapTo(canvas_.get(), QPoint{}),
+                                   canvas_->viewport()->size());
+        QVERIFY(!captionBounds.isEmpty());
+        QVERIFY(canvas_->rect().contains(captionBounds));
+        // Keeping the dimensions outside the painting viewport guarantees
+        // they cannot hide printed content at any zoom or scroll position.
+        QVERIFY(!captionBounds.intersects(viewportBounds));
+        const QRect paper = canvas_->mapFromScene(
+            QRectF(0, 0, document_.width, document_.height)).boundingRect();
+        const QRect paperInCanvas(canvas_->viewport()->mapTo(canvas_.get(), paper.topLeft()), paper.size());
+        QVERIFY(!paperInCanvas.intersected(viewportBounds).intersects(captionBounds));
+    };
+    for (const int percent : {10, 100, 800}) {
+        canvas_->setZoomPercent(percent);
+        verifyCaption();
+        canvas_->horizontalScrollBar()->setValue(canvas_->horizontalScrollBar()->maximum());
+        canvas_->verticalScrollBar()->setValue(canvas_->verticalScrollBar()->maximum());
+        verifyCaption();
+    }
+    canvas_->resize(260, 200);
+    verifyCaption();
+    auto settings = canvas_->layoutSettings();
+    settings.rulersVisible = false;
+    canvas_->setLayoutSettings(settings);
+    verifyCaption();
 }
 
 void CanvasTests::invalidDataMatrixMarkerIsEditorOnlyAndFollowsIdentity()

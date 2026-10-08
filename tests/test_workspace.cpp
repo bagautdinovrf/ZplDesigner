@@ -50,6 +50,8 @@ private slots:
     void canvasZoomPreferencesValidateStoredValues_data();
     void canvasZoomPreferencesValidateStoredValues();
     void canvasZoomSurvivesWindowAndDocumentLifecycle();
+    void restoredManualZoomCentersPaperAfterWindowLayout_data();
+    void restoredManualZoomCentersPaperAfterWindowLayout();
     void toolbarPreferencesDefaultVisibleAndPersistHiddenCommands();
     void optionalWorkspaceScreenshots();
 
@@ -677,6 +679,84 @@ void WorkspaceTests::canvasZoomSurvivesWindowAndDocumentLifecycle()
     QVERIFY(canvas->isFitMode());
     QVERIFY(canvas->transform().m11() < fittedScale);
     QCOMPARE(loadWorkspacePreferences().canvasZoomPercent, 0);
+}
+
+void WorkspaceTests::restoredManualZoomCentersPaperAfterWindowLayout_data()
+{
+    QTest::addColumn<int>("zoomPercent");
+    QTest::addColumn<bool>("focusProperties");
+    QTest::newRow("balance-100") << 100 << false;
+    QTest::newRow("balance-150") << 150 << false;
+    QTest::newRow("focus-properties-100") << 100 << true;
+    QTest::newRow("focus-properties-150") << 150 << true;
+}
+
+void WorkspaceTests::restoredManualZoomCentersPaperAfterWindowLayout()
+{
+    QFETCH(int, zoomPercent);
+    QFETCH(bool, focusProperties);
+    window_.reset();
+    WorkspacePreferences preferences;
+    preferences.canvasZoomPercent = zoomPercent;
+    preferences.focus = focusProperties;
+    preferences.focusProperties = focusProperties;
+    QVERIFY(saveWorkspacePreferences(preferences));
+    // Keep the paper small enough for the offscreen platform's 800x600
+    // maximized screen as well as the native minimum window. Its fractional
+    // height in mm still exercises the extra space needed by the ruler text.
+    initial_.width = 128;
+    initial_.height = 100;
+    initial_.elements.clear();
+    window_ = std::make_unique<MainWindow>();
+    window_->setDocument(initial_);
+    window_->resize(1360, 850);
+    window_->showMaximized();
+    auto* canvas = window_->findChild<LabelCanvas*>();
+    QVERIFY(canvas);
+    auto* ruler = canvas->findChild<QWidget*>(u"verticalRuler"_s);
+    auto* caption = canvas->findChild<QWidget*>(u"labelDimensionsCaption"_s);
+    QVERIFY(ruler); QVERIFY(caption);
+    const auto verifyPaper = [&] {
+        QTest::qWait(150);
+        QVERIFY(!canvas->isFitMode());
+        QCOMPARE(canvas->transform().m11(), zoomPercent / 100.0);
+        const QRect paper = canvas->mapFromScene(
+            QRectF(0, 0, initial_.width, initial_.height)).boundingRect();
+        QVERIFY(ruler->isVisible());
+        // Use the actual ruler width plus its six-pixel paper gap: a wide
+        // localized endpoint can legitimately exceed the base 35px inset.
+        const int leftInset = qMax(35, ruler->width() + 6);
+        const QRectF available = QRectF(canvas->viewport()->rect()).marginsRemoved(
+            QMarginsF(leftInset, 50, focusProperties ? 274 : 35, focusProperties ? 80 : 45));
+        QVERIFY2(available.width() >= paper.width() && available.height() >= paper.height(),
+                 qPrintable(u"Test paper %1x%2 must fit the available %3x%4 workspace"_s
+                                .arg(paper.width()).arg(paper.height())
+                                .arg(available.width()).arg(available.height())));
+        QVERIFY(canvas->viewport()->rect().contains(paper));
+        QVERIFY(available.adjusted(-2, -2, 2, 2).contains(paper));
+        const QPointF offset = QRectF(paper).center() - available.center();
+        QVERIFY2(qAbs(offset.x()) <= 2 && qAbs(offset.y()) <= 2,
+                 qPrintable(u"Paper center differs from workspace center by (%1, %2) pixels"_s
+                                .arg(offset.x()).arg(offset.y())));
+        QVERIFY(qAbs(paper.width() - qRound(initial_.width * zoomPercent / 100.0)) <= 1);
+        QVERIFY(qAbs(paper.height() - qRound(initial_.height * zoomPercent / 100.0)) <= 1);
+        QCOMPARE(loadWorkspacePreferences().canvasZoomPercent, zoomPercent);
+        QVERIFY(caption->isVisible());
+        const QRect captionBounds(caption->mapTo(window_.get(), QPoint{}), caption->size());
+        for (const auto* name : {"focusContextBar", "focusInspectorCard", "inspectorTabs"}) {
+            auto* overlay = window_->findChild<QWidget*>(QString::fromLatin1(name));
+            QVERIFY2(overlay, name);
+            if (!overlay->isVisible()) continue;
+            const QRect overlayBounds(overlay->mapTo(window_.get(), QPoint{}), overlay->size());
+            QVERIFY2(!captionBounds.intersects(overlayBounds), name);
+        }
+    };
+    verifyPaper();
+    window_->showNormal();
+    window_->resize(1100, 740);
+    verifyPaper();
+    window_->resize(1420, 900);
+    verifyPaper();
 }
 
 void WorkspaceTests::toolbarPreferencesDefaultVisibleAndPersistHiddenCommands()
