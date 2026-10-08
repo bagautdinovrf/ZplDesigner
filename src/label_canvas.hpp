@@ -105,9 +105,9 @@ private:
     [[nodiscard]] QPoint boundedSelectionDelta(QPoint delta) const;
     [[nodiscard]] QPoint dragPosition(QPointF delta, bool bypass) const;
     [[nodiscard]] QSize resizedDimensions(QPointF delta, bool bypass) const;
-    void applyZoom(qreal scale, bool keepMouseAnchor);
+    void applyZoom(qreal scale, std::optional<QPointF> viewportAnchor = std::nullopt);
     [[nodiscard]] QRectF availableViewportRect(QSizeF viewportSize) const;
-    void updateScrollBarPolicies();
+    QSizeF updateScrollBarPolicies();
     void positionView(QPointF center);
     void updateDimensionsCaption();
     void positionDimensionsCaption();

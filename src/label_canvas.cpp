@@ -438,12 +438,12 @@ const CanvasLayoutSettings& LabelCanvas::layoutSettings() const
 
 void LabelCanvas::zoomIn()
 {
-    applyZoom(transform().m11() * 1.2, false);
+    applyZoom(transform().m11() * 1.2);
 }
 
 void LabelCanvas::zoomOut()
 {
-    applyZoom(transform().m11() / 1.2, false);
+    applyZoom(transform().m11() / 1.2);
 }
 
 void LabelCanvas::fitLabel()
@@ -477,15 +477,16 @@ QRectF LabelCanvas::availableViewportRect(QSizeF viewportSize) const
         std::max(1.0, viewportSize.height() - m_workspaceInsets.top() - m_workspaceInsets.bottom()));
 }
 
-void LabelCanvas::updateScrollBarPolicies()
+QSizeF LabelCanvas::updateScrollBarPolicies()
 {
     bool horizontal = false;
     bool vertical = false;
+    QSizeF viewportSize = maximumViewportSize();
     if (m_hasDocument && !m_fitMode) {
         // AlwaysOff/AsNeeded leave maximumViewportSize independent of the
         // current bars. Start with neither bar, then account for the space
         // each required bar takes from the other axis, without resize loops.
-        const QSizeF maximum = maximumViewportSize();
+        const QSizeF maximum = viewportSize;
         const QSizeF paper = labelRect().size() * transform().m11();
         const int verticalExtent = verticalScrollBar()->sizeHint().width();
         const int horizontalExtent = horizontalScrollBar()->sizeHint().height();
@@ -498,9 +499,12 @@ void LabelCanvas::updateScrollBarPolicies()
             horizontal = nextHorizontal;
             vertical = nextVertical;
         }
+        viewportSize = maximum - QSizeF(vertical ? verticalExtent : 0, horizontal ? horizontalExtent : 0);
     }
     setHorizontalScrollBarPolicy(horizontal ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
     setVerticalScrollBarPolicy(vertical ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
+    // Qt may lay out AsNeeded bars later, after the scene range changes.
+    return viewportSize;
 }
 
 void LabelCanvas::positionView(QPointF center)
@@ -530,12 +534,12 @@ void LabelCanvas::centerLabel()
 
 void LabelCanvas::actualSize()
 {
-    applyZoom(1.0, false);
+    applyZoom(1.0);
 }
 
 void LabelCanvas::setZoomPercent(int percent)
 {
-    applyZoom(percent / 100.0, false);
+    applyZoom(percent / 100.0);
 }
 
 bool LabelCanvas::isFitMode() const
@@ -557,19 +561,27 @@ void LabelCanvas::setWorkspaceInsets(const QMargins& insets)
     positionDimensionsCaption();
 }
 
-void LabelCanvas::applyZoom(qreal scale, bool keepMouseAnchor)
+void LabelCanvas::applyZoom(qreal scale, std::optional<QPointF> viewportAnchor)
 {
     const QScopedValueRollback positioning(m_positioningView, true);
     scale = std::clamp(scale, minimumZoom, maximumZoom);
-    const QPoint anchor = keepMouseAnchor ? viewport()->mapFromGlobal(QCursor::pos())
-                                        : viewport()->rect().center();
-    const QPointF previousPosition = mapToScene(anchor);
+    const QPointF anchor = viewportAnchor.value_or(QRectF(viewport()->rect()).center());
+    const QPointF previousPosition = viewportTransform().inverted().map(anchor);
     m_fitMode = false;
     setTransform(QTransform::fromScale(scale, scale));
-    updateScrollBarPolicies();
-    const QPoint nextAnchor = keepMouseAnchor ? viewport()->mapFromGlobal(QCursor::pos())
-                                            : viewport()->rect().center();
-    positionView(previousPosition + QPointF(viewport()->rect().center() - nextAnchor) / scale);
+    const QSizeF viewportSize = updateScrollBarPolicies();
+    const QPointF viewportCenter(viewportSize.width() / 2, viewportSize.height() / 2);
+    QPointF center = previousPosition + (viewportCenter - viewportAnchor.value_or(viewportCenter)) / scale;
+    if (m_hasDocument) {
+        // A fitting axis has no wheel navigation. Bring the paper back into
+        // its usable workspace when zooming, while preserving the event's
+        // scene anchor on overflowing axes. Explicit panning is unchanged.
+        const QPointF centered = labelRect().center()
+            + (viewportCenter - availableViewportRect(viewportSize).center()) / scale;
+        if (horizontalScrollBarPolicy() == Qt::ScrollBarAlwaysOff) center.setX(centered.x());
+        if (verticalScrollBarPolicy() == Qt::ScrollBarAlwaysOff) center.setY(centered.y());
+    }
+    positionView(center);
     emit zoomChanged(qRound(scale * 100));
 }
 
@@ -1702,7 +1714,7 @@ void LabelCanvas::wheelEvent(QWheelEvent* event)
 {
     if (event->modifiers().testFlag(Qt::ControlModifier)) {
         const qreal steps = event->angleDelta().y() / 120.0;
-        applyZoom(transform().m11() * std::pow(1.2, steps), true);
+        applyZoom(transform().m11() * std::pow(1.2, steps), event->position());
         event->accept();
         return;
     }

@@ -2,6 +2,7 @@
 #include "designer_theme.hpp"
 
 #include <QApplication>
+#include <QCursor>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QEvent>
@@ -49,6 +50,17 @@ protected:
         return false;
     }
 };
+
+QRectF usableViewportRect(const LabelCanvas* canvas, const QMargins& insets)
+{
+    int left = insets.left();
+    if (canvas->layoutSettings().rulersVisible) {
+        if (const auto* ruler = canvas->findChild<QWidget*>(QStringLiteral("verticalRuler")))
+            left = qMax(left, ruler->width() + 6);
+    }
+    return QRectF(canvas->viewport()->rect()).marginsRemoved(
+        QMarginsF(left, insets.top(), insets.right(), insets.bottom()));
+}
 } // namespace
 
 class CanvasTests final : public QObject {
@@ -110,6 +122,9 @@ private slots:
     void wheelScrollsOnlyOverflowingAxes_data();
     void wheelScrollsOnlyOverflowingAxes();
     void controlWheelStillZoomsFittedPaper();
+    void controlWheelKeepsFittingAxesVisibleAndOverflowAnchored_data();
+    void controlWheelKeepsFittingAxesVisibleAndOverflowAnchored();
+    void controlWheelPreservesAnchorAfterQueuedScrollBarLayout();
     void manualZoomKeepsPannedSceneCenterAfterResize();
     void dimensionCaptionStaysOutsidePaperViewport();
     void invalidDataMatrixMarkerIsEditorOnlyAndFollowsIdentity();
@@ -1352,6 +1367,128 @@ void CanvasTests::controlWheelStillZoomsFittedPaper()
     QVERIFY(!canvas_->isFitMode());
     QVERIFY(canvas_->transform().m11() > fittedScale);
     QCOMPARE(qRound(canvas_->transform().m11() * 100), qRound(fittedScale * 1.2 * 100));
+}
+
+void CanvasTests::controlWheelKeepsFittingAxesVisibleAndOverflowAnchored_data()
+{
+    QTest::addColumn<QSize>("paperSize");
+    QTest::addColumn<bool>("nearPaperCorner");
+    QTest::newRow("focus-blank-space-anchor") << QSize(812, 406) << false;
+    QTest::newRow("focus-paper-corner-anchor") << QSize(812, 406) << true;
+    QTest::newRow("horizontal-overflow-only") << QSize(1600, 160) << true;
+    QTest::newRow("vertical-overflow-only") << QSize(160, 1600) << true;
+}
+
+void CanvasTests::controlWheelKeepsFittingAxesVisibleAndOverflowAnchored()
+{
+    QFETCH(QSize, paperSize);
+    QFETCH(bool, nearPaperCorner);
+    document_.width = paperSize.width();
+    document_.height = paperSize.height();
+    canvas_->syncDocument(document_);
+    canvas_->resize(1100, 760);
+    const QMargins insets(35, 50, 274, 80); // Focus with its floating inspector.
+    canvas_->setWorkspaceInsets(insets);
+    canvas_->setZoomPercent(50);
+    canvas_->centerLabel();
+    QApplication::processEvents();
+    const QRectF label(0, 0, document_.width, document_.height);
+    const QRect safeViewport = canvas_->viewport()->rect().adjusted(32, 32, -32, -32);
+    const QRect anchorArea = nearPaperCorner
+        ? canvas_->mapFromScene(label).boundingRect().intersected(safeViewport)
+        : safeViewport;
+    QVERIFY(!anchorArea.isEmpty());
+    const QPoint first = anchorArea.topLeft() + QPoint(8, 8);
+    const QPoint second = anchorArea.bottomRight() - QPoint(8, 8);
+    const QPoint systemCursor = canvas_->viewport()->mapFromGlobal(QCursor::pos());
+    const QPoint eventPosition = (first - systemCursor).manhattanLength() > (second - systemCursor).manhattanLength()
+        ? first : second;
+    // A synthetic wheel position deliberately differs from QCursor::pos().
+    // Anchoring on the unrelated system cursor must fail the overflow checks.
+    QVERIFY((eventPosition - systemCursor).manhattanLength() > 80);
+    const auto wheelStep = [&](int angle) {
+        QVERIFY(canvas_->viewport()->rect().contains(eventPosition));
+        const QPointF before = canvas_->mapToScene(eventPosition);
+        QWheelEvent wheel(eventPosition, canvas_->viewport()->mapToGlobal(eventPosition), {}, {0, angle},
+                          Qt::NoButton, Qt::ControlModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(canvas_->viewport(), &wheel);
+        QApplication::processEvents();
+        const qreal scale = canvas_->transform().m11();
+        const QRectF available = usableViewportRect(canvas_.get(), insets);
+        const QRectF paper = canvas_->mapFromScene(label).boundingRect();
+        const QPointF after = canvas_->mapToScene(eventPosition);
+        const bool fitsWidth = document_.width * scale <= available.width();
+        const bool fitsHeight = document_.height * scale <= available.height();
+        QCOMPARE(canvas_->horizontalScrollBar()->isVisible(), !fitsWidth);
+        QCOMPARE(canvas_->verticalScrollBar()->isVisible(), !fitsHeight);
+        if (fitsWidth) {
+            QVERIFY(paper.left() >= available.left() - 2);
+            QVERIFY(paper.right() <= available.right() + 2);
+            QVERIFY(qAbs(paper.center().x() - available.center().x()) <= 2);
+        } else {
+            QVERIFY2(qAbs(after.x() - before.x()) <= 1,
+                     qPrintable(QStringLiteral("Horizontal scene anchor moved by %1 dots at %2%")
+                                    .arg(after.x() - before.x()).arg(qRound(scale * 100))));
+        }
+        if (fitsHeight) {
+            QVERIFY(paper.top() >= available.top() - 2);
+            QVERIFY(paper.bottom() <= available.bottom() + 2);
+            QVERIFY(qAbs(paper.center().y() - available.center().y()) <= 2);
+        } else {
+            QVERIFY2(qAbs(after.y() - before.y()) <= 1,
+                     qPrintable(QStringLiteral("Vertical scene anchor moved by %1 dots at %2%")
+                                    .arg(after.y() - before.y()).arg(qRound(scale * 100))));
+        }
+    };
+    // Ordinary wheel notches traverse both scrollbar thresholds in each
+    // direction; a final small trackpad delta lands at the reported 74% case.
+    for (int step = 0; step < 16; ++step) wheelStep(120);
+    QCOMPARE(canvas_->transform().m11(), 8.0);
+    for (int step = 0; step < 13; ++step) wheelStep(-120);
+    wheelStep(-8);
+    QCOMPARE(qRound(canvas_->transform().m11() * 100), 74);
+    if (paperSize == QSize(812, 406)) {
+        QVERIFY(!canvas_->horizontalScrollBar()->isVisible());
+        QVERIFY(!canvas_->verticalScrollBar()->isVisible());
+        QVERIFY(usableViewportRect(canvas_.get(), insets).adjusted(-2, -2, 2, 2).contains(
+            canvas_->mapFromScene(label).boundingRect()));
+    }
+}
+
+void CanvasTests::controlWheelPreservesAnchorAfterQueuedScrollBarLayout()
+{
+    document_.width = 812;
+    document_.height = 406;
+    canvas_->syncDocument(document_);
+    canvas_->resize(800, 420);
+    canvas_->setWorkspaceInsets(QMargins(35, 50, 274, 80));
+    canvas_->setZoomPercent(800);
+    canvas_->centerLabel();
+    QApplication::processEvents();
+    const QPoint eventPosition(220, 130);
+    QVERIFY(canvas_->viewport()->rect().contains(eventPosition));
+    const QPointF before = canvas_->mapToScene(eventPosition);
+    // A large wheel delta crosses the point where the new scene range makes
+    // the horizontal bar appear only during the queued viewport layout.
+    QWheelEvent wheel(eventPosition, canvas_->viewport()->mapToGlobal(eventPosition), {}, {0, -1568},
+                      Qt::NoButton, Qt::ControlModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(canvas_->viewport(), &wheel);
+    QApplication::processEvents();
+    const auto verifyAnchor = [&] {
+        QCOMPARE(qRound(canvas_->transform().m11() * 100), 74);
+        QVERIFY(canvas_->horizontalScrollBar()->isVisible());
+        QVERIFY(canvas_->verticalScrollBar()->isVisible());
+        const QPointF after = canvas_->mapToScene(eventPosition);
+        QVERIFY2(qAbs(after.x() - before.x()) <= 1,
+                 qPrintable(QStringLiteral("Horizontal anchor shifted by %1 dots after scrollbar layout")
+                                .arg(after.x() - before.x())));
+        QVERIFY2(qAbs(after.y() - before.y()) <= 1,
+                 qPrintable(QStringLiteral("Vertical anchor shifted by %1 dots after scrollbar layout")
+                                .arg(after.y() - before.y())));
+    };
+    verifyAnchor();
+    QTest::qWait(20);
+    verifyAnchor();
 }
 
 void CanvasTests::manualZoomKeepsPannedSceneCenterAfterResize()

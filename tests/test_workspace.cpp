@@ -5,6 +5,7 @@
 #include "workspace_preferences.hpp"
 
 #include <QAction>
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QComboBox>
 #include <QDir>
@@ -51,6 +52,7 @@ private slots:
     void canvasZoomPreferencesValidateStoredValues_data();
     void canvasZoomPreferencesValidateStoredValues();
     void canvasZoomSurvivesWindowAndDocumentLifecycle();
+    void canvasZoomMenuKeepsFixedPresets();
     void restoredManualZoomCentersPaperAfterWindowLayout_data();
     void restoredManualZoomCentersPaperAfterWindowLayout();
     void toolbarPreferencesDefaultVisibleAndPersistHiddenCommands();
@@ -630,7 +632,7 @@ void WorkspaceTests::canvasZoomSurvivesWindowAndDocumentLifecycle()
     QApplication::sendEvent(canvas->viewport(), &wheel);
     QVERIFY(!canvas->isFitMode());
     QCOMPARE(qRound(canvas->transform().m11() * 100), 180);
-    QCOMPARE(zoom->currentData().toInt(), 180);
+    QCOMPARE(zoom->currentText(), u"180%"_s);
     QCOMPARE(loadWorkspacePreferences().canvasZoomPercent, 180);
 
     window_.reset();
@@ -641,7 +643,7 @@ void WorkspaceTests::canvasZoomSurvivesWindowAndDocumentLifecycle()
     QTest::qWait(150);
     QVERIFY(!canvas->isFitMode());
     QCOMPARE(canvas->transform().m11(), 1.8);
-    QCOMPARE(zoom->currentData().toInt(), 180);
+    QCOMPARE(zoom->currentText(), u"180%"_s);
     QAction* fresh = nullptr;
     for (auto* candidate : window_->findChildren<QAction*>()) {
         if (candidate->shortcut() == QKeySequence(QKeySequence::New)) {
@@ -664,7 +666,9 @@ void WorkspaceTests::canvasZoomSurvivesWindowAndDocumentLifecycle()
 
     // Selecting Fit must store the mode, not the percentage it calculated for
     // this particular paper and viewport.
-    QTest::keyClick(zoom, Qt::Key_Home);
+    zoom->showPopup();
+    QTest::keyClick(zoom->view(), Qt::Key_Home);
+    QTest::keyClick(zoom->view(), Qt::Key_Return);
     QVERIFY(canvas->isFitMode());
     QCOMPARE(zoom->currentData().toInt(), 0);
     QCOMPARE(loadWorkspacePreferences().canvasZoomPercent, 0);
@@ -680,6 +684,54 @@ void WorkspaceTests::canvasZoomSurvivesWindowAndDocumentLifecycle()
     QVERIFY(canvas->isFitMode());
     QVERIFY(canvas->transform().m11() < fittedScale);
     QCOMPARE(loadWorkspacePreferences().canvasZoomPercent, 0);
+}
+
+void WorkspaceTests::canvasZoomMenuKeepsFixedPresets()
+{
+    auto* canvas = window_->findChild<LabelCanvas*>();
+    auto* zoom = window_->findChild<QComboBox*>(u"canvasZoom"_s);
+    QVERIFY(canvas); QVERIFY(zoom);
+    const QList<int> presets{0, 10, 25, 50, 75, 100, 125, 150, 200, 300, 400, 600, 800};
+    const auto verifyMenu = [&] {
+        QCOMPARE(zoom->count(), presets.size());
+        for (int index = 0; index < presets.size(); ++index)
+            QCOMPARE(zoom->itemData(index).toInt(), presets[index]);
+    };
+    canvas->setZoomPercent(100);
+    for (const int direction : {1, -1, 1}) {
+        for (int step = 0; step < 16; ++step) {
+            const QPoint cursor = canvas->viewport()->rect().center();
+            QWheelEvent wheel(cursor, canvas->viewport()->mapToGlobal(cursor), {}, {0, direction * 120},
+                              Qt::NoButton, Qt::ControlModifier, Qt::NoScrollPhase, false);
+            QApplication::sendEvent(canvas->viewport(), &wheel);
+            verifyMenu();
+            QCOMPARE(zoom->currentText(), u"%1%"_s.arg(qRound(canvas->transform().m11() * 100)));
+        }
+    }
+    // A restored arbitrary percentage is displayed, never inserted into the menu.
+    canvas->setZoomPercent(128);
+    verifyMenu();
+    QCOMPARE(zoom->currentText(), u"128%"_s);
+    QCOMPARE(zoom->findData(128), -1);
+    window_.reset();
+    createWindow();
+    canvas = window_->findChild<LabelCanvas*>();
+    zoom = window_->findChild<QComboBox*>(u"canvasZoom"_s);
+    QVERIFY(canvas); QVERIFY(zoom);
+    QTest::qWait(150);
+    verifyMenu();
+    QCOMPARE(zoom->currentText(), u"128%"_s);
+    QCOMPARE(canvas->transform().m11(), 1.28);
+    const int preset = zoom->findData(100);
+    zoom->setCurrentIndex(preset - 1);
+    QTest::keyClick(zoom, Qt::Key_Down);
+    QCOMPARE(canvas->transform().m11(), 1.0);
+    QCOMPARE(zoom->currentText(), u"100%"_s);
+    zoom->setCurrentIndex(1);
+    QTest::keyClick(zoom, Qt::Key_Up);
+    QVERIFY(canvas->isFitMode());
+    QCOMPARE(zoom->currentText(), u"Вписать"_s);
+    verifyMenu();
 }
 
 void WorkspaceTests::restoredManualZoomCentersPaperAfterWindowLayout_data()

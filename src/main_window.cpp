@@ -797,9 +797,18 @@ void MainWindow::buildUi() {
     canvasSelection_ = caption(QString(), zoomControls); zoomRow->addWidget(canvasSelection_); zoomRow->addStretch();
     zoomRow->addWidget(caption(QStringLiteral("Масштаб"), zoomControls));
     auto* zoom = new QComboBox(zoomControls); zoom->setObjectName(QStringLiteral("canvasZoom")); zoom->setProperty("compact", true); zoom->setFixedWidth(85); zoom->setFixedHeight(25);
-    zoom->addItem(QStringLiteral("Вписать"), 0); for (int percent : {50, 75, 100, 125, 150, 200}) zoom->addItem(QStringLiteral("%1%").arg(percent), percent);
+    zoom->setEditable(true);
+    zoom->setInsertPolicy(QComboBox::NoInsert);
+    zoom->lineEdit()->setReadOnly(true);
+    zoom->setCompleter(nullptr);
+    auto zoomFont = zoom->font(); zoomFont.setPixelSize(11); zoom->lineEdit()->setFont(zoomFont);
+    zoom->addItem(QStringLiteral("Вписать"), 0);
+    for (int percent : {10, 25, 50, 75, 100, 125, 150, 200, 300, 400, 600, 800})
+        zoom->addItem(QStringLiteral("%1%").arg(percent), percent);
+    zoom->setMaxVisibleItems(zoom->count());
     zoomRow->addWidget(zoom);
     connect(zoom, &QComboBox::activated, this, [this, zoom](int index) {
+        if (index < 0) return;
         const int percent = zoom->itemData(index).toInt();
         if (!percent) canvas_->fitLabel();
         else canvas_->setZoomPercent(percent);
@@ -807,10 +816,9 @@ void MainWindow::buildUi() {
     zoomLabel_ = new QLabel(QStringLiteral("100%"), zoomControls); zoomLabel_->hide();
     connect(canvas_, &LabelCanvas::zoomChanged, zoom, [this, zoom](int percent) {
         const QSignalBlocker block(zoom);
-        if (canvas_->isFitMode()) { zoom->setCurrentIndex(0); return; }
-        int index = zoom->findData(percent);
-        if (index < 0) { zoom->addItem(QStringLiteral("%1%").arg(percent), percent); index = zoom->count() - 1; }
+        const int index = canvas_->isFitMode() ? 0 : zoom->findData(percent);
         zoom->setCurrentIndex(index);
+        if (index < 0) zoom->setEditText(QStringLiteral("%1%").arg(percent));
     });
     centerLayout->addWidget(zoomControls);
 
