@@ -218,6 +218,8 @@ LabelCanvas::LabelCanvas(QWidget* parent)
     setViewportUpdateMode(QGraphicsView::FullViewportUpdate);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    horizontalScrollBar()->installEventFilter(this);
+    verticalScrollBar()->installEventFilter(this);
     setRenderHint(QPainter::SmoothPixmapTransform, false);
     setMinimumSize(320, 260);
     setAccessibleName(tr("Холст этикетки"));
@@ -417,7 +419,14 @@ void LabelCanvas::setLayoutSettings(const CanvasLayoutSettings& settings)
     boundGuides(bounded.verticalGuides);
     if (bounded == m_layout) return;
     if (m_interaction == Interaction::Guide) cancelInteraction();
+    const bool workspaceChanged = bounded.rulersVisible != m_layout.rulersVisible || bounded.unit != m_layout.unit;
+    const QPointF previousCenter = availableViewportRect(viewport()->size()).center();
     m_layout = std::move(bounded);
+    if (workspaceChanged && m_hasDocument) {
+        if (m_fitMode) fitLabel();
+        else positionView(m_viewCenter
+            + (previousCenter - availableViewportRect(viewport()->size()).center()) / transform().m11());
+    }
     updateRulers();
     viewport()->update();
 }
@@ -445,10 +454,10 @@ void LabelCanvas::fitLabel()
     m_fitMode = true;
     // The scene includes extra workspace around the paper. AsNeeded bars can
     // oscillate when fitting to the changing viewport near their thresholds.
-    // Fit mode keeps a stable viewport; manual zoom restores scrollable bars.
+    // Fit mode keeps a stable viewport; manual zoom checks the paper's size.
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    const QRectF available = availableViewportRect();
+    const QRectF available = availableViewportRect(viewport()->size());
     const qreal scale = std::clamp(std::min(available.width() / m_document.width,
                                           available.height() / m_document.height),
                                    minimumZoom, maximumZoom);
@@ -457,20 +466,47 @@ void LabelCanvas::fitLabel()
     emit zoomChanged(qRound(scale * 100));
 }
 
-QRectF LabelCanvas::availableViewportRect() const
+QRectF LabelCanvas::availableViewportRect(QSizeF viewportSize) const
 {
     const int rulerWidth = QFontMetrics(rulerFont(font())).horizontalAdvance(
         rulerEndLabel(m_document.height, m_document.dpi, m_layout.unit, locale())) + 9;
     const int leftInset = m_layout.rulersVisible ? std::max(m_workspaceInsets.left(), rulerWidth)
                                                : m_workspaceInsets.left();
     return QRectF(leftInset, m_workspaceInsets.top(),
-        std::max(1, viewport()->width() - leftInset - m_workspaceInsets.right()),
-        std::max(1, viewport()->height() - m_workspaceInsets.top() - m_workspaceInsets.bottom()));
+        std::max(1.0, viewportSize.width() - leftInset - m_workspaceInsets.right()),
+        std::max(1.0, viewportSize.height() - m_workspaceInsets.top() - m_workspaceInsets.bottom()));
+}
+
+void LabelCanvas::updateScrollBarPolicies()
+{
+    bool horizontal = false;
+    bool vertical = false;
+    if (m_hasDocument && !m_fitMode) {
+        // AlwaysOff/AsNeeded leave maximumViewportSize independent of the
+        // current bars. Start with neither bar, then account for the space
+        // each required bar takes from the other axis, without resize loops.
+        const QSizeF maximum = maximumViewportSize();
+        const QSizeF paper = labelRect().size() * transform().m11();
+        const int verticalExtent = verticalScrollBar()->sizeHint().width();
+        const int horizontalExtent = horizontalScrollBar()->sizeHint().height();
+        for (int pass = 0; pass < 3; ++pass) {
+            const QSizeF available = availableViewportRect(maximum
+                - QSizeF(vertical ? verticalExtent : 0, horizontal ? horizontalExtent : 0)).size();
+            const bool nextHorizontal = paper.width() > available.width();
+            const bool nextVertical = paper.height() > available.height();
+            if (horizontal == nextHorizontal && vertical == nextVertical) break;
+            horizontal = nextHorizontal;
+            vertical = nextVertical;
+        }
+    }
+    setHorizontalScrollBarPolicy(horizontal ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
+    setVerticalScrollBarPolicy(vertical ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
 }
 
 void LabelCanvas::positionView(QPointF center)
 {
     const QScopedValueRollback positioning(m_positioningView, true);
+    updateScrollBarPolicies();
     const qreal scale = std::max(minimumZoom, transform().m11());
     // A scene smaller than the viewport makes Qt align the scene itself and
     // ignore centerOn(). Recompute its navigable bounds at the current zoom,
@@ -489,7 +525,7 @@ void LabelCanvas::centerLabel()
     if (!m_hasDocument) return;
     const qreal scale = std::max(minimumZoom, transform().m11());
     positionView(labelRect().center()
-        + (QRectF(viewport()->rect()).center() - availableViewportRect().center()) / scale);
+        + (QRectF(viewport()->rect()).center() - availableViewportRect(viewport()->size()).center()) / scale);
 }
 
 void LabelCanvas::actualSize()
@@ -513,11 +549,11 @@ void LabelCanvas::setWorkspaceInsets(const QMargins& insets)
                            std::max(0, insets.right()), std::max(0, insets.bottom()));
     if (m_workspaceInsets == bounded) return;
     const qreal scale = std::max(minimumZoom, transform().m11());
-    const QPointF previousCenter = availableViewportRect().center();
+    const QPointF previousCenter = availableViewportRect(viewport()->size()).center();
     m_workspaceInsets = bounded;
     if (m_fitMode) fitLabel();
     else if (m_hasDocument)
-        positionView(m_viewCenter + (previousCenter - availableViewportRect().center()) / scale);
+        positionView(m_viewCenter + (previousCenter - availableViewportRect(viewport()->size()).center()) / scale);
     positionDimensionsCaption();
 }
 
@@ -529,9 +565,8 @@ void LabelCanvas::applyZoom(qreal scale, bool keepMouseAnchor)
                                         : viewport()->rect().center();
     const QPointF previousPosition = mapToScene(anchor);
     m_fitMode = false;
-    setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     setTransform(QTransform::fromScale(scale, scale));
+    updateScrollBarPolicies();
     const QPoint nextAnchor = keepMouseAnchor ? viewport()->mapFromGlobal(QCursor::pos())
                                             : viewport()->rect().center();
     positionView(previousPosition + QPointF(viewport()->rect().center() - nextAnchor) / scale);
@@ -1251,6 +1286,15 @@ void LabelCanvas::paintRuler(QWidget* ruler, bool horizontal)
 
 bool LabelCanvas::eventFilter(QObject* watched, QEvent* event)
 {
+    // Qt forwards viewport wheel events even to hidden scrollbars. Keep their
+    // navigation range for centering/explicit panning, but ignore the wheel
+    // on an axis where the paper fits.
+    if (event->type() == QEvent::Wheel
+        && ((watched == horizontalScrollBar() && horizontalScrollBarPolicy() == Qt::ScrollBarAlwaysOff)
+            || (watched == verticalScrollBar() && verticalScrollBarPolicy() == Qt::ScrollBarAlwaysOff))) {
+        event->accept();
+        return true;
+    }
     const bool horizontal = watched == m_horizontalRuler;
     if (!horizontal && watched != m_verticalRuler)
         return QGraphicsView::eventFilter(watched, event);

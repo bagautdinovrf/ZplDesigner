@@ -15,6 +15,7 @@
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QSettings>
+#include <QScrollBar>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStandardPaths>
@@ -734,6 +735,8 @@ void WorkspaceTests::restoredManualZoomCentersPaperAfterWindowLayout()
                                 .arg(available.width()).arg(available.height())));
         QVERIFY(canvas->viewport()->rect().contains(paper));
         QVERIFY(available.adjusted(-2, -2, 2, 2).contains(paper));
+        QVERIFY(!canvas->horizontalScrollBar()->isVisible());
+        QVERIFY(!canvas->verticalScrollBar()->isVisible());
         const QPointF offset = QRectF(paper).center() - available.center();
         QVERIFY2(qAbs(offset.x()) <= 2 && qAbs(offset.y()) <= 2,
                  qPrintable(u"Paper center differs from workspace center by (%1, %2) pixels"_s

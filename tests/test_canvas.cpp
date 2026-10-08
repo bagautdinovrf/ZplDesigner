@@ -16,6 +16,7 @@
 #include <QtTest>
 #include <QtMath>
 #include <QUrl>
+#include <QWheelEvent>
 
 #include <memory>
 
@@ -103,6 +104,12 @@ private slots:
     void layoutSettingsAreBounded();
     void fitViewportSettlesAcrossResizeAndLayoutChanges();
     void fitModeKeepsPanAndRestoresManualZoomScrollbars();
+    void scrollBarsReflectPaperOverflow_data();
+    void scrollBarsReflectPaperOverflow();
+    void manualScrollBarsSettleAtPaperFitThreshold();
+    void wheelScrollsOnlyOverflowingAxes_data();
+    void wheelScrollsOnlyOverflowingAxes();
+    void controlWheelStillZoomsFittedPaper();
     void manualZoomKeepsPannedSceneCenterAfterResize();
     void dimensionCaptionStaysOutsidePaperViewport();
     void invalidDataMatrixMarkerIsEditorOnlyAndFollowsIdentity();
@@ -1192,18 +1199,159 @@ void CanvasTests::fitModeKeepsPanAndRestoresManualZoomScrollbars()
     QCOMPARE(canvas_->verticalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
 
     canvas_->actualSize();
-    QCOMPARE(canvas_->horizontalScrollBarPolicy(), Qt::ScrollBarAsNeeded);
-    QCOMPARE(canvas_->verticalScrollBarPolicy(), Qt::ScrollBarAsNeeded);
+    QApplication::processEvents();
+    QVERIFY(!canvas_->horizontalScrollBar()->isVisible());
+    QVERIFY(canvas_->verticalScrollBar()->isVisible());
     QCOMPARE(canvas_->transform().m11(), 1.0);
     canvas_->resize(720, 430);
     QTest::qWait(10);
     QCOMPARE(canvas_->transform().m11(), 1.0);
+    QVERIFY(canvas_->horizontalScrollBar()->isVisible());
+    QVERIFY(canvas_->verticalScrollBar()->isVisible());
     canvas_->fitLabel();
     QCOMPARE(canvas_->horizontalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
     QCOMPARE(canvas_->verticalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
     canvas_->zoomIn();
-    QCOMPARE(canvas_->horizontalScrollBarPolicy(), Qt::ScrollBarAsNeeded);
-    QCOMPARE(canvas_->verticalScrollBarPolicy(), Qt::ScrollBarAsNeeded);
+    QApplication::processEvents();
+    QVERIFY(canvas_->horizontalScrollBar()->isVisible());
+    QVERIFY(canvas_->verticalScrollBar()->isVisible());
+}
+
+void CanvasTests::scrollBarsReflectPaperOverflow_data()
+{
+    QTest::addColumn<QSize>("paperSize");
+    QTest::addColumn<int>("zoomPercent");
+    QTest::addColumn<bool>("horizontal");
+    QTest::addColumn<bool>("vertical");
+    QTest::newRow("manual-small-paper") << QSize(400, 300) << 100 << false << false;
+    QTest::newRow("manual-both-axes") << QSize(400, 300) << 800 << true << true;
+    QTest::newRow("manual-width-only") << QSize(900, 80) << 100 << true << false;
+    QTest::newRow("manual-height-only") << QSize(80, 700) << 100 << false << true;
+    QTest::newRow("fitted-large-paper") << QSize(900, 700) << 0 << false << false;
+}
+
+void CanvasTests::scrollBarsReflectPaperOverflow()
+{
+    QFETCH(QSize, paperSize);
+    QFETCH(int, zoomPercent);
+    QFETCH(bool, horizontal);
+    QFETCH(bool, vertical);
+    document_.width = paperSize.width();
+    document_.height = paperSize.height();
+    canvas_->syncDocument(document_);
+    if (zoomPercent == 0) canvas_->fitLabel();
+    else canvas_->setZoomPercent(zoomPercent);
+    QApplication::processEvents();
+    QCOMPARE(canvas_->horizontalScrollBar()->isVisible(), horizontal);
+    QCOMPARE(canvas_->verticalScrollBar()->isVisible(), vertical);
+    if (zoomPercent > 0) QCOMPARE(canvas_->transform().m11(), zoomPercent / 100.0);
+}
+
+void CanvasTests::manualScrollBarsSettleAtPaperFitThreshold()
+{
+    auto settings = canvas_->layoutSettings();
+    settings.rulersVisible = false;
+    canvas_->setLayoutSettings(settings);
+    canvas_->setWorkspaceInsets(QMargins(35, 50, 35, 45));
+    canvas_->setZoomPercent(100);
+    QApplication::processEvents();
+    QVERIFY(!canvas_->horizontalScrollBar()->isVisible());
+    QVERIFY(!canvas_->verticalScrollBar()->isVisible());
+    const QSize chrome = canvas_->size() - canvas_->viewport()->size();
+    const QSize exactFit = QSize(document_.width + 70, document_.height + 95) + chrome;
+
+    canvas_->setZoomPercent(800);
+    QApplication::processEvents();
+    QVERIFY(canvas_->horizontalScrollBar()->isVisible());
+    QVERIFY(canvas_->verticalScrollBar()->isVisible());
+    canvas_->setZoomPercent(100);
+    QApplication::processEvents();
+    QVERIFY(!canvas_->horizontalScrollBar()->isVisible());
+    QVERIFY(!canvas_->verticalScrollBar()->isVisible());
+
+    ResizeCounter resizes;
+    canvas_->viewport()->installEventFilter(&resizes);
+    // Returning to the exact fit after both bars were shown must find the
+    // layout without bars, not retain them because they consume viewport space.
+    for (const int extraPixel : {1, -1, 0, -1, 1, 0}) {
+        const int before = resizes.count;
+        canvas_->resize(exactFit + QSize(extraPixel, extraPixel));
+        QTest::qWait(10);
+        const int settled = resizes.count;
+        const QSize viewportSize = canvas_->viewport()->size();
+        QCOMPARE(canvas_->horizontalScrollBar()->isVisible(), extraPixel < 0);
+        QCOMPARE(canvas_->verticalScrollBar()->isVisible(), extraPixel < 0);
+        QCOMPARE(canvas_->transform().m11(), 1.0);
+        QVERIFY(resizes.count - before < 8);
+        QTest::qWait(30);
+        QCOMPARE(resizes.count, settled);
+        QCOMPARE(canvas_->viewport()->size(), viewportSize);
+        QCOMPARE(canvas_->horizontalScrollBar()->isVisible(), extraPixel < 0);
+        QCOMPARE(canvas_->verticalScrollBar()->isVisible(), extraPixel < 0);
+    }
+}
+
+void CanvasTests::wheelScrollsOnlyOverflowingAxes_data()
+{
+    QTest::addColumn<QSize>("paperSize");
+    QTest::addColumn<int>("zoomPercent");
+    QTest::addColumn<bool>("horizontal");
+    QTest::addColumn<bool>("vertical");
+    QTest::newRow("small-paper-at-50-percent") << QSize(400, 300) << 50 << false << false;
+    QTest::newRow("horizontal-overflow") << QSize(900, 80) << 100 << true << false;
+    QTest::newRow("vertical-overflow") << QSize(80, 700) << 100 << false << true;
+    QTest::newRow("both-axes-overflow") << QSize(900, 700) << 100 << true << true;
+}
+
+void CanvasTests::wheelScrollsOnlyOverflowingAxes()
+{
+    QFETCH(QSize, paperSize);
+    QFETCH(int, zoomPercent);
+    QFETCH(bool, horizontal);
+    QFETCH(bool, vertical);
+    document_.width = paperSize.width();
+    document_.height = paperSize.height();
+    canvas_->syncDocument(document_);
+    canvas_->setZoomPercent(zoomPercent);
+    canvas_->centerLabel();
+    QApplication::processEvents();
+    QCOMPARE(canvas_->horizontalScrollBar()->isVisible(), horizontal);
+    QCOMPARE(canvas_->verticalScrollBar()->isVisible(), vertical);
+
+    const QTransform transform = canvas_->transform();
+    for (const bool horizontalWheel : {false, true}) {
+        const QPoint cursor = canvas_->viewport()->rect().center();
+        const QPointF before = canvas_->mapToScene(cursor);
+        const QPoint angleDelta = horizontalWheel ? QPoint(-120, 0) : QPoint(0, -120);
+        QWheelEvent wheel(cursor, canvas_->viewport()->mapToGlobal(cursor), {}, angleDelta,
+                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(canvas_->viewport(), &wheel);
+        QApplication::processEvents();
+        const QPointF after = canvas_->mapToScene(canvas_->viewport()->rect().center());
+        QCOMPARE(canvas_->transform(), transform);
+        if (horizontalWheel && horizontal) QVERIFY(after.x() != before.x());
+        else QCOMPARE(after.x(), before.x());
+        if (!horizontalWheel && vertical) QVERIFY(after.y() != before.y());
+        else QCOMPARE(after.y(), before.y());
+    }
+}
+
+void CanvasTests::controlWheelStillZoomsFittedPaper()
+{
+    canvas_->fitLabel();
+    QApplication::processEvents();
+    QVERIFY(canvas_->isFitMode());
+    QVERIFY(!canvas_->horizontalScrollBar()->isVisible());
+    QVERIFY(!canvas_->verticalScrollBar()->isVisible());
+    const qreal fittedScale = canvas_->transform().m11();
+    const QPoint cursor = canvas_->viewport()->rect().center();
+    QWheelEvent wheel(cursor, canvas_->viewport()->mapToGlobal(cursor), {}, {0, 120},
+                      Qt::NoButton, Qt::ControlModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(canvas_->viewport(), &wheel);
+    QApplication::processEvents();
+    QVERIFY(!canvas_->isFitMode());
+    QVERIFY(canvas_->transform().m11() > fittedScale);
+    QCOMPARE(qRound(canvas_->transform().m11() * 100), qRound(fittedScale * 1.2 * 100));
 }
 
 void CanvasTests::manualZoomKeepsPannedSceneCenterAfterResize()
