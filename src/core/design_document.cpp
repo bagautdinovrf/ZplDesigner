@@ -3,6 +3,12 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <utility>
+
+static void initializeSampleResources()
+{
+    Q_INIT_RESOURCE(designer_samples);
+}
 
 namespace Designer {
 QString elementTypeName(ElementType type)
@@ -324,20 +330,101 @@ Element resizedElement(const Element& element, QSize requestedSize, QSize curren
 
 DesignDocument sampleDocument()
 {
+    static const auto sampleImages = [] {
+        initializeSampleResources();
+        return std::pair{
+            QImage(QStringLiteral(":/designer/samples/baltiysk-emblem.png")),
+            QImage(QStringLiteral(":/designer/samples/maritime-anchor.png"))};
+    }();
+
     DesignDocument document;
-    auto frame = makeElement(ElementType::Box, {24, 24});
-    frame.width = 764; frame.height = 358; frame.thickness = 2;
-    auto title = makeElement(ElementType::Text, {48, 48});
-    title.text = QStringLiteral("NORTHLINE STUDIO"); title.fontHeight = 44;
-    auto address = makeElement(ElementType::Text, {48, 112});
-    address.text = QStringLiteral("18 Sample Lane"); address.fontHeight = 30;
-    auto city = makeElement(ElementType::Text, {48, 156});
-    city.text = QStringLiteral("Brookfield, CA 94000"); city.fontHeight = 30;
-    auto code = makeElement(ElementType::Code128, {48, 234});
-    code.height = 76; code.moduleWidth = 2; code.text = QStringLiteral("NL-00001");
-    auto dataMatrix = makeElement(ElementType::DataMatrix, {612, 180});
-    dataMatrix.text = QStringLiteral("(01)09506000134352(21)NL-00001"); dataMatrix.moduleWidth = 6;
-    document.elements = {frame, title, address, city, code, dataMatrix};
+    document.width = document.height = qRound(100.0 * document.dpi / 25.4);
+    const auto addText = [&document](const QString& value, QPoint position, int height,
+                                    bool reverse = false) {
+        auto element = makeElement(ElementType::Text, position);
+        element.name = element.text = value;
+        element.fontHeight = height;
+        element.reverse = reverse;
+        document.elements.append(element);
+    };
+    const auto addLine = [&document](QPoint position, QSize size, int thickness = 2) {
+        auto element = makeElement(ElementType::Line, position);
+        element.width = size.width(); element.height = size.height();
+        element.thickness = thickness;
+        document.elements.append(element);
+    };
+
+    auto frame = makeElement(ElementType::Box, {16, 16});
+    frame.name = QStringLiteral("Рамка транспортной этикетки");
+    frame.width = document.width - 32; frame.height = document.height - 32; frame.thickness = 3;
+    document.elements.append(frame);
+
+    addText(QStringLiteral("NORTHLINE"), {36, 42}, 48);
+    addText(QStringLiteral("STUDIO / MARITIME LOGISTICS"), {38, 100}, 18);
+    addText(QStringLiteral("TraceWay - Original Soft"), {38, 140}, 26);
+    auto service = makeElement(ElementType::Box, {474, 36});
+    service.name = QStringLiteral("Индекс сервиса — подложка");
+    service.width = 96; service.height = 68; service.thickness = 68;
+    document.elements.append(service);
+    addText(QStringLiteral("B1"), {490, 46}, 54, true);
+    addText(QStringLiteral("ЭКСПРЕСС"), {480, 128}, 20);
+    auto emblem = makeElement(ElementType::Image, {606, 28});
+    emblem.name = QStringLiteral("Морская эмблема — Балтийск");
+    emblem.image = sampleImages.first;
+    emblem.width = emblem.height = 156;
+    document.elements.append(emblem);
+    addLine({20, 184}, {759, 3}, 3);
+
+    addText(QStringLiteral("ПОРТ ОТПРАВЛЕНИЯ"), {36, 201}, 16);
+    addText(QStringLiteral("Балтийск"), {36, 231}, 52);
+    addText(QStringLiteral("СОРТИРОВОЧНЫЙ МАРШРУТ"), {454, 201}, 16);
+    addText(QStringLiteral("BLT / 01"), {454, 232}, 48);
+    addLine({20, 286}, {759, 3}, 3);
+    addLine({432, 188}, {2, 384});
+
+    addText(QStringLiteral("ОТПРАВИТЕЛЬ / ОТ"), {36, 306}, 16);
+    addText(QStringLiteral("NORTHLINE STUDIO"), {36, 338}, 26);
+    addText(QStringLiteral("Балтийск / Северный терминал"), {36, 374}, 20);
+    addText(QStringLiteral("ПРИЧАЛ 07 / СЕКТОР B1"), {36, 404}, 18);
+    addLine({36, 435}, {376, 1}, 1);
+    addText(QStringLiteral("ПОЛУЧАТЕЛЬ / КОМУ"), {36, 456}, 16);
+    addText(QStringLiteral("TRACEWAY ORIGINAL SOFT"), {36, 486}, 26);
+    addText(QStringLiteral("МОРСКАЯ КОЛЛЕКЦИЯ / 01"), {36, 522}, 18);
+    addText(QStringLiteral("ОТПРАВЛЕНИЕ NL-00001"), {36, 550}, 18);
+
+    auto anchor = makeElement(ElementType::Image, {464, 292});
+    anchor.name = QStringLiteral("Классический морской якорь");
+    anchor.image = sampleImages.second;
+    anchor.width = anchor.height = 284;
+    anchor.dither = false;
+    document.elements.append(anchor);
+    addLine({20, 584}, {759, 3}, 3);
+
+    const QList<int> columns{36, 228, 420, 612};
+    const QStringList captions{QStringLiteral("МЕСТ"), QStringLiteral("ВЕС"),
+                               QStringLiteral("ФОРМАТ"), QStringLiteral("ТИП")};
+    const QStringList values{QStringLiteral("01 / 01"), QStringLiteral("0,70 КГ"),
+                             QStringLiteral("100 x 100"), QStringLiteral("ORIGINAL")};
+    for (qsizetype index = 0; index < columns.size(); ++index) {
+        addText(captions[index], {columns[index], 604}, 14);
+        addText(values[index], {columns[index], 630}, 24);
+        if (index > 0) addLine({columns[index] - 20, 588}, {1, 70}, 1);
+    }
+    addLine({20, 662}, {759, 3}, 3);
+
+    auto code = makeElement(ElementType::Code128, {36, 686});
+    code.height = 48; code.moduleWidth = 2; code.text = QStringLiteral("NL-00001");
+    document.elements.append(code);
+    auto manifest = makeElement(ElementType::Pdf417, {314, 684});
+    manifest.name = QStringLiteral("Транспортный манифест PDF417");
+    manifest.text = QStringLiteral("TRACEWAY|DEMO|NL-00001|BLT|B1|1/1|0.70KG");
+    manifest.moduleWidth = 2; manifest.pdf417Columns = 3;
+    manifest.pdf417RowHeight = 4; manifest.pdf417Security = 2;
+    document.elements.append(manifest);
+    auto dataMatrix = makeElement(ElementType::DataMatrix, {664, 680});
+    dataMatrix.text = QStringLiteral("(01)09506000134352(21)NL-00001"); dataMatrix.moduleWidth = 5;
+    document.elements.append(dataMatrix);
+    addText(QStringLiteral("ДЕМО / МОРСКАЯ КОЛЛЕКЦИЯ / 0001"), {314, 758}, 12);
     return document;
 }
 

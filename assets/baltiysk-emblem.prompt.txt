@@ -1,0 +1,16 @@
+Tool: built-in image_gen (image edit)
+Source: user-supplied circular sailing ship travel badge.
+
+Final follow-up edit:
+Use case: text-localization.
+Edit target: the supplied clean black-and-white circular sailing ship emblem.
+Make only this change: replace the complete bottom arc text "БАЛТИЙСКОЕ МОРЕ" with the exact mixed-case text "TraceWay - Original Soft".
+Exact capitalization, spaces and hyphen must be preserved: capital T and W in TraceWay, capital O in Original, capital S in Soft. Fit the phrase neatly along the same bottom arc in strong clearly readable serif lettering, slightly smaller if needed.
+Keep the top arc Cyrillic "БАЛТИЙСК", the sailing ship, waves, rays, left and right stars, circular rings, layout, white background and black ink unchanged. Do not add any other text. No paper texture, no mockup, no shadows. Keep a square canvas and the same framing. Output one edited emblem.
+
+Initial edit:
+
+Use case: text-localization.
+Edit target: the attached circular vintage sailing ship travel badge. Create a cleaned-up edited version for a monochrome thermal printer label, preserving its circular badge structure, central three-masted sailing ship, waves, outer double ring, and small left and right stars.
+Replace the top arc English text TRAVEL COMPANY with exactly "БАЛТИЙСК". Replace the bottom arc text EASTERN ROUTE with exactly "БАЛТИЙСКОЕ МОРЕ". Both must be correct Cyrillic, clearly legible, bold uppercase lettering following the arcs.
+Change the teal ink to solid black and the beige background to pure solid white. Remove all distress, grunge, scratches, paper texture and the faint compass decoration outside the seal. Keep the entire circle in view, centered with a small even white margin. Use strong simplified clean ink strokes, avoid dense hairline rigging and rays that would disappear when reduced to about 200 pixels across. Flat 2D stamp artwork, no mockup, no shadows, no gradients, no added slogans or text. Output one square black-on-white image.

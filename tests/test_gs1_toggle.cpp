@@ -225,13 +225,18 @@ void Gs1ToggleTests::invalidGs1InFitModeKeepsEventLoopResponsive()
 
 void Gs1ToggleTests::invalidDataMatrixKeepsOtherElementsAndBlocksCleanExport()
 {
-    auto initial = window_->document();
-    int matrixIndex = -1;
-    for (qsizetype i = 0; i < initial.elements.size(); ++i)
-        if (initial.elements[i].type == ElementType::DataMatrix) matrixIndex = static_cast<int>(i);
-    QVERIFY(matrixIndex >= 0);
-    initial.elements[matrixIndex].text = u"NL-00001"_s;
-    initial.elements[matrixIndex].gs1 = false;
+    // Keep the pixel comparison independent of the changing startup sample.
+    DesignDocument initial;
+    initial.width = 812;
+    initial.height = 406;
+    auto frame = Designer::makeElement(ElementType::Box, {24, 24});
+    frame.width = 764; frame.height = 358; frame.thickness = 2;
+    auto title = Designer::makeElement(ElementType::Text, {48, 48});
+    title.text = u"Контрольный текст"_s; title.fontHeight = 36;
+    auto matrix = Designer::makeElement(ElementType::DataMatrix, {612, 180});
+    matrix.text = u"NL-00001"_s; matrix.moduleWidth = 6; matrix.gs1 = false;
+    initial.elements = {frame, title, matrix};
+    constexpr int matrixIndex = 2;
     window_->setDocument(initial);
     QVERIFY(!initial.elements[matrixIndex].gs1);
     canvas_->setSelectedIndex(matrixIndex);

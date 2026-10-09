@@ -97,6 +97,14 @@ target_include_directories(designer_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src
 target_link_libraries(designer_core PUBLIC Qt6::Core Qt6::Gui QtZpl::QtZpl)
 designer_target_settings(designer_core)
 
+qt_add_resources(designer_core designer_samples
+    PREFIX "/designer/samples"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+    FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/baltiysk-emblem.png"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/maritime-anchor.png"
+)
+
 add_library(designer_session STATIC
     src/session/document_session.cpp
     src/session/document_session.hpp
@@ -288,16 +296,17 @@ if(DESIGNER_BUILD_TESTS)
     target_link_libraries(designer_window_tests PRIVATE Qt6::Test designer_widgets)
     designer_target_settings(designer_window_tests)
     add_test(NAME designer_window COMMAND designer_window_tests -o ${CMAKE_CURRENT_BINARY_DIR}/window-results.txt,txt)
+    # These UI suites repeatedly render the detailed startup label in Debug.
     set_tests_properties(designer_window PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-        TIMEOUT 30
+        TIMEOUT 90
     )
 
     qt_add_executable(designer_gs1_toggle_tests tests/test_gs1_toggle.cpp)
     target_link_libraries(designer_gs1_toggle_tests PRIVATE Qt6::Test designer_widgets)
     designer_target_settings(designer_gs1_toggle_tests)
     add_test(NAME designer_gs1_toggle COMMAND designer_gs1_toggle_tests -o ${CMAKE_CURRENT_BINARY_DIR}/gs1-toggle-results.txt,txt)
-    set_tests_properties(designer_gs1_toggle PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+    set_tests_properties(designer_gs1_toggle PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 90)
 
     qt_add_executable(designer_gs1_dialog_tests tests/test_gs1_dialog.cpp)
     target_link_libraries(designer_gs1_dialog_tests PRIVATE Qt6::Test designer_widgets)

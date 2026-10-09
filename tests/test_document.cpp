@@ -2,6 +2,7 @@
 #include "gs1_data.hpp"
 #include "value_placeholders.hpp"
 
+#include <algorithm>
 #include <QtZpl/qtzpl.hpp>
 #include <QFile>
 #include <QTemporaryDir>
@@ -56,6 +57,12 @@ private slots:
 void DocumentTest::sampleRoundTrip()
 {
     const auto sample = sampleDocument();
+    const auto emblem = std::ranges::find_if(sample.elements, [](const Element& element) {
+        return element.type == ElementType::Image;
+    });
+    QVERIFY(emblem != sample.elements.end());
+    for (const auto& element : sample.elements)
+        if (element.type == ElementType::Image) QVERIFY(!element.image.isNull());
     const QString zpl = toZpl(sample);
     auto loaded = fromZpl(zpl);
     QVERIFY2(loaded.has_value(), qPrintable(loaded ? QString{} : loaded.error()));

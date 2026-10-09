@@ -1,0 +1,12 @@
+Tool: built-in image_gen (image edit)
+
+Classic silhouette pass:
+Edit target: the provided chrome anchor artwork. Redesign the anchor itself into a clean CLASSIC ADMIRALTY ANCHOR for a black-and-white thermal shipping label.
+One upright traditional anchor: a round eye at the top, straight central shank, a horizontal stock/crossbar, two symmetrical curved arms and sharp outward pointed flukes. Confident classic maritime silhouette, elegant balanced proportions, substantial bold strokes.
+Remove ALL futuristic orbital loops, remove the ocean wave, remove chrome reflections and all grayscale shading. Pure solid black ink on pure solid white background only, with clean white cutouts if useful to clarify the ring and joints. No halftone, no dithering, no stippling, no texture, no distress, no speckles, no noise, no shadow. Absolutely smooth clean contours that stay crisp at 276 printer dots.
+Make the anchor LARGE, occupying almost the whole square image with only a narrow 3 percent even white margin, fully visible, centered. No text, no frame, no insignia, no watermark. Output one square classic black anchor on white.
+
+Final tilt pass:
+Edit target: the provided clean black classic anchor silhouette.
+Keep this exact traditional anchor shape, bold solid black fill, round eye, stock with round ends, symmetric curved arms and pointed flukes. Make only the orientation and framing change: rotate the ENTIRE anchor approximately 25 degrees CLOCKWISE so the top eye leans toward the upper right and the bottom crown toward the lower left, like a classic nautical anchor set on a diagonal.
+Keep it very large, fully visible with only a narrow even white margin around its rotated silhouette, centered on a square pure white canvas. Do not crop the flukes or eye. No redesign, no loops, no waves, no 3D shading. Pure black on white, smooth clean contours, no grayscale texture, absolutely no speckles or noise, no dithering. No text, no shadow, no frame.

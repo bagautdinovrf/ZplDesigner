@@ -402,7 +402,7 @@ void MainWindow::buildUi() {
     auto* badge = new ObjectBadge(QStringLiteral("ZPL"), title); badge->setProperty("outline", true); badge->setAlignment(Qt::AlignCenter); badge->setFixedSize(24, 22);
     auto badgeFont = badge->font(); badgeFont.setPixelSize(11); badgeFont.setBold(true); badge->setFont(badgeFont);
     badge->setForegroundRole(QPalette::Link); titleRow->addWidget(badge);
-    auto* brand = heading(applicationTitle(), title); brand->setObjectName(QStringLiteral("applicationBrand"));
+    auto* brand = heading(QStringLiteral("QtZpl Designer"), title); brand->setObjectName(QStringLiteral("applicationBrand"));
     titleRow->addWidget(brand);
     titleRow->addSpacing(15); // Together with the row's 9 px spacing: 24 px after Designer.
     documentCommandPanel_ = new QToolBar(title);
