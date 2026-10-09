@@ -601,13 +601,15 @@ void DocumentTest::dataMatrixUtf8BytesRoundTrip()
     const auto expectedBytes = QByteArray::fromHex("D09AD0BED0B420C3A9207C7C31205E4653");
     const auto parsed = QtZpl::parse(source);
     QVERIFY(parsed.has_value());
+    QString escapedMarkers = element.text;
+    escapedMarkers.replace(u"|"_s, u"||"_s);
     bool found = false;
     for (const auto& command : parsed->labels().first().commands())
         if (const auto* data = std::get_if<QtZpl::FieldData>(&command.payload)) {
-            QString escapedMarkers = element.text;
-            escapedMarkers.replace(u"|"_s, u"||"_s);
             QCOMPARE(data->data, escapedMarkers);
             QCOMPARE(data->data.toUtf8(), expectedBytes);
+            QVERIFY(data->bytes.has_value());
+            QCOMPARE(*data->bytes, expectedBytes);
             QCOMPARE(command.source, u"^FD_D0_9A_D0_BE_D0_B4_20_C3_A9_20_7C_7C_31_20_5E_46_53"_s);
             found = true;
         }
@@ -623,8 +625,29 @@ void DocumentTest::dataMatrixUtf8BytesRoundTrip()
     loaded->elements.first().x += 8;
     QString movedSource = source;
     movedSource.replace(u"^FO40,40"_s, u"^FO48,40"_s);
-    QCOMPARE(toZpl(*loaded).toUtf8(), movedSource.toUtf8());
-    const auto reopened = fromZpl(toZpl(*loaded));
+    // Regenerated fields restore ^CI28 and may change inter-command whitespace.
+    // Require the same data bytes and moved geometry, independently of spelling.
+    const QString movedZpl = toZpl(*loaded);
+    const auto movedParsed = QtZpl::parse(movedZpl);
+    QVERIFY(movedParsed.has_value());
+    int movedFields = 0;
+    int movedOrigins = 0;
+    for (const auto& command : movedParsed->labels().first().commands()) {
+        if (const auto* data = std::get_if<QtZpl::FieldData>(&command.payload)) {
+            ++movedFields;
+            QCOMPARE(data->data, escapedMarkers);
+            QVERIFY(data->bytes.has_value());
+            QCOMPARE(*data->bytes, expectedBytes);
+        } else if (const auto* origin = std::get_if<QtZpl::FieldOrigin>(&command.payload)) {
+            ++movedOrigins;
+            QCOMPARE(origin->x, 48);
+            QCOMPARE(origin->y, 40);
+            QCOMPARE(command.source, u"^FO48,40"_s);
+        }
+    }
+    QCOMPARE(movedFields, 1);
+    QCOMPARE(movedOrigins, 1);
+    const auto reopened = fromZpl(movedZpl);
     QVERIFY(reopened.has_value());
     QVERIFY2(reopened->visualEditable, qPrintable(reopened->importNotes.join(u'\n')));
     QCOMPARE(reopened->elements.size(), 1);
@@ -634,6 +657,13 @@ void DocumentTest::dataMatrixUtf8BytesRoundTrip()
     const auto preview = renderPreview(*reopened);
     QVERIFY2(preview.has_value(), preview ? "" : qPrintable(preview.error()));
     QVERIFY2(preview->diagnostics.isEmpty(), qPrintable(preview->diagnostics.join(u'\n')));
+    const auto movedExpected = fromZpl(movedSource);
+    QVERIFY(movedExpected.has_value());
+    QVERIFY(movedExpected->visualEditable);
+    const auto expectedPreview = renderPreview(*movedExpected);
+    QVERIFY(expectedPreview.has_value());
+    QVERIFY(expectedPreview->diagnostics.isEmpty());
+    QCOMPARE(preview->image, expectedPreview->image);
 }
 
 void DocumentTest::gs1AiParsingAndSeparators()
