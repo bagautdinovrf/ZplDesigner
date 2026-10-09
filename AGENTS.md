@@ -44,3 +44,13 @@ Native Qt Widgets editor. Read this file and README.md before modifying it.
 - Add focused tests for document round trips, image bit packing, escaping, and
   lossless handling of unsupported ZPL. Render acceptance is against Labelary
   reference images, never go-zpl rendered output.
+
+## Component map
+
+- `src/core/`: values, typed `EditOperation` transforms, codecs, validation and the QtZpl adapter.
+- `src/session/`: applied document, source draft/status/revisions, snapshot history and file lifecycle.
+- `src/widgets/`: views, UUID selection, source editor adapter and synchronous preview coordinator.
+- `src/printing/`: print jobs, profiles and transport. `src/main.cpp` bootstraps the app.
+- Widgets submit typed operations to `DocumentSession::execute`; do not reintroduce a copied-document commit path in MainWindow.
+- Preview geometry is valid only with its `DocumentRevision`; delayed source applies also check source revision.
+- Keep inactive element options compatible with legacy project/clipboard encoding; R6 migration is tracked separately in the plan.

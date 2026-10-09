@@ -10,16 +10,24 @@ namespace Designer {
 using namespace Qt::StringLiterals;
 namespace {
 enum class Kind { Code, Shape, Text };
-struct Field { const char* key; const char16_t* title; Kind kind; int Element::*member; int minimum; int maximum; };
+struct Field {
+    const char* key;
+    const char16_t* title;
+    Kind kind;
+    int Element::*member;
+    std::optional<int> SelectionPropertyValues::*requestMember;
+    int minimum;
+    int maximum;
+};
 constexpr Field fields[] = {
-    {"moduleWidth", u"Модуль кодов", Kind::Code, &Element::moduleWidth, 1, 10},
-    {"thickness", u"Толщина линий", Kind::Shape, &Element::thickness, 1, 4096},
-    {"fontHeight", u"Кегль текста", Kind::Text, &Element::fontHeight, 1, 512},
-    {"fontWidth", u"Ширина букв (0 — авто)", Kind::Text, &Element::fontWidth, 0, 512},
-    {"blockWidth", u"Ширина блока (0 — нет)", Kind::Text, &Element::blockWidth, 0, 4096},
-    {"blockMaxLines", u"Строк в блоке", Kind::Text, &Element::blockMaxLines, 1, 128},
-    {"blockLineSpacing", u"Интервал строк", Kind::Text, &Element::blockLineSpacing, -512, 512},
-    {"blockHangingIndent", u"Отступ строк", Kind::Text, &Element::blockHangingIndent, -4096, 4096}
+    {"moduleWidth", u"Модуль кодов", Kind::Code, &Element::moduleWidth, &SelectionPropertyValues::moduleWidth, 1, 10},
+    {"thickness", u"Толщина линий", Kind::Shape, &Element::thickness, &SelectionPropertyValues::thickness, 1, 4096},
+    {"fontHeight", u"Кегль текста", Kind::Text, &Element::fontHeight, &SelectionPropertyValues::fontHeight, 1, 512},
+    {"fontWidth", u"Ширина букв (0 — авто)", Kind::Text, &Element::fontWidth, &SelectionPropertyValues::fontWidth, 0, 512},
+    {"blockWidth", u"Ширина блока (0 — нет)", Kind::Text, &Element::blockWidth, &SelectionPropertyValues::blockWidth, 0, 4096},
+    {"blockMaxLines", u"Строк в блоке", Kind::Text, &Element::blockMaxLines, &SelectionPropertyValues::blockMaxLines, 1, 128},
+    {"blockLineSpacing", u"Интервал строк", Kind::Text, &Element::blockLineSpacing, &SelectionPropertyValues::blockLineSpacing, -512, 512},
+    {"blockHangingIndent", u"Отступ строк", Kind::Text, &Element::blockHangingIndent, &SelectionPropertyValues::blockHangingIndent, -4096, 4096}
 };
 bool accepts(ElementType type, Kind kind)
 {
@@ -50,12 +58,12 @@ SelectionProperties::SelectionProperties(QWidget* parent) : QWidget(parent), for
     apply_->setObjectName(u"applySelectionProperties"_s);
     form_->addRow(apply_);
     connect(apply_, &QPushButton::clicked, this, [this] {
-        QMap<QString, int> values;
+        SelectionPropertyValues values;
         for (const auto& field : fields) {
             const auto key = QString::fromLatin1(field.key);
             const auto* spin = fields_.value(key);
             if (changedFields_.contains(key) && !spin->isHidden() && spin->value() >= field.minimum)
-                values.insert(key, spin->value());
+                values.*field.requestMember = spin->value();
         }
         emit changesRequested(values);
     });
@@ -98,23 +106,5 @@ void SelectionProperties::setSelection(const DesignDocument& document, const QLi
         any |= count > 0;
     }
     apply_->setEnabled(any);
-}
-bool applySelectionProperties(DesignDocument& document, const QList<int>& indices, const QMap<QString, int>& values)
-{
-    for (int index : indices)
-        if (index >= 0 && index < document.elements.size() && document.elements[index].locked) return false;
-    bool changed = false;
-    for (const int index : indices) {
-        if (index < 0 || index >= document.elements.size()) continue;
-        auto& element = document.elements[index];
-        for (const auto& field : fields) {
-            const auto found = values.constFind(QString::fromLatin1(field.key));
-            if (found == values.cend() || !accepts(element.type, field.kind)
-                || *found < field.minimum || *found > field.maximum) continue;
-            changed |= element.*field.member != *found;
-            element.*field.member = *found;
-        }
-    }
-    return changed;
 }
 }

@@ -1,4 +1,5 @@
 #include "document_session.hpp"
+#include <QSignalBlocker>
 #include "data_matrix_values.hpp"
 #include "project_codec.hpp"
 
@@ -381,6 +382,14 @@ DocumentSession::DocumentSession(QObject* parent)
     connect(&recoveryDeadline_, &QTimer::timeout, this, writeRecovery);
     connect(this, &DocumentSession::documentChanged, this, &DocumentSession::scheduleRecovery);
     connect(this, &DocumentSession::layoutSettingsChanged, this, &DocumentSession::scheduleRecovery);
+    connect(&undo_, &QUndoStack::indexChanged, this, [this] {
+        // QUndoCommand::redo/undo runs before QUndoStack updates its index.
+        // Publish only once both the snapshot and the history/clean state agree.
+        const bool documentChanged = std::exchange(documentNotificationPending_, false);
+        const bool layoutChanged = std::exchange(layoutNotificationPending_, false);
+        if (documentChanged) emit this->documentChanged();
+        if (layoutChanged) emit layoutSettingsChanged();
+    });
     connect(&undo_, &QUndoStack::cleanChanged, this, [this](bool) {
         emit modifiedChanged(modified());
         scheduleRecovery();
@@ -539,28 +548,32 @@ std::expected<void, QString> DocumentSession::recover(const QString& path)
     auto recovery = readRecovery(path);
     if (!recovery) return std::unexpected(recovery.error());
     resetState(std::move(recovery->project.document), recovery->originalPath,
-        std::move(recovery->project.layout), {});
+        std::move(recovery->project.layout), {}, std::move(recovery->project.pendingSource), true);
     recoveryPath_ = path;
     recoveryLock_ = std::move(lock);
-    pendingSource_ = std::move(recovery->project.pendingSource);
     // A recovered draft never counts as a saved original, even if its text is
     // unchanged. The user explicitly saves or discards it after inspection.
-    undo_.resetClean();
-    emit pendingSourceChanged();
-    emit modifiedChanged(true);
     scheduleRecovery();
     return {};
 }
 
 void DocumentSession::setPendingSource(QString source)
 {
-    if (source == toZpl(document_)) {
+    auto applied = toZpl(document_);
+    applied.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    applied.replace(u'\r', u'\n');
+    auto normalized = source;
+    normalized.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    normalized.replace(u'\r', u'\n');
+    if (normalized == applied) {
         clearPendingSource();
         return;
     }
     if (pendingSource_ == source) return;
     const bool before = modified();
     pendingSource_ = std::move(source);
+    sourceError_.clear();
+    ++sourceRevision_;
     emit pendingSourceChanged();
     if (before != modified()) emit modifiedChanged(modified());
     scheduleRecovery();
@@ -571,6 +584,8 @@ void DocumentSession::clearPendingSource()
     if (!pendingSource_) return;
     const bool before = modified();
     pendingSource_.reset();
+    sourceError_.clear();
+    ++sourceRevision_;
     emit pendingSourceChanged();
     if (before != modified()) emit modifiedChanged(modified());
     scheduleRecovery();
@@ -586,10 +601,50 @@ QString DocumentSession::pendingSource() const
     return pendingSource_.value_or(QString{});
 }
 
+SourceStatus DocumentSession::sourceStatus() const
+{
+    return !pendingSource_ ? SourceStatus::Applied
+        : sourceError_.isEmpty() ? SourceStatus::Pending : SourceStatus::Rejected;
+}
+
+bool DocumentSession::canEditVisually() const
+{
+    return document_.visualEditable && !pendingSource_;
+}
+
+std::expected<bool, QString> DocumentSession::applySource()
+{
+    return applySource(revision_, sourceRevision_);
+}
+
+std::expected<bool, QString> DocumentSession::applySource(DocumentRevision expectedDocument,
+                                                        quint64 expectedSource)
+{
+    if (expectedDocument != revision_ || expectedSource != sourceRevision_)
+        return std::unexpected(tr("Исходник или документ изменился после запроса применения."));
+    if (!pendingSource_) return false;
+    auto imported = fromZpl(*pendingSource_);
+    if (!imported) {
+        sourceError_ = imported.error();
+        emit pendingSourceChanged();
+        return std::unexpected(sourceError_);
+    }
+    imported->dpi = document_.dpi;
+    // Observers of the synchronous undo command must see the completed transition.
+    pendingSource_.reset();
+    sourceError_.clear();
+    ++sourceRevision_;
+    commit(std::move(*imported), tr("Применить ZPL"), true);
+    emit pendingSourceChanged();
+    emit modifiedChanged(modified());
+    scheduleRecovery();
+    return true;
+}
+
 void DocumentSession::restoreLayoutSettings(CanvasLayoutSettings settings)
 {
     layoutSettings_ = std::move(settings);
-    emit layoutSettingsChanged();
+    layoutNotificationPending_ = true;
 }
 
 void DocumentSession::setLayoutSettings(CanvasLayoutSettings settings, const QString& title)
@@ -614,7 +669,8 @@ void DocumentSession::restore(DesignDocument document)
 {
     document.previewValues = document_.previewValues;
     document_ = std::move(document);
-    emit documentChanged();
+    ++revision_.document;
+    documentNotificationPending_ = true;
 }
 
 void DocumentSession::reset(DesignDocument document, QString path)
@@ -623,33 +679,58 @@ void DocumentSession::reset(DesignDocument document, QString path)
 }
 
 void DocumentSession::resetState(DesignDocument document, QString path,
-                                 CanvasLayoutSettings settings, QString warning)
+                                 CanvasLayoutSettings settings, QString warning,
+                                 std::optional<QString> pending, bool recovered)
 {
     discardRecovery();
-    pendingSource_.reset();
-    savedPendingSource_.reset();
+    pendingSource_ = std::move(pending);
+    savedPendingSource_ = recovered ? std::nullopt : pendingSource_;
+    sourceError_.clear();
+    ++sourceRevision_;
+    revision_ = {QUuid::createUuid(), 0, 0};
+    documentNotificationPending_ = false;
+    layoutNotificationPending_ = false;
     document_ = std::move(document);
     layoutSettings_ = std::move(settings);
     layoutWarning_ = std::move(warning);
-    undo_.clear();
-    undo_.setClean();
+    {
+        const QSignalBlocker blocker(&undo_);
+        undo_.clear();
+        if (recovered) undo_.resetClean();
+        else undo_.setClean();
+    }
     setFilePath(std::move(path));
     emit layoutSettingsChanged();
     emit documentChanged();
     emit pendingSourceChanged();
-    emit modifiedChanged(false);
+    emit modifiedChanged(modified());
 }
 
 void DocumentSession::commit(DesignDocument document, const QString& title, bool preserveOriginal)
 {
+    if (pendingSource_) return;
     if (!preserveOriginal)
         document.originalZpl.clear();
     // QUndoStack takes ownership and applies redo synchronously.
     undo_.push(new SessionCommand(*this, document_, std::move(document), title));
 }
 
+OperationResult DocumentSession::execute(const EditOperation& operation, const QString& title)
+{
+    if (!canEditVisually())
+        return std::unexpected(tr("Примените исходный ZPL перед визуальным редактированием."));
+    if (const auto* resize = std::get_if<ResizeElement>(&operation);
+        resize && resize->geometryRevision != revision_)
+        return std::unexpected(tr("Геометрия превью устарела. Обновите превью перед изменением размера."));
+    auto next = document_;
+    const auto result = std::visit([&](const auto& request) { return applyOperation(next, request); }, operation);
+    if (result && *result) commit(std::move(next), title);
+    return result;
+}
+
 bool DocumentSession::moveElements(const QList<int>& indices, QPoint delta)
 {
+    if (!canEditVisually()) return false;
     const auto selected = validIndices(document_, indices);
     if (selected.isEmpty()) return false;
     delta = constrainedDelta(document_, selected, delta);
@@ -665,6 +746,7 @@ bool DocumentSession::moveElements(const QList<int>& indices, QPoint delta)
 
 bool DocumentSession::deleteElements(const QList<int>& indices)
 {
+    if (!canEditVisually()) return false;
     const auto selected = validIndices(document_, indices);
     if (selected.isEmpty()) return false;
     auto next = document_;
@@ -676,6 +758,7 @@ bool DocumentSession::deleteElements(const QList<int>& indices)
 
 QList<int> DocumentSession::duplicateElements(const QList<int>& indices, QPoint offset)
 {
+    if (!canEditVisually()) return {};
     const auto selected = validIndices(document_, indices, true);
     if (selected.isEmpty() || document_.elements.size() + selected.size() > 200) return {};
     offset = constrainedDelta(document_, selected, offset);
@@ -701,6 +784,7 @@ QList<int> DocumentSession::duplicateElements(const QList<int>& indices, QPoint 
 
 QList<int> DocumentSession::pasteElements(const QList<Element>& elements, QPoint offset)
 {
+    if (!canEditVisually()) return {};
     if (!document_.visualEditable || elements.isEmpty() || document_.elements.size() + elements.size() > 200) return {};
     auto next = document_;
     QMap<QUuid, QUuid> groups;
@@ -730,6 +814,7 @@ QList<int> DocumentSession::pasteElements(const QList<Element>& elements, QPoint
 
 bool DocumentSession::groupElements(const QList<int>& indices)
 {
+    if (!canEditVisually()) return false;
     const auto selected = validIndices(document_, indices);
     if (selected.size() < 2) return false;
     auto next = document_;
@@ -741,6 +826,7 @@ bool DocumentSession::groupElements(const QList<int>& indices)
 
 bool DocumentSession::ungroupElements(const QList<int>& indices)
 {
+    if (!canEditVisually()) return false;
     const auto selected = validIndices(document_, indices);
     QSet<QUuid> groups;
     for (const int index : selected)
@@ -756,6 +842,7 @@ bool DocumentSession::ungroupElements(const QList<int>& indices)
 bool DocumentSession::alignElements(const QList<int>& indices, ElementAlignment alignment,
                                     AlignmentReference reference, const QList<QRect>& renderedBounds)
 {
+    if (!canEditVisually()) return false;
     const auto selected = validIndices(document_, indices);
     if (selected.isEmpty()) return false;
     const auto units = selectionUnits(document_, selected);
@@ -799,6 +886,7 @@ bool DocumentSession::alignElements(const QList<int>& indices, ElementAlignment 
 bool DocumentSession::distributeElements(const QList<int>& indices, Qt::Orientation orientation,
                                          const QList<QRect>& renderedBounds)
 {
+    if (!canEditVisually()) return false;
     auto selected = selectionUnits(document_, validIndices(document_, indices));
     if (selected.size() < 3) return false;
     const bool horizontal = orientation == Qt::Horizontal;
@@ -844,10 +932,8 @@ std::expected<void, QString> DocumentSession::open(const QString& path)
         if (!bytes) return std::unexpected(bytes.error());
         auto project = decodeProject(*bytes);
         if (!project) return std::unexpected(project.error());
-        resetState(std::move(project->document), path, std::move(project->layout), {});
-        pendingSource_ = std::move(project->pendingSource);
-        savedPendingSource_ = pendingSource_;
-        emit pendingSourceChanged();
+        resetState(std::move(project->document), path, std::move(project->layout), {},
+            std::move(project->pendingSource));
         return {};
     }
     QFile file(path);
@@ -949,6 +1035,7 @@ void DocumentSession::setPreviewValues(QMap<QString, QString> values)
 {
     if (document_.previewValues == values) return;
     document_.previewValues = std::move(values);
+    ++revision_.values;
     emit documentChanged();
 }
 

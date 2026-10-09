@@ -62,51 +62,56 @@ function(designer_target_settings target)
 endfunction()
 
 add_library(designer_core STATIC
-    src/project_codec.cpp
-    src/project_codec.hpp
-    src/element_clipboard.cpp
-    src/element_clipboard.hpp
-    src/editor_metadata.cpp
-    src/editor_metadata.hpp
-    src/image_operations.cpp
-    src/image_operations.hpp
-    src/preview_pages.hpp
-    src/design_document.cpp
-    src/design_document.hpp
-    src/canvas_layout.hpp
-    src/design_internal.hpp
-    src/gs1_data.cpp
-    src/gs1_data.hpp
-    src/value_placeholders.cpp
-    src/value_placeholders.hpp
-    src/data_matrix_values.cpp
-    src/data_matrix_values.hpp
-    src/document_validation.cpp
-    src/zpl_codec.cpp
-    src/zpl_source_map.cpp
-    src/zpl_source_map.hpp
-    src/image_converter.cpp
-    src/preview_renderer.cpp
-    src/preset_catalog.cpp
-    src/preset_catalog.hpp
+    src/core/document_operations.cpp
+    src/core/document_operations.hpp
+    src/core/document_revision.hpp
+    src/core/project_codec.cpp
+    src/core/project_codec.hpp
+    src/core/element_clipboard.cpp
+    src/core/element_clipboard.hpp
+    src/core/editor_metadata.cpp
+    src/core/editor_metadata.hpp
+    src/core/image_operations.cpp
+    src/core/image_operations.hpp
+    src/core/preview_pages.hpp
+    src/core/design_document.cpp
+    src/core/design_document.hpp
+    src/core/canvas_layout.hpp
+    src/core/design_internal.hpp
+    src/core/gs1_data.cpp
+    src/core/gs1_data.hpp
+    src/core/value_placeholders.cpp
+    src/core/value_placeholders.hpp
+    src/core/data_matrix_values.cpp
+    src/core/data_matrix_values.hpp
+    src/core/document_validation.cpp
+    src/core/zpl_codec.cpp
+    src/core/zpl_source_map.cpp
+    src/core/zpl_source_map.hpp
+    src/core/image_converter.cpp
+    src/core/preview_renderer.cpp
+    src/core/preset_catalog.cpp
+    src/core/preset_catalog.hpp
 )
-target_include_directories(designer_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_include_directories(designer_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/core")
 target_link_libraries(designer_core PUBLIC Qt6::Core Qt6::Gui QtZpl::QtZpl)
 designer_target_settings(designer_core)
 
 add_library(designer_session STATIC
-    src/document_session.cpp
-    src/document_session.hpp
+    src/session/document_session.cpp
+    src/session/document_session.hpp
 )
+target_include_directories(designer_session PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/session")
 target_link_libraries(designer_session PUBLIC designer_core Qt6::Gui)
 designer_target_settings(designer_session)
 
 add_library(designer_printing STATIC
-    src/printer_profiles.cpp
-    src/printer_profiles.hpp
-    src/label_printing.cpp
-    src/label_printing.hpp
+    src/printing/printer_profiles.cpp
+    src/printing/printer_profiles.hpp
+    src/printing/label_printing.cpp
+    src/printing/label_printing.hpp
 )
+target_include_directories(designer_printing PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/printing")
 target_link_libraries(designer_printing PUBLIC designer_core Qt6::PrintSupport Qt6::Network)
 if(WIN32)
     target_link_libraries(designer_printing PRIVATE winspool)
@@ -114,45 +119,64 @@ endif()
 designer_target_settings(designer_printing)
 
 add_library(designer_widgets STATIC
-    src/designer_theme.cpp
-    src/designer_theme.hpp
-    src/ui_translations.cpp
-    src/ui_translations.hpp
-    src/workspace_preferences.cpp
-    src/workspace_preferences.hpp
-    src/dot_spin_box.cpp
-    src/dot_spin_box.hpp
-    src/table_dialog.cpp
-    src/table_dialog.hpp
-    src/qr_payload_dialog.cpp
-    src/qr_payload_dialog.hpp
-    src/barcode_options_dialog.cpp
-    src/barcode_options_dialog.hpp
-    src/advanced_text_dialog.cpp
-    src/advanced_text_dialog.hpp
-    src/label_settings_dialog.cpp
-    src/label_settings_dialog.hpp
-    src/zpl_source_editor.cpp
-    src/zpl_source_editor.hpp
-    src/selection_properties.cpp
-    src/selection_properties.hpp
-    src/image_edit_dialog.cpp
-    src/image_edit_dialog.hpp
-    src/main_window.cpp
-    src/main_window.hpp
-    src/canvas_layout_dialog.cpp
-    src/canvas_layout_dialog.hpp
-    src/gs1_dialog.cpp
-    src/gs1_dialog.hpp
-    src/placeholder_values_dialog.cpp
-    src/placeholder_values_dialog.hpp
-    src/label_canvas.cpp
-    src/label_canvas.hpp
-    src/preview_widget.cpp
-    src/preview_widget.hpp
-    src/print_dialog.cpp
-    src/print_dialog.hpp
+    src/widgets/properties_panel.hpp
+    src/widgets/properties_panel.cpp
+    src/widgets/workspace_widgets.hpp
+    src/widgets/workspace_widgets.cpp
+
+    src/widgets/source_editor_adapter.hpp
+    src/widgets/source_editor_adapter.cpp
+    src/widgets/layers_list.hpp
+    src/widgets/layers_list.cpp
+    src/widgets/diagnostics_list.hpp
+    src/widgets/diagnostics_list.cpp
+    src/widgets/element_presentation.hpp
+    src/widgets/element_presentation.cpp
+
+    src/widgets/preview_coordinator.cpp
+    src/widgets/preview_coordinator.hpp
+    src/widgets/element_selection.cpp
+    src/widgets/element_selection.hpp
+    src/widgets/designer_theme.cpp
+    src/widgets/designer_theme.hpp
+    src/widgets/ui_translations.cpp
+    src/widgets/ui_translations.hpp
+    src/widgets/workspace_preferences.cpp
+    src/widgets/workspace_preferences.hpp
+    src/widgets/dot_spin_box.cpp
+    src/widgets/dot_spin_box.hpp
+    src/widgets/table_dialog.cpp
+    src/widgets/table_dialog.hpp
+    src/widgets/qr_payload_dialog.cpp
+    src/widgets/qr_payload_dialog.hpp
+    src/widgets/barcode_options_dialog.cpp
+    src/widgets/barcode_options_dialog.hpp
+    src/widgets/advanced_text_dialog.cpp
+    src/widgets/advanced_text_dialog.hpp
+    src/widgets/label_settings_dialog.cpp
+    src/widgets/label_settings_dialog.hpp
+    src/widgets/zpl_source_editor.cpp
+    src/widgets/zpl_source_editor.hpp
+    src/widgets/selection_properties.cpp
+    src/widgets/selection_properties.hpp
+    src/widgets/image_edit_dialog.cpp
+    src/widgets/image_edit_dialog.hpp
+    src/widgets/main_window.cpp
+    src/widgets/main_window.hpp
+    src/widgets/canvas_layout_dialog.cpp
+    src/widgets/canvas_layout_dialog.hpp
+    src/widgets/gs1_dialog.cpp
+    src/widgets/gs1_dialog.hpp
+    src/widgets/placeholder_values_dialog.cpp
+    src/widgets/placeholder_values_dialog.hpp
+    src/widgets/label_canvas.cpp
+    src/widgets/label_canvas.hpp
+    src/widgets/preview_widget.cpp
+    src/widgets/preview_widget.hpp
+    src/widgets/print_dialog.cpp
+    src/widgets/print_dialog.hpp
 )
+target_include_directories(designer_widgets PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets")
 target_link_libraries(designer_widgets PUBLIC designer_session designer_printing Qt6::Widgets)
 designer_target_settings(designer_widgets)
 
@@ -191,7 +215,18 @@ designer_target_settings(QtZplDesigner)
 if(DESIGNER_BUILD_TESTS)
     enable_testing()
     find_package(Qt6 6.11 REQUIRED COMPONENTS Test)
-    foreach(feature workspace window_geometry ui_translations split_editor projects table_barcodes designer_extensions printer_profiles extended_zpl canvas_transforms advanced_dialogs)
+    foreach(feature document_operations source_state session_operations)
+        qt_add_executable(designer_${feature}_tests tests/test_${feature}.cpp)
+        if(feature STREQUAL "document_operations")
+            target_link_libraries(designer_${feature}_tests PRIVATE Qt6::Test designer_core)
+        else()
+            target_link_libraries(designer_${feature}_tests PRIVATE Qt6::Test designer_session)
+        endif()
+        designer_target_settings(designer_${feature}_tests)
+        add_test(NAME designer_${feature} COMMAND designer_${feature}_tests -o ${CMAKE_CURRENT_BINARY_DIR}/${feature}-results.txt,txt)
+        set_tests_properties(designer_${feature} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 90)
+    endforeach()
+    foreach(feature editor_panels source_editor_adapter preview_coordinator element_selection workspace window_geometry ui_translations split_editor projects table_barcodes designer_extensions printer_profiles extended_zpl canvas_transforms advanced_dialogs)
         qt_add_executable(designer_${feature}_tests tests/test_${feature}.cpp)
         target_link_libraries(designer_${feature}_tests PRIVATE Qt6::Test designer_widgets)
         designer_target_settings(designer_${feature}_tests)

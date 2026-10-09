@@ -600,7 +600,7 @@ ctest --preset debug
 
 Планы будущей работы: [реорганизация редактора для разработки с ИИ](Plan/REFACTORING_PLAN.md)
 и [рекомендации по API и организации QtZpl](Plan/QTZPL_RECOMMENDATIONS.md).
-Это проекты изменений; описанная ниже структура соответствует текущему приложению.
+План фиксирует выполненные этапы и отдельную позднюю миграцию модели элементов (R6). Ниже описана текущая структура.
 
 Основной путь зависимостей CMake:
 `designer_widgets` → `designer_session` → `designer_core` → `QtZpl::QtZpl`.
@@ -610,26 +610,35 @@ ctest --preset debug
 от главного окна: новый интерфейс или тип элемента не требует переноса логики
 хранения и undo/redo из виджетов.
 
-- `src/design_document.*` — типизированная модель этикетки и элементов.
-- `src/zpl_codec.cpp` — импорт и экспорт ZPL, сохранение исходника при командах
+- `src/core/design_document.*` — типизированная модель этикетки и элементов.
+- `src/core/zpl_codec.cpp` — импорт и экспорт ZPL, сохранение исходника при командах
   вне визуального подмножества.
-- `src/image_converter.cpp` — ограниченная загрузка и монохромное преобразование
+- `src/core/image_converter.cpp` — ограниченная загрузка и монохромное преобразование
   изображений.
-- `src/preview_renderer.cpp` — адаптер рендеринга QtZpl.
-- `src/document_validation.cpp` — общие ограничения и проверка документа.
-- `src/document_session.*` — документ, история снимков QUndoStack, открытие и
-  атомарное сохранение через QSaveFile; сессия уведомляет UI сигналами.
-- `src/preset_catalog.*` — адаптер чтения существующих INI-шаблонов маркера.
-- `src/label_canvas.*` — холст, выбор и взаимодействие мышью.
-- `src/preview_widget.*` — вкладка просмотра растра QtZpl без декораций редактора.
-- `src/zpl_source_editor.*` — подсветка, номера строк, поиск и замена исходника.
-- `src/element_clipboard.*`, `src/editor_metadata.*` — перенос редактируемых
+- `src/core/preview_renderer.cpp` — адаптер рендеринга QtZpl.
+- `src/core/document_validation.cpp` — общие ограничения и проверка документа.
+- `src/session/document_session.*` — документ, история снимков QUndoStack, открытие и
+  сохранение через QSaveFile; сессия уведомляет UI после согласования документа,
+  черновика и индекса истории. SourceStatus разделяет Applied/Pending/Rejected;
+  source-only определяется документом, возможность экспорта — валидацией.
+  Файловые/recovery/layout helpers остаются внутренними функциями этого модуля:
+  им не передаётся владение документом, путём или признаком изменения.
+- `src/core/preset_catalog.*` — адаптер чтения существующих INI-шаблонов маркера.
+- `src/widgets/label_canvas.*` — холст, выбор и взаимодействие мышью.
+- `src/widgets/preview_widget.*` — вкладка просмотра растра QtZpl без декораций редактора.
+- `src/widgets/zpl_source_editor.*` — подсветка, номера строк, поиск и замена исходника.
+- `src/core/element_clipboard.*`, `src/core/editor_metadata.*` — перенос редактируемых
   объектов и сохранение групп в ZPL.
-- `src/selection_properties.*`, `src/image_edit_dialog.*` — общие свойства
-  выделения и редактор изображения; `src/image_operations.*` — операции над пикселями.
-- `src/label_printing.*`, `src/print_dialog.*` — подготовка задания, драйверная
+- `src/widgets/selection_properties.*`, `src/widgets/image_edit_dialog.*` — общие свойства
+  выделения и редактор изображения; `src/core/image_operations.*` — операции над пикселями.
+- `src/printing/label_printing.*`, `src/widgets/print_dialog.*` — подготовка задания, драйверная
   и RAW-печать Windows, отправка по TCP и окно выбора режима.
-- `src/main_window.*` — сборка панелей, свойств и действий пользователя.
+- `src/core/document_operations.*` — типизированные атомарные операции по UUID; виджеты передают значения, сессия добавляет один undo.
+- `src/widgets/properties_panel.*`, `layers_list.*`, `diagnostics_list.*` — представления свойств, слоёв и структурированной диагностики.
+- `src/widgets/element_selection.*` — выделение по UUID; индексы вычисляются для конкретного снимка.
+- `src/widgets/source_editor_adapter.*` — курсор, текстовая история и карта UTF-16 исходника; отложенное применение проверяет ревизии.
+- `src/widgets/preview_coordinator.*` — синхронный debounce и результаты превью одного снимка: документ, значения, DPI, страница и режим.
+- `src/widgets/main_window.*` — сборка компонентов, меню, размещение и диалоги верхнего уровня.
 - `tests/test_document.cpp`, `test_session.cpp`, `test_canvas.cpp`, `test_window.cpp` — отдельные
   проверки ядра, сессии и реальных событий холста.
 - `tools/build_helper.py` — настройка окружения, сборка, тесты, запуск и deployment.
@@ -756,3 +765,16 @@ Unicode, точные байты, координаты `^FO` и полное п�
 Последующая полная чистая Debug-проверка командой
 `py -3 tools/build_helper.py all --clean --config Debug` с той же текущей
 соседней QtZpl прошла успешно: **27/27 CTest**, ошибок нет.
+
+Проверка рефакторинга от **9 октября 2026**: R0–R5 и R7 из
+[плана](Plan/REFACTORING_PLAN.md) завершены. Финальная команда
+`py -3 tools/build_helper.py all --clean --config Debug` с актуальными
+исходниками соседнего QtZpl прошла: **34/34 CTest**, ошибок нет.
+Импорт поддерживает новый `FieldHex`, превью страницы использует `renderLabel`.
+Нативный Windows backend: **5/5 наборов**, суммарно **86 passed, 0 failed,
+0 skipped** в QtTest, включая init/cleanup. Проверены свойства и выделение,
+исходник и история, холст, темы и панели; сохранены девять снимков интерфейса.
+Журналы находятся в `build_agent/logs/refactor-final-clean.log` и
+`build_agent/logs/refactor-native*.txt`. Поздняя типизация Element (R6)
+отложена отдельно: миграция должна сохранить неактивные параметры кодов
+в старых проектах и clipboard.

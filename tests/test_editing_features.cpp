@@ -180,11 +180,12 @@ void EditingFeaturesTests::commonPropertyDraftSurvivesPreviewAndKeepsLargeThickn
     font->setValue(50);
     panel.setSelection(document, {0, 1});
     QCOMPARE(font->value(), 50);
-    QMap<QString, int> changes;
-    connect(&panel, &SelectionProperties::changesRequested, &panel, [&](const QMap<QString, int>& values) { changes = values; });
+    SelectionPropertyValues changes;
+    connect(&panel, &SelectionProperties::changesRequested, &panel, [&](const SelectionPropertyValues& values) { changes = values; });
     panel.findChild<QPushButton*>(u"applySelectionProperties"_s)->click();
-    QVERIFY(!changes.contains(u"thickness"_s));
-    QVERIFY(applySelectionProperties(document, {0, 1}, changes));
+    QVERIFY(!changes.thickness.has_value());
+    const auto result = applyOperation(document, UpdateSelectionProperties{{shape.id, text.id}, changes});
+    QVERIFY(result && *result);
     QCOMPARE(document.elements[0].thickness, 700);
     QCOMPARE(document.elements[1].fontHeight, 50);
 }

@@ -34,7 +34,7 @@
 
 Опорные места в библиотеке: `include/QtZpl/qtzpl.hpp`, `include/QtZpl/model.hpp`, `src/parser.cpp`, `src/renderer.cpp`, `tests/test_qtzpl.cpp`, `tests/test_renderer_performance.cpp`.
 
-Опорные места в Designer: [preview_renderer.cpp](../src/preview_renderer.cpp), [zpl_codec.cpp](../src/zpl_codec.cpp), [zpl_source_map.cpp](../src/zpl_source_map.cpp), [document_validation.cpp](../src/document_validation.cpp), [design_internal.hpp](../src/design_internal.hpp).
+Опорные места в Designer: [preview_renderer.cpp](../src/core/preview_renderer.cpp), [zpl_codec.cpp](../src/core/zpl_codec.cpp), [zpl_source_map.cpp](../src/core/zpl_source_map.cpp), [document_validation.cpp](../src/core/document_validation.cpp), [design_internal.hpp](../src/core/design_internal.hpp).
 
 ## 3. Граница ответственности
 

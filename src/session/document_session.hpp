@@ -2,6 +2,8 @@
 
 #include "design_document.hpp"
 #include "canvas_layout.hpp"
+#include "document_revision.hpp"
+#include "document_operations.hpp"
 
 #include <QObject>
 #include <QDateTime>
@@ -17,6 +19,7 @@ namespace Designer {
 
 enum class ElementAlignment { Left, HorizontalCenter, Right, Top, VerticalCenter, Bottom };
 enum class AlignmentReference { Selection, Label };
+enum class SourceStatus { Applied, Pending, Rejected };
 
 struct RecoveryEntry {
     QString path;
@@ -56,10 +59,19 @@ public:
     void clearPendingSource();
     [[nodiscard]] bool hasPendingSource() const;
     [[nodiscard]] QString pendingSource() const;
+    [[nodiscard]] const DocumentRevision& revision() const { return revision_; }
+    [[nodiscard]] quint64 sourceRevision() const { return sourceRevision_; }
+    [[nodiscard]] SourceStatus sourceStatus() const;
+    [[nodiscard]] QString sourceError() const { return sourceError_; }
+    [[nodiscard]] bool canEditVisually() const;
+    [[nodiscard]] std::expected<bool, QString> applySource();
+    [[nodiscard]] std::expected<bool, QString> applySource(DocumentRevision expectedDocument,
+                                                        quint64 expectedSource);
 
     void reset(DesignDocument document, QString path = {});
     void setLayoutSettings(CanvasLayoutSettings settings, const QString& title = {});
     void commit(DesignDocument document, const QString& title, bool preserveOriginal = false);
+    [[nodiscard]] OperationResult execute(const EditOperation& operation, const QString& title);
     // Each operation is atomic in history. Bounds are indexed like document.elements
     // and describe the rendered footprint, including barcode/text offsets.
     bool moveElements(const QList<int>& indices, QPoint delta);
@@ -92,7 +104,8 @@ private:
     friend class LayoutSettingsCommand;
     void restore(DesignDocument document);
     void restoreLayoutSettings(CanvasLayoutSettings settings);
-    void resetState(DesignDocument document, QString path, CanvasLayoutSettings settings, QString warning);
+    void resetState(DesignDocument document, QString path, CanvasLayoutSettings settings, QString warning,
+                    std::optional<QString> pending = {}, bool recovered = false);
     void setFilePath(QString path);
     void scheduleRecovery();
     void markSaved();
@@ -104,6 +117,11 @@ private:
     QString layoutWarning_;
     std::optional<QString> pendingSource_;
     std::optional<QString> savedPendingSource_;
+    DocumentRevision revision_{QUuid::createUuid(), 0, 0};
+    quint64 sourceRevision_ = 0;
+    QString sourceError_;
+    bool documentNotificationPending_ = false;
+    bool layoutNotificationPending_ = false;
     QTimer recoveryDebounce_;
     QTimer recoveryDeadline_;
     QString recoveryPath_;

@@ -6,6 +6,15 @@
 #include "preset_catalog.hpp"
 #include "preview_widget.hpp"
 #include "preview_pages.hpp"
+#include "preview_coordinator.hpp"
+#include "document_operations.hpp"
+#include "element_selection.hpp"
+#include "source_editor_adapter.hpp"
+#include "layers_list.hpp"
+#include "diagnostics_list.hpp"
+#include "element_presentation.hpp"
+#include "properties_panel.hpp"
+#include "workspace_widgets.hpp"
 #include "zpl_source_editor.hpp"
 #include "element_clipboard.hpp"
 #include "selection_properties.hpp"
@@ -86,6 +95,11 @@
 
 namespace Designer {
 namespace {
+UpdateLabelSettings labelSettings(const DesignDocument& document) {
+    return {document.width, document.height, document.dpi, document.defaultOrientation,
+        document.defaultJustification, document.printMirror, document.printInverted, document.labelReverse};
+}
+
 QString applicationTitle() {
     const auto version = QCoreApplication::applicationVersion();
     return version.isEmpty() ? QStringLiteral("QtZpl Designer")
@@ -93,29 +107,6 @@ QString applicationTitle() {
 }
 
 // The HTML concept uses painted flat surfaces rather than platform chrome.
-class WorkspaceSurface final : public QWidget {
-public:
-    explicit WorkspaceSurface(QWidget* parent = nullptr, bool alternate = false, bool rounded = false,
-                              bool bottomSeparator = true)
-        : QWidget(parent), alternate_(alternate), rounded_(rounded), bottomSeparator_(bottomSeparator) {}
-protected:
-    void paintEvent(QPaintEvent*) override {
-        QPainter p(this);
-        p.setRenderHint(QPainter::Antialiasing, rounded_);
-        p.setPen(designerColor(DesignerColor::Border));
-        p.setBrush(designerColor(alternate_ ? DesignerColor::PanelAlternate : DesignerColor::Panel));
-        if (rounded_) p.drawRoundedRect(QRectF(rect()).adjusted(.5, .5, -.5, -.5), 7, 7);
-        else {
-            p.fillRect(rect(), p.brush());
-            if (bottomSeparator_) p.drawLine(0, height() - 1, width(), height() - 1);
-        }
-    }
-private:
-    bool alternate_;
-    bool rounded_;
-    bool bottomSeparator_;
-};
-
 class InspectorTabs final : public QTabWidget {
 public:
     using QTabWidget::QTabWidget;
@@ -141,20 +132,6 @@ private:
     }
 
     bool rounded_ = false;
-};
-
-class ObjectBadge final : public QLabel {
-public:
-    using QLabel::QLabel;
-protected:
-    void paintEvent(QPaintEvent* event) override {
-        QPainter p(this); p.setRenderHint(QPainter::Antialiasing); p.setPen(Qt::NoPen);
-        const bool outline = property("outline").toBool();
-        if (outline) p.setPen(designerColor(DesignerColor::Border));
-        p.setBrush(designerColor(outline ? DesignerColor::PanelAlternate : DesignerColor::Tint));
-        p.drawRoundedRect(QRectF(rect()).adjusted(.5, .5, -.5, -.5), outline ? 3 : 5, outline ? 3 : 5); p.end();
-        QLabel::paintEvent(event);
-    }
 };
 
 class SelectionSyncIconEngine final : public QIconEngine {
@@ -214,144 +191,13 @@ private:
     QString symbol_;
 };
 
-QLabel* caption(const QString& text, QWidget* parent = nullptr, int size = 10) {
-    auto* label = new QLabel(text, parent);
-    auto font = label->font(); font.setPixelSize(size); label->setFont(font);
-    label->setForegroundRole(QPalette::PlaceholderText);
-    return label;
-}
 
-QWidget* propertyField(const QString& text, QWidget* control, QWidget* parent) {
-    auto* field = new QWidget(parent);
-    auto* layout = new QVBoxLayout(field); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(5);
-    layout->addWidget(caption(text, field)); layout->addWidget(control);
-    control->setFixedHeight(30);
-    control->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    if (auto* combo = qobject_cast<QComboBox*>(control)) {
-        combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-        combo->setMinimumContentsLength(4);
-    }
-    control->setProperty("propertyField", QVariant::fromValue<QObject*>(field));
-    if (auto* spin = qobject_cast<QSpinBox*>(control)) {
-        spin->setProperty("hideUnitSuffix", true);
-        spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
-        spin->setMinimumWidth(0);
-    }
-    return field;
-}
 
-void setPropertyRowVisible(QFormLayout* form, QWidget* control, bool visible) {
-    if (auto* field = qobject_cast<QWidget*>(control->property("propertyField").value<QObject*>())) field->setVisible(visible);
-    else form->setRowVisible(control, visible);
-}
 
-class LayerDelegate final : public QStyledItemDelegate {
-public:
-    using QStyledItemDelegate::QStyledItemDelegate;
-    QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override { return {170, 37}; }
-    void paint(QPainter* p, const QStyleOptionViewItem& option, const QModelIndex& index) const override {
-        p->save(); p->setRenderHint(QPainter::Antialiasing);
-        const QRect r = option.rect.adjusted(0, 1, 0, -1);
-        const bool selected = option.state.testFlag(QStyle::State_Selected);
-        if (selected || option.state.testFlag(QStyle::State_MouseOver)) {
-            p->setPen(Qt::NoPen); p->setBrush(designerColor(DesignerColor::Tint)); p->drawRoundedRect(r, 4, 4);
-        }
-        const auto icon = qvariant_cast<QIcon>(index.data(Qt::DecorationRole));
-        icon.paint(p, QRect(r.left() + 7, r.center().y() - 8, 16, 16));
-        auto font = option.font; font.setPixelSize(11); p->setFont(font);
-        p->setPen(designerColor(selected ? DesignerColor::Accent : DesignerColor::Ink));
-        const QRect nameRect = r.adjusted(33, 0, -33, 0);
-        p->drawText(nameRect, Qt::AlignVCenter | Qt::AlignLeft, QFontMetrics(font).elidedText(index.data().toString(), Qt::ElideRight, nameRect.width()));
-        font.setPixelSize(9); p->setFont(font); p->setPen(designerColor(DesignerColor::Muted));
-        p->drawText(r.adjusted(0, 0, -5, 0), Qt::AlignRight | Qt::AlignVCenter, index.data(Qt::UserRole + 1).toString());
-        p->restore();
-    }
-};
 
-constexpr std::array linearBarcodeTypes{
-    ElementType::Code128, ElementType::Code39, ElementType::Code93,
-    ElementType::Ean13, ElementType::Ean8, ElementType::UpcA, ElementType::UpcE,
-    ElementType::Codabar, ElementType::Interleaved2of5, ElementType::Industrial2of5,
-    ElementType::Gs1DataBar};
-constexpr std::array matrixBarcodeTypes{
-    ElementType::DataMatrix, ElementType::QrCode, ElementType::Pdf417,
-    ElementType::MicroPdf417, ElementType::Aztec, ElementType::MaxiCode};
 
-std::span<const ElementType> barcodeTypes(ElementType type) {
-    if (isLinearBarcodeType(type) || type == ElementType::Gs1DataBar) return linearBarcodeTypes;
-    if (isBarcodeType(type)) return matrixBarcodeTypes;
-    return {};
-}
 
-class ElementIconEngine final : public QIconEngine {
-public:
-    explicit ElementIconEngine(ElementType type) : type_(type) {}
-    QIconEngine* clone() const override { return new ElementIconEngine(type_); }
-    void paint(QPainter* painter, const QRect& rect, QIcon::Mode mode, QIcon::State) override {
-    painter->save();
-    painter->translate(rect.topLeft());
-    painter->scale(rect.width() / 32.0, rect.height() / 32.0);
-    auto& p = *painter;
-    const auto palette = QApplication::palette();
-    const auto color = mode == QIcon::Disabled ? palette.color(QPalette::Disabled, QPalette::Text)
-        : mode == QIcon::Selected ? palette.color(QPalette::HighlightedText) : palette.color(QPalette::PlaceholderText);
-    p.setRenderHint(QPainter::Antialiasing);
-    p.setBrush(Qt::NoBrush);
-    p.setPen(QPen(color, 1.8));
-    switch (type_) {
-    case ElementType::Text:
-        p.drawLine(8, 8, 24, 8); p.drawLine(16, 8, 16, 25); p.drawLine(11, 25, 21, 25); break;
-    case ElementType::Box: p.drawRoundedRect(QRectF(6, 7, 21, 18), 2, 2); break;
-    case ElementType::Line: p.drawLine(6, 16, 26, 16); break;
-    case ElementType::Diagonal: p.drawLine(6, 25, 26, 7); break;
-    case ElementType::Circle: p.drawEllipse(QRectF(6, 6, 21, 21)); break;
-    case ElementType::Ellipse: p.drawEllipse(QRectF(5, 9, 23, 15)); break;
-    case ElementType::Image:
-        p.drawRoundedRect(QRectF(5, 6, 23, 21), 2, 2); p.drawEllipse(QPointF(12, 12), 2, 2);
-        p.drawPolyline(QPolygonF{{6, 24}, {15, 16}, {19, 20}, {24, 14}, {27, 18}}); break;
-    case ElementType::Code128:
-    case ElementType::Ean13:
-    case ElementType::Ean8:
-    case ElementType::UpcA:
-    case ElementType::UpcE:
-    case ElementType::Code39:
-    case ElementType::Pdf417:
-    case ElementType::Codabar:
-    case ElementType::Code93:
-    case ElementType::Interleaved2of5:
-    case ElementType::Industrial2of5:
-    case ElementType::Gs1DataBar:
-    case ElementType::MicroPdf417:
-        for (int x = 5; x < 28; x += 4) { p.setPen(QPen(color, x % 3 + 1)); p.drawLine(x, 7, x, 25); } break;
-    case ElementType::QrCode:
-    case ElementType::DataMatrix:
-    case ElementType::Aztec:
-    case ElementType::MaxiCode:
-        p.drawRect(5, 5, 8, 8); p.drawRect(19, 5, 8, 8); p.drawRect(5, 19, 8, 8);
-        p.fillRect(20, 20, 4, 4, color); p.fillRect(25, 25, 3, 3, color); break;
-    case ElementType::Table:
-        p.drawRect(5, 6, 23, 21);
-        p.drawLine(5, 13, 28, 13); p.drawLine(5, 20, 28, 20);
-        p.drawLine(13, 6, 13, 27); p.drawLine(21, 6, 21, 27); break;
-    }
-    painter->restore();
-    }
-private:
-    ElementType type_;
-};
 
-QIcon elementIcon(ElementType type) { return QIcon(new ElementIconEngine(type)); }
-
-QString elementSymbol(ElementType type) {
-    if (type == ElementType::Text) return QStringLiteral("T");
-    if (isLinearBarcodeType(type)) return QStringLiteral("▥");
-    if (isBarcodeType(type)) return QStringLiteral("▦");
-    if (type == ElementType::Table) return QStringLiteral("▤");
-    if (type == ElementType::Circle || type == ElementType::Ellipse) return QStringLiteral("○");
-    if (type == ElementType::Line || type == ElementType::Diagonal) return QStringLiteral("╱");
-    if (type == ElementType::Image) return QStringLiteral("▧");
-    return QStringLiteral("□");
-}
 
 class PaletteDelegate final : public QStyledItemDelegate {
 public:
@@ -417,29 +263,6 @@ protected:
     }
 };
 
-QLabel* heading(const QString& text, QWidget* parent = nullptr) {
-    auto* label = new QLabel(text, parent);
-    auto font = label->font(); font.setWeight(QFont::DemiBold); font.setPixelSize(12);
-    label->setFont(font);
-    return label;
-}
-QLabel* sectionHeading(const QString& text, QWidget* parent) {
-    auto* label = heading(text, parent); auto font = label->font(); font.setPixelSize(11); label->setFont(font); return label;
-}
-QSpinBox* spin(const QString& name, int minimum, int maximum, QWidget* parent) {
-    auto* value = new QSpinBox(parent);
-    value->setObjectName(name);
-    value->setRange(minimum, maximum);
-    value->setKeyboardTracking(false);
-    value->setMinimumHeight(30);
-    return value;
-}
-QSpinBox* dotSpin(const QString& name, int minimum, int maximum, QWidget* parent) {
-    auto* value = new DotSpinBox(parent);
-    value->setObjectName(name);
-    value->setRange(minimum, maximum);
-    return value;
-}
 } // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
@@ -449,15 +272,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     workspacePreferences_ = loadWorkspacePreferences();
     setDesignerTheme(workspacePreferences_.dark ? DesignerTheme::Dark : DesignerTheme::Light);
     session_ = new DocumentSession(this);
+    selection_ = new ElementSelection(this);
     undo_ = session_->undoStack();
-    previewTimer_ = new QTimer(this);
-    previewTimer_->setSingleShot(true);
-    previewTimer_->setInterval(90);
-    connect(previewTimer_, &QTimer::timeout, this, &MainWindow::refreshPreview);
-    sourceTimer_ = new QTimer(this);
-    sourceTimer_->setSingleShot(true);
-    sourceTimer_->setInterval(300);
-    connect(sourceTimer_, &QTimer::timeout, this, &MainWindow::applyLiveSource);
+    previews_ = new PreviewCoordinator(this);
+    connect(previews_, &PreviewCoordinator::previewsChanged, this, &MainWindow::presentPreview);
     buildUi();
     buildMenus();
     setEditorLayout(workspacePreferences_.editorLayout);
@@ -559,11 +377,11 @@ void MainWindow::buildUi() {
     redoAction_->setShortcut(QKeySequence::Redo); redoAction_->setToolTip(QStringLiteral("Повторить · Ctrl+Y")); addAction(redoAction_);
     connect(undoAction_, &QAction::triggered, this, [this] {
         if (code_->hasFocus()) code_->undo();
-        else if (!codePending_) undo_->undo();
+        else if (!session_->hasPendingSource()) undo_->undo();
     });
     connect(redoAction_, &QAction::triggered, this, [this] {
         if (code_->hasFocus()) code_->redo();
-        else if (!codePending_) undo_->redo();
+        else if (!session_->hasPendingSource()) undo_->redo();
     });
     connect(undo_, &QUndoStack::canUndoChanged, this, &MainWindow::updateHistoryActions);
     connect(undo_, &QUndoStack::canRedoChanged, this, &MainWindow::updateHistoryActions);
@@ -716,8 +534,7 @@ void MainWindow::buildUi() {
     updateSelectionToolTip();
     connect(syncEditorSelection_, &QAction::toggled, this, [this, updateSelectionToolTip](bool enabled) {
         workspacePreferences_.selectionSync = enabled;
-        sourceSelectionActive_ = false;
-        sourceCaretActive_ = false;
+        sourceAdapter_->cancelSelection();
         updateSelectionToolTip();
         if (enabled && code_->hasFocus()) syncSourceSelection(true);
         syncDesignSelection();
@@ -752,6 +569,21 @@ void MainWindow::buildUi() {
     sourceBar->addWidget(heading(QStringLiteral("Код ZPL"), sourcePage), 1);
     sourceLayout->addLayout(sourceBar);
     code_ = new ZplSourceEditor(sourcePage); code_->setObjectName(QStringLiteral("zplEditor"));
+    sourceAdapter_ = new SourceEditorAdapter(*session_, *static_cast<ZplSourceEditor*>(code_), this);
+    sourceAdapter_->setSelectionSyncEnabled(workspacePreferences_.selectionSync);
+    connect(sourceAdapter_, &SourceEditorAdapter::selectedIndicesRequested, this, [this](const QList<int>& indices) {
+        canvas_->setSelectedIndices(indices);
+        if (canvas_->signalsBlocked()) syncSelection();
+    });
+    connect(sourceAdapter_, &SourceEditorAdapter::applyFinished, this, [this](bool success, const QString& error) {
+        if (success) refreshPreview();
+        else {
+            sourceStatus_->setText(QStringLiteral("ZPL не применён: %1 Последний применённый макет сохранён.").arg(error));
+            setNotice(sourceStatus_->text());
+            refreshSourceDiagnostics();
+            previewWidget_->setPreview({}, session_->document().dpi, sourceStatus_->text());
+        }
+    });
     connect(code_, &QPlainTextEdit::undoAvailable, this, &MainWindow::updateHistoryActions);
     connect(code_, &QPlainTextEdit::redoAvailable, this, &MainWindow::updateHistoryActions);
     connect(qApp, &QApplication::focusChanged, this, [this] { updateHistoryActions(); });
@@ -774,8 +606,7 @@ void MainWindow::buildUi() {
     editorTabs_->addTab(previewWidget_, QStringLiteral("  Превью  "));
     connect(previewWidget_, &PreviewWidget::exportRequested, this, &MainWindow::exportPng);
     connect(previewWidget_, &PreviewWidget::pageRequested, this, [this](int page) {
-        previewPage_ = page;
-        refreshCleanPreview();
+        previews_->selectPage(page);
     });
     editorSplitter_ = new QSplitter(Qt::Horizontal, center);
     editorSplitter_->setObjectName(QStringLiteral("editorSplitter"));
@@ -871,180 +702,29 @@ void MainWindow::buildUi() {
     scroll->setObjectName(QStringLiteral("propertiesScrollArea"));
     // Page backgrounds do not need a section separator: the floating card owns
     // the outer border, including its rounded bottom corners.
-    auto* properties = new WorkspaceSurface(scroll, false, false, false); auto* propertiesLayout = new QVBoxLayout(properties);
-    propertiesLayout->setContentsMargins(0, 0, 0, 0); propertiesLayout->setSpacing(0);
-    auto* summary = new WorkspaceSurface(properties); auto* summaryLayout = new QVBoxLayout(summary); summaryLayout->setContentsMargins(13, 12, 13, 12); summaryLayout->setSpacing(10);
-    summaryLayout->addWidget(heading(QStringLiteral("Выбранный объект"), summary));
-    auto* summaryRow = new QHBoxLayout; summaryRow->setSpacing(9);
-    objectSymbol_ = new ObjectBadge(QStringLiteral("T"), summary); objectSymbol_->setFixedSize(29, 29); objectSymbol_->setAlignment(Qt::AlignCenter); objectSymbol_->setForegroundRole(QPalette::Link);
-    auto symbolFont = objectSymbol_->font(); symbolFont.setPixelSize(15); objectSymbol_->setFont(symbolFont);
-    auto* objectText = new QVBoxLayout; objectText->setSpacing(2);
-    typeTitle_ = heading(QStringLiteral("Выберите элемент"), summary); objectText->addWidget(typeTitle_);
-    objectSubtitle_ = caption(QString(), summary); objectText->addWidget(objectSubtitle_);
-    summaryRow->addWidget(objectSymbol_); summaryRow->addLayout(objectText, 1); summaryLayout->addLayout(summaryRow); propertiesLayout->addWidget(summary);
-    propertyUnits_ = new QComboBox(properties);
-    propertyUnits_->setObjectName(QStringLiteral("propertyUnits"));
-    propertyUnits_->addItem(QStringLiteral("мм"), static_cast<int>(CanvasUnit::Millimeters));
-    propertyUnits_->addItem(QStringLiteral("dots"), static_cast<int>(CanvasUnit::Dots));
-    propertyUnits_->setFixedSize(60, 25); propertyUnits_->setProperty("compact", true);
-    connect(propertyUnits_, &QComboBox::currentIndexChanged, this, [this] {
-        if (updating_) return;
-        auto settings = session_->layoutSettings();
-        settings.unit = static_cast<CanvasUnit>(propertyUnits_->currentData().toInt());
+    propertiesPanel_ = new PropertiesPanel(session_, previews_, selection_, scroll);
+    scroll->setWidget(propertiesPanel_);
+    connect(propertiesPanel_, &PropertiesPanel::editRequested, this, [this](const EditOperation& operation, const QString& title) {
+        executeOperation(operation, title);
+    });
+    connect(propertiesPanel_, &PropertiesPanel::resizeRequested, this, [this](QSize size) { resizeElement(selected_, size); });
+    connect(propertiesPanel_, &PropertiesPanel::unitsRequested, this, [this](CanvasUnit unit) {
+        auto settings = session_->layoutSettings(); settings.unit = unit;
         session_->setLayoutSettings(std::move(settings), QStringLiteral("Единицы измерения"));
     });
-    elementForm_ = new QWidget(properties); auto* elementLayout = new QVBoxLayout(elementForm_); elementLayout->setContentsMargins(0, 0, 0, 0); elementLayout->setSpacing(0);
-    auto* geometry = new WorkspaceSurface(elementForm_); auto* geometryLayout = new QVBoxLayout(geometry); geometryLayout->setContentsMargins(13, 12, 13, 12); geometryLayout->setSpacing(10);
-    auto* geometryTitle = new QHBoxLayout; geometryTitle->addWidget(sectionHeading(QStringLiteral("Положение и размер"), geometry)); geometryTitle->addStretch(); geometryTitle->addWidget(propertyUnits_); geometryLayout->addLayout(geometryTitle);
-    auto* geometryGrid = new QGridLayout; geometryGrid->setSpacing(10); geometryGrid->setColumnStretch(0, 1); geometryGrid->setColumnStretch(1, 1);
-    geometryLayout->addLayout(geometryGrid); elementLayout->addWidget(geometry);
-    auto* contentSection = new WorkspaceSurface(elementForm_); contentSection_ = contentSection;
-    auto* contentLayout = new QVBoxLayout(contentSection); contentLayout->setContentsMargins(13, 12, 13, 12); contentLayout->setSpacing(10);
-    contentLayout->addWidget(sectionHeading(QStringLiteral("Содержимое"), contentSection));
-    auto* contentGrid = new QGridLayout; contentGrid->setSpacing(10); contentGrid->setColumnStretch(0, 1); contentGrid->setColumnStretch(1, 1);
-    contentLayout->addLayout(contentGrid); elementLayout->addWidget(contentSection);
-    auto* advanced = new QWidget(elementForm_); advanced->setObjectName(QStringLiteral("advancedProperties"));
-    auto* form = new QFormLayout(advanced); form->setObjectName(QStringLiteral("detailForm"));
-    form->setContentsMargins(13, 12, 13, 12); form->setSpacing(8); form->setRowWrapPolicy(QFormLayout::WrapAllRows); form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    barcodeType_ = new QComboBox(properties);
-    barcodeType_->setObjectName(QStringLiteral("barcodeType"));
-    contentLayout->insertWidget(1, propertyField(QStringLiteral("Тип кода"), barcodeType_, contentSection));
-    connect(barcodeType_, &QComboBox::currentIndexChanged, this, &MainWindow::editBarcodeType);
-    x_ = dotSpin(QStringLiteral("elementX"), -4096, 4096, properties); geometryGrid->addWidget(propertyField(QStringLiteral("X"), x_, geometry), 0, 0);
-    y_ = dotSpin(QStringLiteral("elementY"), -4096, 4096, properties); geometryGrid->addWidget(propertyField(QStringLiteral("Y"), y_, geometry), 0, 1);
-    width_ = dotSpin(QStringLiteral("elementWidth"), 1, 4096, properties); geometryGrid->addWidget(propertyField(QStringLiteral("Ширина"), width_, geometry), 1, 0);
-    height_ = dotSpin(QStringLiteral("elementHeight"), 1, 4096, properties); geometryGrid->addWidget(propertyField(QStringLiteral("Высота"), height_, geometry), 1, 1);
-    geometryAspect_ = new QCheckBox(QStringLiteral("Сохранять пропорции"), geometry);
-    auto aspectFont = geometryAspect_->font(); aspectFont.setPixelSize(11); geometryAspect_->setFont(aspectFont);
-    geometryLayout->addWidget(geometryAspect_);
-    connect(geometryAspect_, &QCheckBox::clicked, this, [this](bool checked) {
-        if (!updating_ && selected_ >= 0 && session_->document().elements[selected_].type == ElementType::Image)
-            imageKeepAspectRatio_->setChecked(checked);
+    connect(propertiesPanel_, &PropertiesPanel::noticeRequested, this, &MainWindow::setNotice);
+    connect(propertiesPanel_, &PropertiesPanel::alignmentRequested, this, [this](const QString& name) {
+        if (auto* action = findChild<QAction*>(name)) action->trigger();
     });
-    sizeHint_ = new QLabel(properties); sizeHint_->setWordWrap(true);
-    sizeHint_->setObjectName(QStringLiteral("elementSizeHint")); form->addRow(sizeHint_);
-    content_ = new QPlainTextEdit(properties); content_->setObjectName(QStringLiteral("elementContent"));
-    content_->setFixedHeight(30); content_->setTabChangesFocus(true); contentGrid->addWidget(propertyField(QStringLiteral("Содержимое"), content_, contentSection), 0, 0, 1, 2);
-    gs1_ = new QCheckBox(QStringLiteral("GS1 DataMatrix (FNC1)"), properties);
-    auto primaryRow = [contentLayout, contentSection](QWidget* control) {
-        auto* row = new QWidget(contentSection); auto* layout = new QVBoxLayout(row); layout->setContentsMargins(0, 0, 0, 0); layout->addWidget(control);
-        control->setProperty("propertyField", QVariant::fromValue<QObject*>(row)); contentLayout->addWidget(row);
-    };
-    gs1_->setObjectName(QStringLiteral("dataMatrixGs1")); primaryRow(gs1_);
-    gs1Builder_ = new QPushButton(QStringLiteral("Мастер GS1…"), properties);
-    gs1Builder_->setObjectName(QStringLiteral("gs1Builder")); primaryRow(gs1Builder_);
-    placeholderValues_ = new QPushButton(QStringLiteral("Значения плейсхолдеров…"), properties);
-    placeholderValues_->setObjectName(QStringLiteral("placeholderValues"));
-    placeholderValues_->setToolTip(QStringLiteral("Значения полей {{01}}, {{21}} и параметров [[имя]] для превью и заполненного ZPL"));
-    primaryRow(placeholderValues_);
-    connect(placeholderValues_, &QPushButton::clicked, this, &MainWindow::showPlaceholderValues);
-    gs1Status_ = new QLabel(properties); gs1Status_->setWordWrap(true);
-    gs1Status_->setObjectName(QStringLiteral("gs1Status")); primaryRow(gs1Status_);
-    connect(gs1Builder_, &QPushButton::clicked, this, &MainWindow::showGs1Builder);
-    fontHeight_ = dotSpin(QStringLiteral("fontHeight"), 1, 512, properties); contentGrid->addWidget(propertyField(QStringLiteral("Высота шрифта, dots"), fontHeight_, contentSection), 1, 0);
-    fontWidth_ = dotSpin(QStringLiteral("fontWidth"), 0, 512, properties); fontWidth_->setSpecialValueText(QStringLiteral("Авто"));
-    form->addRow(QStringLiteral("Ширина букв"), fontWidth_);
-    blockWidth_ = dotSpin(QStringLiteral("blockWidth"), 0, 4096, properties);
-    blockWidth_->setSpecialValueText(QStringLiteral("Без блока"));
-    form->addRow(QStringLiteral("Ширина блока"), blockWidth_);
-    blockLines_ = spin(QStringLiteral("blockMaxLines"), 1, 128, properties);
-    form->addRow(QStringLiteral("Строк в блоке"), blockLines_);
-    blockSpacing_ = dotSpin(QStringLiteral("blockLineSpacing"), -512, 512, properties);
-    form->addRow(QStringLiteral("Интервал"), blockSpacing_);
-    blockIndent_ = dotSpin(QStringLiteral("blockHangingIndent"), -4096, 4096, properties);
-    form->addRow(QStringLiteral("Отступ"), blockIndent_);
-    blockAlignment_ = new QComboBox(properties); blockAlignment_->setObjectName(QStringLiteral("blockAlignment"));
-    blockAlignment_->addItem(QStringLiteral("Слева"), QStringLiteral("L"));
-    blockAlignment_->addItem(QStringLiteral("По центру"), QStringLiteral("C"));
-    blockAlignment_->addItem(QStringLiteral("Справа"), QStringLiteral("R"));
-    blockAlignment_->addItem(QStringLiteral("По ширине"), QStringLiteral("J"));
-    form->addRow(QStringLiteral("Выравнивание"), blockAlignment_);
-    code128Mode_ = new QComboBox(properties); code128Mode_->setObjectName(QStringLiteral("code128Mode"));
-    code128Mode_->addItem(QStringLiteral("Обычный (N)"), QStringLiteral("N"));
-    code128Mode_->addItem(QStringLiteral("Автоматический (A)"), QStringLiteral("A"));
-    code128Mode_->addItem(QStringLiteral("Subset B"), QStringLiteral("B"));
-    code128Mode_->addItem(QStringLiteral("Subset C"), QStringLiteral("C"));
-    code128Mode_->addItem(QStringLiteral("GS1-128 (D)"), QStringLiteral("D"));
-    code128Mode_->addItem(QStringLiteral("UCC (U)"), QStringLiteral("U"));
-    form->addRow(QStringLiteral("Режим Code 128"), code128Mode_);
-    interpretationAbove_ = new QCheckBox(QStringLiteral("Подпись над кодом"), properties);
-    interpretationAbove_->setObjectName(QStringLiteral("interpretationAbove"));
-    form->addRow(interpretationAbove_);
-    thickness_ = dotSpin(QStringLiteral("thickness"), 1, 512, properties); contentGrid->addWidget(propertyField(QStringLiteral("Толщина, dots"), thickness_, contentSection), 1, 0);
-    module_ = dotSpin(QStringLiteral("moduleWidth"), 1, 10, properties); contentGrid->addWidget(propertyField(QStringLiteral("Модуль, dots"), module_, contentSection), 1, 0);
-    orientation_ = new QComboBox(properties); orientation_->setObjectName(QStringLiteral("orientation"));
-    for (const auto& pair : {qMakePair("0°", 'N'), qMakePair("90°", 'R'), qMakePair("180°", 'I'), qMakePair("270°", 'B')})
-        orientation_->addItem(QString::fromUtf8(pair.first), QString(QChar::fromLatin1(pair.second)));
-    contentGrid->addWidget(propertyField(QStringLiteral("Поворот"), orientation_, contentSection), 1, 1);
-    readable_ = new QCheckBox(QStringLiteral("Текст под штрихкодом"), properties); form->addRow(readable_);
-    reverse_ = new QCheckBox(QStringLiteral("Инверсия поля"), properties); form->addRow(reverse_);
-    whiteGraphic_ = new QCheckBox(QStringLiteral("Белая фигура"), properties);
-    whiteGraphic_->setObjectName(QStringLiteral("whiteGraphic")); form->addRow(whiteGraphic_);
-    connect(whiteGraphic_, &QCheckBox::toggled, this, &MainWindow::editProperties);
-    diagonalDirection_ = new QComboBox(properties); diagonalDirection_->setObjectName(QStringLiteral("diagonalDirection"));
-    diagonalDirection_->addItem(QStringLiteral("Восходящая /"), QStringLiteral("R"));
-    diagonalDirection_->addItem(QStringLiteral("Нисходящая \\"), QStringLiteral("L"));
-    form->addRow(QStringLiteral("Диагональ"), diagonalDirection_);
-    connect(diagonalDirection_, &QComboBox::currentIndexChanged, this, &MainWindow::editProperties);
-    threshold_ = spin(QStringLiteral("imageThreshold"), 0, 255, properties); form->addRow(QStringLiteral("Порог чёрного"), threshold_);
-    dither_ = new QCheckBox(QStringLiteral("Дизеринг Floyd–Steinberg"), properties); form->addRow(dither_);
-    imageKeepAspectRatio_ = new QCheckBox(QStringLiteral("Сохранять пропорции"), properties);
-    imageKeepAspectRatio_->setObjectName(QStringLiteral("imageKeepAspectRatio")); form->addRow(imageKeepAspectRatio_);
-    imageEdit_ = new QPushButton(QStringLiteral("Изменить изображение…"), properties);
-    imageEdit_->setToolTip(QStringLiteral("Обрезка, поворот и отражение изображения"));
-    imageEdit_->setObjectName(QStringLiteral("editImage")); form->addRow(imageEdit_);
-    connect(imageEdit_, &QPushButton::clicked, this, &MainWindow::editImage);
-    tableEdit_ = new QPushButton(QStringLiteral("Ячейки таблицы…"), properties);
-    tableEdit_->setObjectName(QStringLiteral("editTable")); form->addRow(tableEdit_);
-    connect(tableEdit_, &QPushButton::clicked, this, &MainWindow::editTable);
-    barcodeOptions_ = new QPushButton(QStringLiteral("Параметры кода…"), properties);
-    barcodeOptions_->setObjectName(QStringLiteral("barcodeOptions")); form->addRow(barcodeOptions_);
-    connect(barcodeOptions_, &QPushButton::clicked, this, &MainWindow::editBarcodeOptions);
-    advancedText_ = new QPushButton(QStringLiteral("Направление текста…"), properties);
-    advancedText_->setToolTip(QStringLiteral("Положение, базовая линия и направление текста"));
-    advancedText_->setObjectName(QStringLiteral("advancedText")); form->addRow(advancedText_);
-    connect(advancedText_, &QPushButton::clicked, this, &MainWindow::editAdvancedText);
-    qrCorrection_ = new QComboBox(properties); qrCorrection_->setObjectName(QStringLiteral("qrCorrection"));
-    for (const auto& level : {QStringLiteral("L"), QStringLiteral("M"), QStringLiteral("Q"), QStringLiteral("H")})
-        qrCorrection_->addItem(level, level);
-    form->addRow(QStringLiteral("Коррекция QR"), qrCorrection_);
-    qrPayload_ = new QPushButton(QStringLiteral("Содержимое QR…"), properties);
-    qrPayload_->setToolTip(QStringLiteral("Ссылка, Wi-Fi или контакт"));
-    qrPayload_->setObjectName(QStringLiteral("qrPayload")); form->addRow(qrPayload_);
-    connect(qrPayload_, &QPushButton::clicked, this, &MainWindow::editQrPayload);
-    connect(qrCorrection_, &QComboBox::currentIndexChanged, this, &MainWindow::editProperties);
-    pdfRowHeight_ = dotSpin(QStringLiteral("pdfRowHeight"), 1, 64, properties);
-    pdfColumns_ = spin(QStringLiteral("pdfColumns"), 0, 30, properties); pdfColumns_->setSpecialValueText(QStringLiteral("Авто"));
-    pdfSecurity_ = spin(QStringLiteral("pdfSecurity"), 0, 8, properties);
-    form->addRow(QStringLiteral("Высота строки PDF417"), pdfRowHeight_);
-    form->addRow(QStringLiteral("Колонки PDF417"), pdfColumns_);
-    form->addRow(QStringLiteral("Коррекция PDF417"), pdfSecurity_);
-    for (auto* control : {pdfRowHeight_, pdfColumns_, pdfSecurity_})
-        connect(control, &QSpinBox::valueChanged, this, &MainWindow::editProperties);
-    auto* alignment = new WorkspaceSurface(elementForm_); auto* alignmentLayout = new QVBoxLayout(alignment); alignmentLayout->setContentsMargins(13, 12, 13, 12); alignmentLayout->setSpacing(10);
-    alignmentLayout->addWidget(sectionHeading(QStringLiteral("Выравнивание"), alignment)); auto* alignmentRow = new QHBoxLayout; alignmentRow->setSpacing(4);
-    const QStringList alignNames{QStringLiteral("alignLeft"), QStringLiteral("alignHorizontalCenter"), QStringLiteral("alignRight")};
-    const QStringList alignTexts{QStringLiteral("Слева"), QStringLiteral("Центр"), QStringLiteral("Справа")};
-    for (int i = 0; i < 3; ++i) { auto* button = new QPushButton(alignTexts[i], alignment); button->setProperty("compact", true); alignmentRow->addWidget(button);
-        connect(button, &QPushButton::clicked, this, [this, name = alignNames[i]] { if (auto* action = findChild<QAction*>(name)) action->trigger(); }); }
-    alignmentLayout->addLayout(alignmentRow); elementLayout->addWidget(alignment);
-    auto* more = new QToolButton(elementForm_); more->setObjectName(QStringLiteral("advancedPropertiesToggle")); more->setText(QStringLiteral("Дополнительные параметры")); more->setCheckable(true); more->setProperty("flat", true); more->setArrowType(Qt::RightArrow); more->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    elementLayout->addWidget(more); elementLayout->addWidget(advanced); advanced->hide();
-    connect(more, &QToolButton::toggled, advanced, &QWidget::setVisible);
-    connect(more, &QToolButton::toggled, more, [more](bool open) { more->setArrowType(open ? Qt::DownArrow : Qt::RightArrow); });
-    propertiesLayout->addWidget(elementForm_);
-    selectionProperties_ = new SelectionProperties(properties);
-    propertiesLayout->addWidget(selectionProperties_);
-    connect(selectionProperties_, &SelectionProperties::changesRequested, this, [this](const QMap<QString, int>& values) {
-        if (codePending_ || !session_->document().visualEditable || selectionLocked()) return;
-        auto next = session_->document();
-        if (applySelectionProperties(next, canvas_->selectedIndices(), values))
-            commitDocument(std::move(next), QStringLiteral("Общие свойства выделения"));
-    });
-    auto* actions = new QHBoxLayout; actions->setContentsMargins(13, 12, 13, 12);
-    auto* duplicate = new QPushButton(QStringLiteral("Дублировать"), properties);
-    auto* remove = new QPushButton(QStringLiteral("Удалить"), properties); actions->addWidget(duplicate); actions->addWidget(remove);
-    propertiesLayout->addLayout(actions); propertiesLayout->addStretch(); scroll->setWidget(properties);
+    connect(propertiesPanel_, &PropertiesPanel::imageRequested, this, &MainWindow::editImage);
+    connect(propertiesPanel_, &PropertiesPanel::tableRequested, this, &MainWindow::editTable);
+    connect(propertiesPanel_, &PropertiesPanel::qrRequested, this, &MainWindow::editQrPayload);
+    connect(propertiesPanel_, &PropertiesPanel::barcodeRequested, this, &MainWindow::editBarcodeOptions);
+    connect(propertiesPanel_, &PropertiesPanel::textRequested, this, &MainWindow::editAdvancedText);
+    connect(propertiesPanel_, &PropertiesPanel::gs1Requested, this, &MainWindow::showGs1Builder);
+    connect(propertiesPanel_, &PropertiesPanel::valuesRequested, this, &MainWindow::showPlaceholderValues);
+    connect(propertiesPanel_, &PropertiesPanel::duplicateRequested, this, &MainWindow::duplicateElement);
+    connect(propertiesPanel_, &PropertiesPanel::deleteRequested, this, &MainWindow::deleteElement);
     inspectorTabs_->addTab(scroll, QStringLiteral("Объект"));
     inspectorTabs_->addTab(labelPage, QStringLiteral("Этикетка"));
     auto* layerPage = new WorkspaceSurface(splitter); auto* layerLayout = new QVBoxLayout(layerPage);
@@ -1053,8 +733,8 @@ void MainWindow::buildUi() {
     layerLayout->setContentsMargins(6, 0, 6, 0); layerLayout->setSpacing(0);
     auto* layerHeader = new QWidget(layerPage); layerHeader->setFixedHeight(37); auto* layerHeaderRow = new QHBoxLayout(layerHeader); layerHeaderRow->setContentsMargins(7, 0, 7, 0);
     layerHeaderRow->addWidget(heading(QStringLiteral("Слои"), layerHeader)); layerHeaderRow->addStretch(); layerCount_ = caption(QString(), layerHeader); layerHeaderRow->addWidget(layerCount_); layerLayout->addWidget(layerHeader);
-    layers_ = new QListWidget(layerPage); layers_->setObjectName(QStringLiteral("layerList")); layerLayout->addWidget(layers_);
-    layers_->setFrameShape(QFrame::NoFrame); layers_->setItemDelegate(new LayerDelegate(layers_)); layers_->setMouseTracking(true); layers_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    layers_ = new LayersList(layerPage); layers_->setObjectName(QStringLiteral("layerList")); layerLayout->addWidget(layers_);
+    layers_->setFrameShape(QFrame::NoFrame); layers_->setMouseTracking(true); layers_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     layers_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     auto* layerOrderHint = caption(QStringLiteral("В приложении:\nCtrl + клик — несколько\nF2 — переименовать"), layerPage); layerOrderHint->setContentsMargins(7, 10, 7, 10); layerLayout->addWidget(layerOrderHint);
     auto* orderTitle = caption(QStringLiteral("Порядок объектов"), layerPage, 11); orderTitle->setContentsMargins(7, 10, 7, 8); layerLayout->addWidget(orderTitle);
@@ -1086,9 +766,9 @@ void MainWindow::buildUi() {
     layerVisible_->setToolTip(QStringLiteral("Видимость на холсте не меняет печать."));
     layerLocked_->setToolTip(QStringLiteral("Блокировка защищает от перемещения и изменения."));
     layers_->setToolTip(QStringLiteral("Ctrl/Shift + клик — выбор нескольких объектов. Ctrl+Alt+клик на холсте — объект под другим."));
-    connect(layerLocked_, &QCheckBox::clicked, this, [this](bool value) { setLayerFlag(QStringLiteral("locked"), value); });
-    connect(layerVisible_, &QCheckBox::clicked, this, [this](bool value) { setLayerFlag(QStringLiteral("visible"), value); });
-    connect(layerPrintable_, &QCheckBox::clicked, this, [this](bool value) { setLayerFlag(QStringLiteral("printable"), value); });
+    connect(layerLocked_, &QCheckBox::clicked, this, [this](bool value) { setLayerFlag(LayerFlag::Locked, value); });
+    connect(layerVisible_, &QCheckBox::clicked, this, [this](bool value) { setLayerFlag(LayerFlag::Visible, value); });
+    connect(layerPrintable_, &QCheckBox::clicked, this, [this](bool value) { setLayerFlag(LayerFlag::Printable, value); });
     layerLayout->addStretch(1);
     auto* diagnosticsPage = new QWidget(center);
     diagnosticsPanel_ = diagnosticsPage;
@@ -1104,15 +784,14 @@ void MainWindow::buildUi() {
     connect(closeDiagnostics, &QToolButton::clicked, diagnosticsAction_, [this] { diagnosticsAction_->setChecked(false); });
     diagnostics_ = new QPlainTextEdit(diagnosticsPage); diagnostics_->setReadOnly(true); diagnostics_->setObjectName(QStringLiteral("diagnostics"));
     diagnosticsLayout->addWidget(diagnostics_);
-    sourceDiagnostics_ = new QListWidget(diagnosticsPage);
+    sourceDiagnostics_ = new SourceDiagnosticsList(diagnosticsPage);
     sourceDiagnostics_->setObjectName(QStringLiteral("sourceDiagnostics"));
     sourceDiagnostics_->setToolTip(QStringLiteral("Двойной щелчок — перейти к команде ZPL"));
     sourceDiagnostics_->setWordWrap(true);
     diagnosticsLayout->addWidget(sourceDiagnostics_);
-    connect(sourceDiagnostics_, &QListWidget::itemActivated, this, [this](QListWidgetItem* item) {
-        if (item->data(Qt::UserRole).toInt() < 0) return;
+    connect(sourceDiagnostics_, &SourceDiagnosticsList::sourceActivated, this, [this](int offset) {
         editorTabs_->setCurrentIndex(1);
-        static_cast<ZplSourceEditor*>(code_)->goToSourceOffset(item->data(Qt::UserRole).toInt());
+        static_cast<ZplSourceEditor*>(code_)->goToSourceOffset(offset);
     });
     centerLayout->addWidget(diagnosticsPage); diagnosticsPage->hide();
     splitter->insertWidget(0, layerPage); splitter->insertWidget(1, center); splitter->insertWidget(2, inspectorSlot_);
@@ -1142,15 +821,14 @@ void MainWindow::buildUi() {
     });
     connect(canvas_, &LabelCanvas::zoomChanged, this, [this](int zoom) { zoomLabel_->setText(QStringLiteral("%1%").arg(zoom)); });
     connect(canvas_, &LabelCanvas::selectionSetChanged, this, [this] {
-        if (!syncingSourceSelection_) {
-            sourceSelectionActive_ = false;
-            sourceCaretActive_ = false;
+        if (!sourceAdapter_->isSyncingSelection()) {
+            sourceAdapter_->cancelSelection();
         }
         syncSelection();
-        if (!syncingSourceSelection_) syncDesignSelection(true);
+        if (!sourceAdapter_->isSyncingSelection()) syncDesignSelection(true);
     });
     connect(canvas_, &LabelCanvas::editingStarted, this, [this] {
-        if (previewTimer_->isActive()) refreshPreview();
+        if (previews_->pending()) refreshPreview();
     });
     connect(canvas_, &LabelCanvas::elementDropped, this, &MainWindow::addElement);
     connect(canvas_, &LabelCanvas::imageDropped, this, [this](const QString& path, QPoint p) { importImage(path, p); });
@@ -1159,8 +837,9 @@ void MainWindow::buildUi() {
     connect(canvas_, &LabelCanvas::elementMoved, this, [this](int index, QPoint position) {
         if (!session_->document().visualEditable || index < 0 || index >= session_->document().elements.size()
             || session_->document().elements[index].locked) return;
-        auto next = session_->document(); next.elements[index].x = position.x(); next.elements[index].y = position.y();
-        commitDocument(std::move(next), QStringLiteral("Переместить элемент"), index);
+        ElementProperties properties; properties.x = position.x(); properties.y = position.y();
+        executeOperation(UpdateElementProperties{session_->document().elements[index].id, properties},
+            QStringLiteral("Переместить элемент"), index);
     });
     connect(canvas_, &LabelCanvas::elementResized, this, [this](int index, QSize size) {
         resizeElement(index, size);
@@ -1171,25 +850,18 @@ void MainWindow::buildUi() {
         else if (index >= 0 && workspacePreferences_.focus) {
             propertiesAction_->setChecked(true);
             inspectorTabs_->setCurrentIndex(0);
-            content_->setFocus(Qt::OtherFocusReason);
+            propertiesPanel_->focusContent();
         }
     });
     connect(canvas_, &LabelCanvas::elementsMoved, this, [this](const QList<int>& indices, QPoint delta) {
-        if (!codePending_) session_->moveElements(indices, delta);
+        if (!session_->hasPendingSource()) session_->moveElements(indices, delta);
     });
-    connect(duplicate, &QPushButton::clicked, this, &MainWindow::duplicateElement);
-    connect(remove, &QPushButton::clicked, this, &MainWindow::deleteElement);
     connect(front, &QPushButton::clicked, this, [this] { moveLayer(1); });
     connect(back, &QPushButton::clicked, this, [this] { moveLayer(-1); });
     connect(layers_, &QListWidget::itemSelectionChanged, this, [this] {
         if (updating_) return;
-        QList<int> indices;
-        for (const auto* item : layers_->selectedItems()) indices.append(item->data(Qt::UserRole).toInt());
-        if (const auto* current = layers_->currentItem(); current && current->isSelected()) {
-            const int primary = current->data(Qt::UserRole).toInt();
-            indices.removeOne(primary); indices.append(primary);
-        }
-        canvas_->setSelectedIndices(indices);
+        selection_->setIds(layers_->selectedIds(), session_->document());
+        canvas_->setSelectedIndices(selection_->indices(session_->document()));
         syncSelection();
     });
     connect(layers_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* current) {
@@ -1198,58 +870,23 @@ void MainWindow::buildUi() {
         const int primary = current->data(Qt::UserRole).toInt();
         if (indices.removeOne(primary)) { indices.append(primary); canvas_->setSelectedIndices(indices); }
     });
-    for (auto* value : {x_, y_, fontHeight_, fontWidth_, thickness_, module_, threshold_,
-                       blockWidth_, blockLines_, blockSpacing_, blockIndent_})
-        connect(value, &QSpinBox::valueChanged, this, &MainWindow::editProperties);
-    auto resizeProperty = [this](bool horizontal, int value) {
-        if (updating_ || selected_ < 0) return;
-        if (previewTimer_->isActive()) refreshPreview();
-        QSize size = elementSize(selected_);
-        if (horizontal) size.setWidth(value); else size.setHeight(value);
-        resizeElement(selected_, size);
-    };
-    connect(width_, &QSpinBox::valueChanged, this, [resizeProperty](int value) { resizeProperty(true, value); });
-    connect(height_, &QSpinBox::valueChanged, this, [resizeProperty](int value) { resizeProperty(false, value); });
-    connect(content_, &QPlainTextEdit::textChanged, this, &MainWindow::editProperties);
-    connect(orientation_, &QComboBox::currentIndexChanged, this, &MainWindow::editProperties);
-    connect(blockAlignment_, &QComboBox::currentIndexChanged, this, &MainWindow::editProperties);
-    connect(code128Mode_, &QComboBox::currentIndexChanged, this, &MainWindow::editProperties);
-    connect(interpretationAbove_, &QCheckBox::toggled, this, &MainWindow::editProperties);
-    for (auto* value : {readable_, reverse_, dither_, imageKeepAspectRatio_}) connect(value, &QCheckBox::toggled, this, &MainWindow::editProperties);
-    connect(gs1_, &QCheckBox::toggled, this, [this] {
-        if (updating_ || canvas_->selectedIndices().size() != 1 || !session_->document().visualEditable
-            || selected_ < 0 || selected_ >= session_->document().elements.size()) return;
-        const auto& element = session_->document().elements[selected_];
-        if (element.type != ElementType::DataMatrix) return;
-        if (codePending_) {
-            const QSignalBlocker blocker(gs1_);
-            gs1_->setChecked(element.gs1);
-            setNotice(QStringLiteral("Перейдите в «Дизайн» или «Превью», чтобы применить изменённый ZPL."));
-            return;
-        }
-        editProperties();
-    });
     auto labelChanged = [this] {
-        if (updating_ || codePending_ || !session_->document().visualEditable) return;
-        auto next = session_->document(); next.width = labelWidth_->value(); next.height = labelHeight_->value(); next.dpi = dpi_->currentData().toInt();
-        commitDocument(std::move(next), QStringLiteral("Параметры этикетки"));
+        if (updating_ || session_->hasPendingSource() || !session_->document().visualEditable) return;
+        auto values = labelSettings(session_->document());
+        values.width = labelWidth_->value(); values.height = labelHeight_->value(); values.dpi = dpi_->currentData().toInt();
+        executeOperation(values, QStringLiteral("Параметры этикетки"));
     };
     connect(labelWidth_, &QSpinBox::valueChanged, this, labelChanged);
     connect(labelHeight_, &QSpinBox::valueChanged, this, labelChanged);
     connect(dpi_, &QComboBox::currentIndexChanged, this, labelChanged);
-    connect(code_, &QPlainTextEdit::textChanged, this, [this] {
+    connect(sourceAdapter_, &SourceEditorAdapter::sourceEdited, this, [this] {
         if (updating_ || code_->isReadOnly()) return;
-        codePending_ = code_->toPlainText() != mappedSource_;
-        mappedSourceRevision_ = codePending_ ? -1 : code_->document()->revision();
-        sourceTimer_->stop();
-        if (codePending_) session_->setPendingSource(code_->toPlainText());
-        else session_->clearPendingSource();
-        canvas_->setEnabled(!codePending_);
-        for (auto* field : {labelWidth_, labelHeight_}) field->setEnabled(!codePending_ && session_->document().visualEditable);
-        dpi_->setEnabled(!codePending_ && session_->document().visualEditable);
+        canvas_->setEnabled(!session_->hasPendingSource());
+        for (auto* field : {labelWidth_, labelHeight_}) field->setEnabled(!session_->hasPendingSource() && session_->document().visualEditable);
+        dpi_->setEnabled(!session_->hasPendingSource() && session_->document().visualEditable);
         refreshProperties();
         updateTitle(); updateHistoryActions();
-        if (codePending_) {
+        if (session_->hasPendingSource()) {
             sourceDiagnostics_->clear();
             sourceDiagnostics_->hide();
             const bool live = workspacePreferences_.editorLayout != EditorLayout::Single;
@@ -1258,19 +895,11 @@ void MainWindow::buildUi() {
             setNotice(sourceStatus_->text());
             if (!live) previewWidget_->setPreview({}, session_->document().dpi,
                 QStringLiteral("Код ZPL изменён. Откройте вкладку «Превью», чтобы посмотреть результат."));
-            if (live) sourceTimer_->start();
+            if (live) sourceAdapter_->scheduleApply();
         } else { updateEditorPresentation(); refreshPreview(); }
         syncSourceSelection(code_->hasFocus());
         syncDesignSelection();
     });
-    connect(code_, &QPlainTextEdit::selectionChanged, this, [this] {
-        syncSourceSelection(code_->hasFocus());
-    });
-    connect(code_, &QPlainTextEdit::cursorPositionChanged, this, [this] {
-        if (code_->hasFocus()) syncSourceSelection(true);
-    });
-    connect(static_cast<ZplSourceEditor*>(code_), &ZplSourceEditor::sourceCursorActivated,
-            this, [this] { syncSourceSelection(true); });
     connect(editorTabs_, &QTabWidget::currentChanged, this, [this, zoomControls](int index) {
         zoomControls->setVisible(index == 0 && !workspacePreferences_.focus);
         if (!applyingEditorLayout_ && workspacePreferences_.focus
@@ -1291,7 +920,7 @@ void MainWindow::buildUi() {
             return;
         }
         if (editorTabs_->currentWidget() == previewWidget_) showPreview();
-        else if (index == 0 && codePending_ && !applySource()) editorTabs_->setCurrentIndex(1);
+        else if (index == 0 && session_->hasPendingSource() && !applySource()) editorTabs_->setCurrentIndex(1);
         if (index == 1) syncDesignSelection(true);
     });
 }
@@ -1314,15 +943,15 @@ void MainWindow::setEditorLayout(EditorLayout layout) {
     } else if (wasSplit) {
         sourceSlot_->layout()->addWidget(sourcePage_);
         sourcePage_->show();
-        if (codePending_ || sourceFocused) editorTabs_->setCurrentIndex(1);
+        if (session_->hasPendingSource() || sourceFocused) editorTabs_->setCurrentIndex(1);
     }
     if (sourceFocused) code_->setFocus(Qt::OtherFocusReason);
     swapEditorSides_->setEnabled(split);
-    sourceTimer_->stop();
-    if (codePending_) {
+    sourceAdapter_->cancelApply();
+    if (session_->hasPendingSource()) {
         sourceStatus_->setText(split ? QStringLiteral("Обновление после ввода…")
             : QStringLiteral("Код изменён. Перейдите в «Дизайн» или «Превью», чтобы посмотреть результат."));
-        if (split) sourceTimer_->start();
+        if (split) sourceAdapter_->scheduleApply();
     }
     applyingEditorLayout_ = false;
     updateEditorPresentation();
@@ -1332,7 +961,7 @@ void MainWindow::setEditorLayout(EditorLayout layout) {
 }
 
 void MainWindow::updateEditorPresentation() {
-    if (codePending_) return;
+    if (session_->hasPendingSource()) return;
     sourceStatus_->setText(workspacePreferences_.editorLayout == EditorLayout::Single
         ? QStringLiteral("ZPL применяется при переходе в «Дизайн» или «Превью», сохранении и печати.")
         : !session_->document().visualEditable
@@ -1340,13 +969,6 @@ void MainWindow::updateEditorPresentation() {
             : workspacePreferences_.editorLayout == EditorLayout::CodePreview
                 ? QStringLiteral("Превью обновляется автоматически при вводе ZPL.")
                 : QStringLiteral("Код и дизайн синхронизируются автоматически."));
-}
-
-void MainWindow::applyLiveSource() {
-    if (workspacePreferences_.editorLayout == EditorLayout::Single || !codePending_) return;
-    if (!applySource()) {
-        previewWidget_->setPreview({}, session_->document().dpi, sourceStatus_->text());
-    }
 }
 
 void MainWindow::rememberWorkspaceSizes() {
@@ -1526,7 +1148,7 @@ void MainWindow::buildMenus() {
     // Canvas shortcuts are scoped to the canvas, so typing in data/source fields
     // keeps the standard text-editor shortcuts.
     edit->addAction(QStringLiteral("Выделить все элементы"), this, [this] {
-        if (!session_->document().visualEditable || codePending_) return;
+        if (!session_->document().visualEditable || session_->hasPendingSource()) return;
         QList<int> indices;
         for (int i = 0; i < session_->document().elements.size(); ++i)
             if (session_->document().elements[i].editorVisible) indices.append(i);
@@ -1548,8 +1170,8 @@ void MainWindow::buildMenus() {
     auto alignAction = [this, layout](const QString& title, const QString& name, ElementAlignment alignment) {
         auto* action = layout->addAction(title); action->setObjectName(name);
         connect(action, &QAction::triggered, this, [this, alignment] {
-            if (codePending_ || !session_->document().visualEditable) return;
-            if (previewTimer_->isActive()) refreshPreview();
+            if (session_->hasPendingSource() || !session_->document().visualEditable) return;
+            if (previews_->pending()) refreshPreview();
             const auto indices = canvas_->selectedIndices();
             const auto group = indices.isEmpty() ? QUuid{} : session_->document().elements[indices.first()].groupId;
             const bool oneGroup = !group.isNull() && std::ranges::all_of(indices, [this, group](int index) {
@@ -1557,7 +1179,7 @@ void MainWindow::buildMenus() {
             });
             const auto reference = alignToLabel_ || indices.size() == 1 || oneGroup
                 ? AlignmentReference::Label : AlignmentReference::Selection;
-            session_->alignElements(indices, alignment, reference, preview_.bounds);
+            session_->alignElements(indices, alignment, reference, previews_->editorPreview().bounds);
         });
     };
     alignAction(QStringLiteral("По левому краю"), QStringLiteral("alignLeft"), ElementAlignment::Left);
@@ -1571,10 +1193,10 @@ void MainWindow::buildMenus() {
         auto* action = layout->addAction(axis == Qt::Horizontal ? QStringLiteral("Равные промежутки по горизонтали") : QStringLiteral("Равные промежутки по вертикали"));
         action->setObjectName(axis == Qt::Horizontal ? QStringLiteral("distributeHorizontal") : QStringLiteral("distributeVertical"));
         connect(action, &QAction::triggered, this, [this, axis] {
-            if (codePending_ || !session_->document().visualEditable) return;
+            if (session_->hasPendingSource() || !session_->document().visualEditable) return;
             if (canvas_->selectedIndices().size() < 3) { setNotice(QStringLiteral("Для распределения выберите не менее трёх элементов.")); return; }
-            if (previewTimer_->isActive()) refreshPreview();
-            session_->distributeElements(canvas_->selectedIndices(), axis, preview_.bounds);
+            if (previews_->pending()) refreshPreview();
+            session_->distributeElements(canvas_->selectedIndices(), axis, previews_->editorPreview().bounds);
         });
     }
     auto* view = menuBar()->addMenu(QStringLiteral("Вид"));
@@ -1729,100 +1351,63 @@ void MainWindow::buildCommandPanels(QMenu* viewMenu) {
 const DesignDocument& MainWindow::document() const { return session_->document(); }
 
 void MainWindow::setDocument(const DesignDocument& document) {
-    sourceSelectionActive_ = false;
-    sourceCaretActive_ = false;
+    sourceAdapter_->cancelSelection();
     canvas_->setSelectedIndex(-1);
-    selected_ = -1; codePending_ = false; session_->reset(document); refreshPreview();
+    selection_->setIds({}, document);
+    selected_ = -1; session_->reset(document); refreshPreview();
 }
 
 void MainWindow::restoreDocument(const DesignDocument& document) {
-    sourceTimer_->stop();
+    sourceAdapter_->cancelApply();
     const QSignalBlocker canvasSignals(canvas_);
+    selection_->reconcile(document);
     canvas_->syncDocument(document);
+    canvas_->setSelectedIndices(selection_->indices(document));
     selected_ = canvas_->selectedIndex();
-    codePending_ = session_->hasPendingSource();
     updating_ = true;
     labelWidth_->setValue(session_->document().width); labelHeight_->setValue(session_->document().height);
     const int dpiIndex = dpi_->findData(session_->document().dpi); dpi_->setCurrentIndex(dpiIndex < 0 ? 0 : dpiIndex);
-    canvas_->setEnabled(!codePending_);
-    labelWidth_->setEnabled(document.visualEditable && !codePending_); labelHeight_->setEnabled(document.visualEditable && !codePending_); dpi_->setEnabled(document.visualEditable && !codePending_);
+    canvas_->setEnabled(!session_->hasPendingSource());
+    labelWidth_->setEnabled(document.visualEditable && !session_->hasPendingSource()); labelHeight_->setEnabled(document.visualEditable && !session_->hasPendingSource()); dpi_->setEnabled(document.visualEditable && !session_->hasPendingSource());
     dimensions_->setText(QStringLiteral("%1 × %2 dots · %3 dpi").arg(session_->document().width).arg(session_->document().height).arg(session_->document().dpi));
-    // Invalid GS1 fields cannot be serialized. Never expose an incomplete ZPL
-    // that could silently discard those elements when applied back to the model.
-    const auto sourceValid = document.visualEditable ? validateForExport(document)
-        : std::expected<void, QString>{};
-    code_->setReadOnly(!sourceValid && !codePending_);
-    code_->setPlaceholderText(sourceValid ? QString{} : QStringLiteral(
-        "ZPL пока недоступен: %1\nИсправьте данные во вкладке «Дизайн». Все элементы сохранены в макете.").arg(sourceValid.error()));
-    auto source = codePending_ ? session_->pendingSource() : sourceValid ? toZpl(document) : QString{};
-    source.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
-    source.replace(u'\r', u'\n');
-    // Applying live source must not reset the editor's cursor, scroll or undo.
-    // Design changes replace the generated text but keep the reader's position.
-    if (code_->toPlainText() != source) {
-        // A design edit can move field offsets. Keep the selected objects,
-        // rather than interpreting the old caret against newly generated ZPL.
-        sourceSelectionActive_ = false;
-        sourceCaretActive_ = false;
-        const int oldPosition = code_->textCursor().position();
-        const int oldAnchor = code_->textCursor().anchor();
-        const int vertical = code_->verticalScrollBar()->value();
-        const int horizontal = code_->horizontalScrollBar()->value();
-        code_->setPlainText(source);
-        auto cursor = code_->textCursor();
-        cursor.setPosition(std::min(oldAnchor, static_cast<int>(source.size())));
-        cursor.setPosition(std::min(oldPosition, static_cast<int>(source.size())), QTextCursor::KeepAnchor);
-        code_->setTextCursor(cursor);
-        code_->verticalScrollBar()->setValue(vertical);
-        code_->horizontalScrollBar()->setValue(horizontal);
-    }
-    mappedSource_ = sourceValid ? toZpl(document) : QString{};
-    mappedSource_.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
-    mappedSource_.replace(u'\r', u'\n');
-    mappedSourceRevision_ = codePending_ ? -1 : code_->document()->revision();
-    sourceElementRanges_ = sourceElementRanges(document, mappedSource_);
+    sourceAdapter_->syncDocument();
     updating_ = false;
-    refreshLayers(); refreshProperties(); updateTitle(); updateHistoryActions(); previewTimer_->start();
-    if (sourceSelectionActive_) syncSourceSelection(sourceCaretActive_);
+    previews_->setSnapshot(document, session_->revision());
+    refreshLayers(); refreshProperties(); updateTitle(); updateHistoryActions();
+    sourceAdapter_->resumeSelection();
     syncDesignSelection();
-    if (codePending_) {
+    if (session_->hasPendingSource()) {
         const bool live = workspacePreferences_.editorLayout != EditorLayout::Single;
         sourceStatus_->setText(live ? QStringLiteral("Обновление после ввода…")
             : QStringLiteral("Восстановлен изменённый ZPL. Перейдите в «Дизайн» или «Превью», чтобы применить его."));
-        if (live) sourceTimer_->start();
+        if (live) sourceAdapter_->scheduleApply();
     } else updateEditorPresentation();
 }
 
-void MainWindow::commitDocument(DesignDocument document, const QString& title, int selection) {
-    if (codePending_) { setNotice(QStringLiteral("Перейдите в «Дизайн» или «Превью», чтобы применить изменённый ZPL.")); return; }
-    session_->commit(std::move(document), title);
+void MainWindow::executeOperation(const EditOperation& operation, const QString& title, int selection) {
+    const auto result = session_->execute(operation, title);
+    if (!result) { setNotice(result.error()); refreshProperties(); return; }
     if (selection != -2) selectElement(selection);
 }
 
 void MainWindow::refreshPreview() {
-    previewTimer_->stop();
-    auto rendered = renderPreview(session_->document());
-    previewError_.clear();
-    printPreview_ = rendered ? *rendered : Preview{};
-    const bool differentVisibility = std::ranges::any_of(session_->document().elements,
-        [](const Element& element) { return element.editorVisible != element.printable; });
-    if (!rendered || differentVisibility) {
-        preview_ = {};
-        if (!rendered) previewError_ = rendered.error();
-        if (auto editor = renderEditorPreview(session_->document())) preview_ = std::move(*editor);
-        if (!previewError_.isEmpty()) preview_.diagnostics.append(previewError_);
-    } else preview_ = std::move(*rendered);
-    canvas_->setDocument(session_->document(), preview_);
+    previews_->setSnapshot(session_->document(), session_->revision());
+    if (previews_->pending()) previews_->refresh();
+    else presentPreview();
+}
+
+void MainWindow::presentPreview() {
+    canvas_->setDocument(session_->document(), previews_->editorPreview());
     refreshProperties();
-    QStringList notes = session_->document().importNotes; notes.append(preview_.diagnostics);
+    QStringList notes = session_->document().importNotes; notes.append(previews_->editorPreview().diagnostics);
     if (!session_->layoutWarning().isEmpty()) notes.append(session_->layoutWarning());
     notes.removeDuplicates();
     diagnostics_->setPlainText(notes.isEmpty() ? QStringLiteral("Ошибок рендеринга нет.\nПревью построено локально библиотекой QtZpl.") : notes.join(QStringLiteral("\n\n")));
-    if (codePending_) return;
+    if (session_->hasPendingSource()) return;
     refreshCleanPreview();
-    if (!preview_.elementErrors.isEmpty()) setNotice(QStringLiteral(
+    if (!previews_->editorPreview().elementErrors.isEmpty()) setNotice(QStringLiteral(
         "Заполните «Значения плейсхолдеров…» или исправьте данные отмеченных штрихкодов. Печатное превью и PNG пока недоступны."));
-    else if (!previewError_.isEmpty()) setNotice(QStringLiteral("Не удалось построить превью: %1").arg(previewError_));
+    else if (!previews_->printError().isEmpty()) setNotice(QStringLiteral("Не удалось построить превью: %1").arg(previews_->printError()));
     else if (!session_->document().visualEditable) setNotice(QStringLiteral("Режим исходного ZPL: команды сохранены. Для правок откройте вкладку «Код ZPL»."));
     else if (!notes.isEmpty()) setNotice(QStringLiteral("Превью содержит замечания (%1). Откройте панель «Проверка».").arg(notes.size()));
     else setNotice(QStringLiteral("✓ Превью без ошибок      %1 объектов      Координаты: %2")
@@ -1834,7 +1419,7 @@ void MainWindow::showPreview() {
         editorTabs_->setCurrentWidget(previewWidget_);
         return;
     }
-    const bool pendingSource = codePending_;
+    const bool pendingSource = session_->hasPendingSource();
     if (!applySource()) {
         if (workspacePreferences_.editorLayout == EditorLayout::Single) editorTabs_->setCurrentIndex(1);
         else previewWidget_->setPreview({}, session_->document().dpi, sourceStatus_->text());
@@ -1845,79 +1430,43 @@ void MainWindow::showPreview() {
 }
 
 void MainWindow::refreshCleanPreview() {
-    if (codePending_) return;
-    const auto count = previewPageCount(session_->document());
-    const int pages = count ? *count : 1;
-    previewPage_ = std::clamp(previewPage_, 0, std::max(0, pages - 1));
-    previewWidget_->setPages(pages, previewPage_);
-    cleanPreview_ = printPreview_;
-    cleanPreviewError_ = previewError_;
-    if (previewPage_ > 0) {
-        const auto rendered = renderPreviewPage(session_->document(), previewPage_);
-        cleanPreview_ = rendered ? *rendered : Preview{};
-        cleanPreviewError_ = rendered ? QString{} : rendered.error();
-    }
-    if (!cleanPreviewError_.isEmpty() && !cleanPreview_.diagnostics.contains(cleanPreviewError_))
-        cleanPreview_.diagnostics.append(cleanPreviewError_);
-    previewWidget_->setPreview(cleanPreview_, session_->document().dpi, cleanPreviewError_);
+    if (session_->hasPendingSource()) return;
+    previewWidget_->setPages(previews_->pageCount(), previews_->page());
+    previewWidget_->setPreview(previews_->pagePreview(), previews_->dpi(), previews_->pageError());
     refreshSourceDiagnostics();
 }
 
 void MainWindow::refreshSourceDiagnostics() {
     sourceDiagnostics_->clear();
     auto document = session_->document();
-    if (codePending_) { document.originalZpl = code_->toPlainText(); document.visualEditable = false; }
-    for (const auto& diagnostic : sourceDiagnostics(document, previewPage_)) {
-        auto* item = new QListWidgetItem(diagnostic.text, sourceDiagnostics_);
-        item->setData(Qt::UserRole, diagnostic.offset);
-        if (diagnostic.offset >= 0) item->setToolTip(QStringLiteral("Двойной щелчок — перейти к команде"));
+    const bool separateSource = session_->hasPendingSource()
+        || (!code_->toPlainText().isEmpty() && code_->toPlainText() != toZpl(document));
+    if (separateSource) {
+        document.originalZpl = code_->toPlainText();
+        document.visualEditable = false;
     }
-    sourceDiagnostics_->setVisible(sourceDiagnostics_->count() > 0);
+    sourceDiagnostics_->setDiagnostics(separateSource ? previews_->sourceDiagnostics(document)
+                                                    : previews_->sourceDiagnostics());
 }
 
 QSize MainWindow::elementSize(int index) const {
     if (index < 0 || index >= session_->document().elements.size()) return {1, 1};
     const auto& element = session_->document().elements[index];
     const bool renderedSize = element.type == ElementType::Text || isBarcodeType(element.type);
-    if (renderedSize && index < preview_.bounds.size() && !preview_.bounds[index].isEmpty())
-        return preview_.bounds[index].size();
+    if (renderedSize && index < previews_->editorPreview().bounds.size() && !previews_->editorPreview().bounds[index].isEmpty())
+        return previews_->editorPreview().bounds[index].size();
     return {element.width, element.type == ElementType::Circle ? element.width : element.height};
 }
 
 void MainWindow::resizeElement(int index, QSize size) {
-    if (codePending_ || !session_->document().visualEditable || index < 0
-        || index >= session_->document().elements.size()) return;
-    if (preview_.elementErrors.contains(index)) {
-        setNotice(QStringLiteral("Для изменения размера штрихкода сначала заполните его данные через «Значения плейсхолдеров…»."));
-        refreshProperties();
-        return;
-    }
-    auto next = session_->document();
-    const auto& before = session_->document().elements[index];
-    if (before.locked) return;
-    auto& resized = next.elements[index];
-    auto effective = before;
-    if (effective.useDefaultOrientation) effective.orientation = next.defaultOrientation;
-    resized = resizedElement(effective, size, elementSize(index));
-    resized.orientation = before.orientation;
-    if (resized.width == before.width && resized.height == before.height
-        && resized.fontWidth == before.fontWidth && resized.fontHeight == before.fontHeight
-        && resized.blockWidth == before.blockWidth && resized.blockLineSpacing == before.blockLineSpacing
-        && resized.blockHangingIndent == before.blockHangingIndent
-        && resized.moduleWidth == before.moduleWidth && resized.pdf417RowHeight == before.pdf417RowHeight
-        && resized.tableColumnWidths == before.tableColumnWidths && resized.tableRowHeights == before.tableRowHeights) {
-        refreshProperties();
-        return;
-    }
-    next.originalZpl.clear();
-    if (const auto valid = validateForExport(next); !valid && !renderEditorPreview(next)) {
-        setNotice(QStringLiteral("Размер не изменён: %1").arg(valid.error()));
-        refreshProperties();
-        return;
-    }
-    commitDocument(std::move(next), QStringLiteral("Размер элемента"), index);
-    // Reflect rounded font/module dimensions immediately, including subsequent gestures.
-    refreshPreview();
+    if (index < 0 || index >= session_->document().elements.size()) return;
+    if (previews_->pending()) refreshPreview();
+    const auto result = session_->execute(ResizeElement{session_->document().elements[index].id, size,
+        elementSize(index), previews_->requestIdentity(PreviewMode::Editor).revision,
+        previews_->editorPreview().elementErrors.value(index)}, QStringLiteral("Размер элемента"));
+    if (!result) setNotice(result.error());
+    if (result && *result) refreshPreview();
+    else refreshProperties();
 }
 
 void MainWindow::selectElement(int index) {
@@ -1926,131 +1475,37 @@ void MainWindow::selectElement(int index) {
 }
 
 void MainWindow::syncSelection() {
+    selection_->setIndices(canvas_->selectedIndices(), session_->document());
     selected_ = canvas_->selectedIndex();
     const QSignalBlocker blocker(layers_);
     const auto indices = canvas_->selectedIndices();
     layers_->setFixedHeight(std::min(370, int(session_->document().elements.size()) * 37 + 8));
     layerCount_->setText(QStringLiteral("%1 объектов").arg(session_->document().elements.size()));
-    layers_->setCurrentRow(selected_ < 0 ? -1 : static_cast<int>(session_->document().elements.size()) - selected_ - 1,
-                           QItemSelectionModel::NoUpdate);
-    layers_->clearSelection();
-    for (int row = 0; row < layers_->count(); ++row) {
-        auto* item = layers_->item(row);
-        item->setSelected(indices.contains(item->data(Qt::UserRole).toInt()));
-    }
+    layers_->setSelectedIds(selection_->ids());
     refreshProperties();
     syncDesignSelection();
 }
 
-bool MainWindow::sourceMatchesDocument() {
-    if (codePending_ || !session_->document().visualEditable) return false;
-    const int revision = code_->document()->revision();
-    if (revision != mappedSourceRevision_) {
-        // Syntax highlighting also advances QTextDocument's revision. A palette
-        // change must not invalidate the mapping when the source is identical.
-        if (code_->toPlainText() != mappedSource_) return false;
-        mappedSourceRevision_ = revision;
-    }
-    return true;
-}
-
 void MainWindow::syncDesignSelection(bool reveal) {
-    QList<QPair<int, int>> ranges;
-    if (workspacePreferences_.selectionSync && sourceMatchesDocument()) {
-        const auto indices = canvas_->selectedIndices();
-        for (const auto& range : sourceElementRanges_) {
-            if (indices.contains(range.elementIndex))
-                ranges.append({static_cast<int>(range.start), static_cast<int>(range.length)});
-        }
-    }
-    static_cast<ZplSourceEditor*>(code_)->setObjectHighlights(ranges, reveal && code_->isVisible());
+    sourceAdapter_->setSelectionSyncEnabled(workspacePreferences_.selectionSync);
+    sourceAdapter_->setSelection(selection_->indices(session_->document()), reveal);
 }
 
 void MainWindow::syncSourceSelection(bool allowCaret) {
-    if (updating_) return;
-    if (!workspacePreferences_.selectionSync) {
-        sourceSelectionActive_ = false;
-        sourceCaretActive_ = false;
-        return;
-    }
-    const QScopedValueRollback selectionGuard(syncingSourceSelection_, true);
-    const auto cursor = code_->textCursor();
-    const bool selectCaret = allowCaret && !cursor.hasSelection();
-    // Wait for this exact source to be applied. The last valid design keeps its
-    // own selection while pending or unsupported code is being inspected.
-    if (!sourceMatchesDocument()) {
-        sourceSelectionActive_ = cursor.hasSelection() || selectCaret;
-        sourceCaretActive_ = selectCaret;
-        return;
-    }
-    if (!cursor.hasSelection() && !selectCaret) {
-        if (sourceSelectionActive_) {
-            sourceSelectionActive_ = false;
-            sourceCaretActive_ = false;
-            canvas_->setSelectedIndices({});
-            if (canvas_->signalsBlocked()) syncSelection();
-        }
-        return;
-    }
-    sourceSelectionActive_ = true;
-    sourceCaretActive_ = selectCaret;
-    QList<int> indices;
-    if (selectCaret) {
-        // Prefer the exact field when several objects share a physical line.
-        for (const auto& range : sourceElementRanges_) {
-            if (cursor.position() >= range.start && cursor.position() < range.start + range.length) {
-                indices.append(range.elementIndex);
-                break;
-            }
-        }
-    }
-    if (!selectCaret || indices.isEmpty()) {
-        // A click in trailing whitespace still activates the object's line.
-        // Range selections retain their original half-open intersection rules.
-        const auto block = cursor.block();
-        const auto start = selectCaret ? block.position() : cursor.selectionStart();
-        const auto end = selectCaret ? block.position() + block.length() - 1 : cursor.selectionEnd();
-        for (const auto& range : sourceElementRanges_) {
-            if (range.start < end && range.start + range.length > start
-                && !indices.contains(range.elementIndex))
-                indices.append(range.elementIndex);
-        }
-    }
-    canvas_->setSelectedIndices(indices);
-    // restoreDocument can temporarily block canvas signals while applying ZPL.
-    if (canvas_->signalsBlocked()) syncSelection();
+    if (!updating_) sourceAdapter_->sourceSelection(workspacePreferences_.selectionSync, allowCaret);
 }
 
 void MainWindow::refreshLayers() {
-    const QSignalBlocker blocker(layers_); layers_->clear();
-    for (qsizetype i = session_->document().elements.size(); i > 0; --i) {
-        const auto& e = session_->document().elements[i - 1];
-        auto* item = new QListWidgetItem(elementIcon(e.type), (e.locked ? QStringLiteral("🔒 ") : QString{})
-            + (!e.editorVisible ? QStringLiteral("◌ ") : QString{}) + (!e.printable ? QStringLiteral("⊘ ") : QString{})
-            + (e.groupId.isNull() ? QString{} : QStringLiteral("▣ "))
-            + (e.name.isEmpty() ? elementTypeName(e.type) : e.name), layers_);
-        item->setToolTip(QStringLiteral("%1\nНа холсте: %2 · Печать: %3 · %4")
-            .arg(elementTypeName(e.type), e.editorVisible ? QStringLiteral("да") : QStringLiteral("нет"),
-                e.printable ? QStringLiteral("да") : QStringLiteral("нет"),
-                e.locked ? QStringLiteral("заблокирован") : QStringLiteral("доступен для правок")));
-        item->setData(Qt::UserRole, static_cast<int>(i - 1));
-        item->setData(Qt::UserRole + 1, e.editorVisible ? QStringLiteral("виден") : QStringLiteral("скрыт"));
-        item->setSelected(canvas_->selectedIndices().contains(static_cast<int>(i - 1)));
-    }
-    layers_->setMaximumHeight(std::min(370, int(session_->document().elements.size()) * 37 + 2));
+    layers_->refresh(session_->document(), selection_->ids());
     layerCount_->setText(QStringLiteral("%1 объектов").arg(session_->document().elements.size()));
-    layers_->setCurrentRow(selected_ < 0 ? -1 : static_cast<int>(session_->document().elements.size()) - selected_ - 1,
-                           QItemSelectionModel::NoUpdate);
 }
 
 void MainWindow::refreshProperties() {
     updating_ = true;
     refreshFocusSummary();
-    barcodeType_->setEnabled(!codePending_);
-    refreshPropertyUnits();
     const auto indices = canvas_->selectedIndices();
     for (auto* check : {layerLocked_, layerVisible_, layerPrintable_}) {
-        check->setEnabled(!indices.isEmpty() && session_->document().visualEditable && !codePending_);
+        check->setEnabled(!indices.isEmpty() && session_->document().visualEditable && !session_->hasPendingSource());
     }
     const auto setFlagState = [this, &indices](QCheckBox* check, bool Element::* member) {
         const QSignalBlocker block(check);
@@ -2062,172 +1517,12 @@ void MainWindow::refreshProperties() {
     };
     setFlagState(layerLocked_, &Element::locked); setFlagState(layerVisible_, &Element::editorVisible);
     setFlagState(layerPrintable_, &Element::printable);
-    const bool multi = canvas_->selectedIndices().size() > 1;
-    const bool valid = !multi && session_->document().visualEditable && selected_ >= 0 && selected_ < session_->document().elements.size();
-    elementForm_->setEnabled(valid && !selectionLocked() && !codePending_);
-    elementForm_->setVisible(valid);
-    selectionProperties_->setVisible(multi && session_->document().visualEditable);
-    selectionProperties_->setEnabled(!selectionLocked() && !codePending_);
-    if (multi) selectionProperties_->setSelection(session_->document(), canvas_->selectedIndices());
-    typeTitle_->setText(multi ? QStringLiteral("Выбрано элементов: %1\nМеню «Компоновка» — выравнивание").arg(canvas_->selectedIndices().size())
-        : valid ? (session_->document().elements[selected_].name.isEmpty() ? elementTypeName(session_->document().elements[selected_].type) : session_->document().elements[selected_].name) : QStringLiteral("Выберите элемент"));
-    objectSubtitle_->setText(valid ? QStringLiteral("%1 · %2 из %3").arg(elementTypeName(session_->document().elements[selected_].type)).arg(session_->document().elements.size() - selected_).arg(session_->document().elements.size()) : QString());
-    objectSymbol_->setText(valid ? elementSymbol(session_->document().elements[selected_].type) : QStringLiteral("↖"));
-    if (valid) {
-        const auto& e = session_->document().elements[selected_];
-        const QSize size = elementSize(selected_);
-        x_->setValue(e.x); y_->setValue(e.y); width_->setValue(size.width()); height_->setValue(size.height());
-        if (content_->toPlainText() != e.text) content_->setPlainText(e.text);
-        content_->setFixedHeight(e.text.contains(u'\n') || e.blockWidth > 0 ? 90 : 30);
-        fontHeight_->setValue(e.fontHeight); fontWidth_->setValue(e.fontWidth); thickness_->setValue(e.thickness);
-        module_->setValue(e.moduleWidth); threshold_->setValue(e.threshold);
-        orientation_->setCurrentIndex(orientation_->findData(QString(e.orientation)));
-        readable_->setChecked(e.humanReadable); reverse_->setChecked(e.reverse); dither_->setChecked(e.dither);
-        whiteGraphic_->setChecked(e.graphicWhite);
-        diagonalDirection_->setCurrentIndex(diagonalDirection_->findData(QString(e.diagonalDirection)));
-        imageKeepAspectRatio_->setChecked(e.imageKeepAspectRatio);
-        gs1_->setChecked(e.gs1);
-        blockWidth_->setValue(e.blockWidth); blockLines_->setValue(e.blockMaxLines);
-        blockSpacing_->setValue(e.blockLineSpacing); blockIndent_->setValue(e.blockHangingIndent);
-        blockAlignment_->setCurrentIndex(blockAlignment_->findData(QString(e.blockJustification)));
-        code128Mode_->setCurrentIndex(code128Mode_->findData(QString(e.code128Mode)));
-        qrCorrection_->setCurrentIndex(qrCorrection_->findData(QString(e.qrErrorCorrection)));
-        pdfRowHeight_->setValue(e.pdf417RowHeight); pdfColumns_->setValue(e.pdf417Columns); pdfSecurity_->setValue(e.pdf417Security);
-        interpretationAbove_->setChecked(e.interpretationAbove);
-        const bool text = e.type == ElementType::Text;
-        const bool code = isBarcodeType(e.type);
-        const bool table = e.type == ElementType::Table;
-        const bool image = e.type == ElementType::Image;
-        geometryAspect_->setEnabled(image && !selectionLocked() && !codePending_);
-        geometryAspect_->setChecked(image ? e.imageKeepAspectRatio
-            : e.type == ElementType::Circle || e.type == ElementType::QrCode || e.type == ElementType::DataMatrix);
-        auto* form = elementForm_->findChild<QFormLayout*>(QStringLiteral("detailForm"));
-        setPropertyRowVisible(form, barcodeType_, code);
-        if (code) {
-            const QSignalBlocker blocker(barcodeType_);
-            const auto types = barcodeTypes(e.type);
-            if (barcodeType_->count() != static_cast<int>(types.size())
-                || barcodeType_->itemData(0).toInt() != static_cast<int>(types.front())) {
-                barcodeType_->clear();
-                for (const auto type : types) barcodeType_->addItem(elementTypeName(type), static_cast<int>(type));
-            }
-            barcodeType_->setCurrentIndex(barcodeType_->findData(static_cast<int>(e.type)));
-        }
-        contentSection_->setVisible(!image && !table);
-        setPropertyRowVisible(form, content_, text || code);
-        const bool dataMatrix = e.type == ElementType::DataMatrix;
-        setPropertyRowVisible(form, gs1_, dataMatrix); setPropertyRowVisible(form, gs1Builder_, dataMatrix);
-        setPropertyRowVisible(form, placeholderValues_, table);
-        setPropertyRowVisible(form, gs1Status_, false);
-        content_->setPlaceholderText(dataMatrix ? (e.gs1 ? QStringLiteral("(01){{01}}(21){{21}} или 01{{01}}21{{21}}{{GS}}91{{91}}")
-                                                                        : QStringLiteral("{{21}} или PREFIX-[[serial]]")) : QString());
-        if (text || code) {
-            const auto names = e.literalText ? std::expected<QStringList, QString>(QStringList{}) : requiredValueParameters(e.text);
-            const auto gs1Data = dataMatrix && e.gs1 ? parseGs1Template(e.text) : std::expected<Gs1Data, QString>(Gs1Data{});
-            setPropertyRowVisible(form, placeholderValues_, !names || !names->isEmpty());
-            setPropertyRowVisible(form, gs1Status_, !names || !gs1Data || preview_.elementErrors.contains(selected_));
-            if (!names) gs1Status_->setText(names.error());
-            else if (!gs1Data) gs1Status_->setText(QStringLiteral("GS1 включён. %1\nИсправьте данные или используйте «Мастер GS1…».").arg(gs1Data.error()));
-            else if (preview_.elementErrors.contains(selected_)) gs1Status_->setText(preview_.elementErrors.value(selected_));
-            else if (!names->isEmpty()) gs1Status_->setText(QStringLiteral("Плейсхолдеры: %1. Задайте «Значения плейсхолдеров…» для превью. Сохранение оставляет шаблон.").arg(names->join(QStringLiteral(", "))));
-            else gs1Status_->setText(e.gs1 ? QStringLiteral("Поля GS1 корректны. FNC1 и разделители добавляются автоматически.")
-                                          : QStringLiteral("В данных можно использовать {{имя}} и [[имя]]."));
-        }
-        setPropertyRowVisible(form, fontHeight_, text); setPropertyRowVisible(form, fontWidth_, text);
-        setPropertyRowVisible(form, blockWidth_, text);
-        for (QWidget* widget : {static_cast<QWidget*>(blockLines_), static_cast<QWidget*>(blockSpacing_),
-                               static_cast<QWidget*>(blockIndent_), static_cast<QWidget*>(blockAlignment_)})
-            setPropertyRowVisible(form, widget, text && e.blockWidth > 0);
-        setPropertyRowVisible(form, code128Mode_, e.type == ElementType::Code128);
-        setPropertyRowVisible(form, interpretationAbove_, isLinearBarcodeType(e.type) && e.humanReadable
-            && e.type != ElementType::Codabar && e.type != ElementType::Code39);
-        setPropertyRowVisible(form, thickness_, !text && !code && !image && !table);
-        setPropertyRowVisible(form, whiteGraphic_, !text && !code && !image && !table);
-        setPropertyRowVisible(form, diagonalDirection_, e.type == ElementType::Diagonal);
-        setPropertyRowVisible(form, reverse_, !table);
-        setPropertyRowVisible(form, module_, code && e.type != ElementType::MaxiCode);
-        setPropertyRowVisible(form, orientation_, (text || code) && e.type != ElementType::MaxiCode);
-        orientation_->setEnabled(!e.useDefaultOrientation);
-        setPropertyRowVisible(form, readable_, isLinearBarcodeType(e.type)
-            && e.type != ElementType::Codabar && e.type != ElementType::Code39);
-        setPropertyRowVisible(form, qrCorrection_, e.type == ElementType::QrCode);
-        setPropertyRowVisible(form, qrPayload_, e.type == ElementType::QrCode);
-        setPropertyRowVisible(form, tableEdit_, table);
-        setPropertyRowVisible(form, barcodeOptions_, code);
-        setPropertyRowVisible(form, advancedText_, text);
-        for (auto* field : {pdfRowHeight_, pdfColumns_, pdfSecurity_}) setPropertyRowVisible(form, field, e.type == ElementType::Pdf417);
-        setPropertyRowVisible(form, threshold_, image); setPropertyRowVisible(form, dither_, image);
-        setPropertyRowVisible(form, imageKeepAspectRatio_, image); setPropertyRowVisible(form, imageEdit_, image);
-        setPropertyRowVisible(form, width_, true);
-        setPropertyRowVisible(form, height_, true);
-        width_->setEnabled(e.type != ElementType::MaxiCode);
-        height_->setEnabled(e.type != ElementType::MaxiCode);
-        sizeHint_->setText(text ? (e.blockWidth > 0
-            ? QStringLiteral("Размер меняет шрифт и текстовый блок. Точная ширина блока задаётся ниже.")
-            : QStringLiteral("Размер меняет шрифт. Фактические размеры округляются до точек."))
-            : code ? QStringLiteral("Модуль: %1 мм. Размер меняется целыми модулями; пропорции QR и DataMatrix сохраняются.")
-                .arg(e.moduleWidth * 25.4 / session_->document().dpi, 0, 'f', 3)
-            : e.type == ElementType::Circle ? QStringLiteral("Ширина и высота задают один диаметр.")
-            : QStringLiteral("Меняйте размеры здесь или тяните маркеры рамки на холсте."));
-        sizeHint_->setText(sizeHint_->text() + QStringLiteral("\nФактически: %1 × %2 dots = %3 × %4 мм.")
-            .arg(size.width()).arg(size.height()).arg(size.width() * 25.4 / session_->document().dpi, 0, 'f', 3)
-            .arg(size.height() * 25.4 / session_->document().dpi, 0, 'f', 3));
-    }
+    propertiesPanel_->refresh();
     updating_ = false;
 }
 
-void MainWindow::editBarcodeType() {
-    if (updating_ || codePending_ || selectionLocked() || canvas_->selectedIndices().size() != 1
-        || !session_->document().visualEditable || selected_ < 0
-        || selected_ >= session_->document().elements.size() || barcodeType_->currentIndex() < 0) return;
-    const auto& before = session_->document().elements[selected_];
-    const auto type = static_cast<ElementType>(barcodeType_->currentData().toInt());
-    if (type == before.type || !std::ranges::contains(barcodeTypes(before.type), type)) return;
-    auto next = session_->document();
-    auto& element = next.elements[selected_];
-    if (element.name == elementTypeName(element.type)) element.name = elementTypeName(type);
-    element.type = type;
-    // Keep payload, placement and imported source tokens; incompatible data is
-    // diagnosed by the normal preview so it can be edited after changing type.
-    if (type != ElementType::DataMatrix) element.gs1 = false;
-    if (type == ElementType::Code39 || type == ElementType::Codabar) {
-        element.humanReadable = false;
-        element.interpretationAbove = false;
-    }
-    if (type == ElementType::MaxiCode) {
-        element.orientation = u'N';
-        element.useDefaultOrientation = false;
-        element.width = 201;
-        element.height = 195;
-    }
-    commitDocument(std::move(next), QStringLiteral("Тип штрихкода"));
-}
-
-void MainWindow::editProperties() {
-    if (updating_ || selectionLocked() || canvas_->selectedIndices().size() != 1 || !session_->document().visualEditable || selected_ < 0 || selected_ >= session_->document().elements.size()) return;
-    auto next = session_->document(); auto& e = next.elements[selected_];
-    e.x = x_->value(); e.y = y_->value();
-    if (e.text != content_->toPlainText()) e.literalText = false;
-    e.text = content_->toPlainText(); e.fontHeight = fontHeight_->value(); e.fontWidth = fontWidth_->value();
-    e.thickness = thickness_->value(); e.moduleWidth = module_->value(); e.threshold = threshold_->value();
-    e.orientation = orientation_->currentData().toString().at(0);
-    e.humanReadable = readable_->isChecked(); e.reverse = reverse_->isChecked(); e.dither = dither_->isChecked();
-    e.graphicWhite = whiteGraphic_->isChecked();
-    e.diagonalDirection = diagonalDirection_->currentData().toString().at(0);
-    e.imageKeepAspectRatio = imageKeepAspectRatio_->isChecked();
-    e.gs1 = e.type == ElementType::DataMatrix && gs1_->isChecked();
-    e.blockWidth = blockWidth_->value(); e.blockMaxLines = blockLines_->value();
-    e.blockLineSpacing = blockSpacing_->value(); e.blockHangingIndent = blockIndent_->value();
-    e.blockJustification = blockAlignment_->currentData().toString().at(0);
-    e.code128Mode = code128Mode_->currentData().toString().at(0);
-    e.interpretationAbove = interpretationAbove_->isChecked();
-    e.qrErrorCorrection = qrCorrection_->currentData().toString().at(0);
-    e.pdf417RowHeight = pdfRowHeight_->value(); e.pdf417Columns = pdfColumns_->value(); e.pdf417Security = pdfSecurity_->value();
-    commitDocument(std::move(next), QStringLiteral("Изменить свойства"));
-}
-
 void MainWindow::copyElements(bool cut) {
-    if (codePending_ || !session_->document().visualEditable) return;
+    if (session_->hasPendingSource() || !session_->document().visualEditable) return;
     auto indices = canvas_->selectedIndices();
     std::ranges::sort(indices);
     QList<Element> elements;
@@ -2246,7 +1541,7 @@ void MainWindow::copyElements(bool cut) {
 }
 
 void MainWindow::pasteElements() {
-    if (codePending_ || !session_->document().visualEditable) return;
+    if (session_->hasPendingSource() || !session_->document().visualEditable) return;
     const auto* mime = QApplication::clipboard()->mimeData();
     if (!mime || !mime->hasFormat(QLatin1StringView(elementMimeType))) {
         setNotice(QStringLiteral("В буфере нет объектов QtZpl Designer.")); return;
@@ -2261,7 +1556,7 @@ void MainWindow::pasteElements() {
 }
 
 void MainWindow::groupSelection(bool ungroup) {
-    if (codePending_ || !session_->document().visualEditable) return;
+    if (session_->hasPendingSource() || !session_->document().visualEditable) return;
     const auto indices = canvas_->selectedIndices();
     const bool changed = ungroup ? session_->ungroupElements(indices) : session_->groupElements(indices);
     if (changed) canvas_->setSelectedIndices(indices);
@@ -2270,134 +1565,100 @@ void MainWindow::groupSelection(bool ungroup) {
 }
 
 void MainWindow::editImage() {
-    if (codePending_ || selectionLocked() || canvas_->selectedIndices().size() != 1 || selected_ < 0) return;
+    if (session_->hasPendingSource() || selectionLocked() || canvas_->selectedIndices().size() != 1 || selected_ < 0) return;
     const auto& element = session_->document().elements[selected_];
     if (element.type != ElementType::Image) return;
     ImageEditDialog dialog(element, this);
     if (dialog.exec() != QDialog::Accepted) return;
     auto edited = dialog.editedElement();
     if (edited.image == element.image && edited.width == element.width && edited.height == element.height) return;
-    auto next = session_->document();
-    next.elements[selected_] = std::move(edited);
-    commitDocument(std::move(next), QStringLiteral("Изменить изображение"));
+    executeOperation(UpdateElementContent{element.id, std::move(edited)}, QStringLiteral("Изменить изображение"));
 }
 
 void MainWindow::editTable() {
-    if (codePending_ || selectionLocked() || canvas_->selectedIndices().size() != 1 || selected_ < 0) return;
+    if (session_->hasPendingSource() || selectionLocked() || canvas_->selectedIndices().size() != 1 || selected_ < 0) return;
     const auto& element = session_->document().elements[selected_];
     if (element.type != ElementType::Table) return;
     TableDialog dialog(element, session_->layoutSettings().unit, session_->document().dpi, this);
     if (dialog.exec() != QDialog::Accepted) return;
-    auto next = session_->document(); next.elements[selected_] = dialog.editedElement();
-    if (next.elements[selected_].tableCells != element.tableCells) next.elements[selected_].literalText = false;
-    commitDocument(std::move(next), QStringLiteral("Изменить таблицу"));
+    executeOperation(UpdateElementContent{element.id, dialog.editedElement()}, QStringLiteral("Изменить таблицу"));
 }
 
 void MainWindow::editQrPayload() {
-    if (codePending_ || selectionLocked() || canvas_->selectedIndices().size() != 1 || selected_ < 0) return;
+    if (session_->hasPendingSource() || selectionLocked() || canvas_->selectedIndices().size() != 1 || selected_ < 0) return;
     const auto& element = session_->document().elements[selected_];
     if (element.type != ElementType::QrCode) return;
     QrPayloadDialog dialog(element.text, this);
     if (dialog.exec() != QDialog::Accepted || dialog.payload() == element.text) return;
-    auto next = session_->document(); next.elements[selected_].text = dialog.payload();
-    next.elements[selected_].literalText = false;
-    commitDocument(std::move(next), QStringLiteral("Содержимое QR"));
+    executeOperation(UpdateText{element.id, dialog.payload()}, QStringLiteral("Содержимое QR"));
 }
 
 void MainWindow::editBarcodeOptions() {
-    if (codePending_ || selectionLocked() || canvas_->selectedIndices().size() != 1 || selected_ < 0) return;
+    if (session_->hasPendingSource() || selectionLocked() || canvas_->selectedIndices().size() != 1 || selected_ < 0) return;
     const auto& element = session_->document().elements[selected_];
     if (!isBarcodeType(element.type)) return;
     BarcodeOptionsDialog dialog(element, session_->layoutSettings().unit, session_->document().dpi, this);
     if (dialog.exec() != QDialog::Accepted) return;
-    auto next = session_->document(); next.elements[selected_] = dialog.editedElement();
-    commitDocument(std::move(next), QStringLiteral("Параметры штрихкода"));
+    executeOperation(UpdateElementContent{element.id, dialog.editedElement()}, QStringLiteral("Параметры штрихкода"));
 }
 
 void MainWindow::editAdvancedText() {
-    if (codePending_ || selectionLocked() || canvas_->selectedIndices().size() != 1 || selected_ < 0) return;
+    if (session_->hasPendingSource() || selectionLocked() || canvas_->selectedIndices().size() != 1 || selected_ < 0) return;
     const auto& element = session_->document().elements[selected_];
     if (element.type != ElementType::Text) return;
     AdvancedTextDialog dialog(element, session_->layoutSettings().unit, session_->document().dpi, this);
     if (dialog.exec() != QDialog::Accepted) return;
-    auto next = session_->document(); next.elements[selected_] = dialog.editedElement();
-    commitDocument(std::move(next), QStringLiteral("Положение текста"));
+    executeOperation(UpdateElementContent{element.id, dialog.editedElement()}, QStringLiteral("Положение текста"));
 }
 
 void MainWindow::editLabelSettings() {
     if (!applySource() || !session_->document().visualEditable) return;
     LabelSettingsDialog dialog(session_->document(), this);
     if (dialog.exec() != QDialog::Accepted) return;
-    commitDocument(dialog.editedDocument(), QStringLiteral("Преобразования этикетки"));
+    executeOperation(labelSettings(dialog.editedDocument()), QStringLiteral("Преобразования этикетки"));
 }
 
-void MainWindow::refreshPropertyUnits() {
-    const auto unit = session_->layoutSettings().unit;
-    const int dpi = session_->document().dpi;
-    const QSignalBlocker blocker(propertyUnits_);
-    propertyUnits_->setCurrentIndex(propertyUnits_->findData(static_cast<int>(unit)));
-    for (auto* control : elementForm_->findChildren<DotSpinBox*>()) {
-        const bool contentDots = control == fontHeight_ || control == module_ || control == thickness_;
-        control->setDisplayUnits(contentDots ? CanvasUnit::Dots : unit, dpi);
-    }
-    selectionProperties_->setDisplayUnits(unit, dpi);
-}
+void MainWindow::refreshPropertyUnits() { propertiesPanel_->refreshUnits(); }
 
 bool MainWindow::selectionLocked() const {
     return std::ranges::any_of(canvas_->selectedIndices(), [this](int index) { return session_->document().elements[index].locked; });
 }
 
 void MainWindow::renameLayer() {
-    if (codePending_ || selectionLocked() || canvas_->selectedIndices().size() != 1 || selected_ < 0) return;
+    if (session_->hasPendingSource() || selectionLocked() || canvas_->selectedIndices().size() != 1 || selected_ < 0) return;
     bool accepted = false;
     const auto& element = session_->document().elements[selected_];
     const auto name = QInputDialog::getText(this, QStringLiteral("Название слоя"), QStringLiteral("Название:"),
         QLineEdit::Normal, element.name.isEmpty() ? elementTypeName(element.type) : element.name, &accepted).trimmed();
     if (!accepted || name == element.name) return;
-    if (name.size() > 256) { setNotice(QStringLiteral("Название слоя — не более 256 символов.")); return; }
-    auto next = session_->document(); next.elements[selected_].name = name;
-    commitDocument(std::move(next), QStringLiteral("Название слоя"));
+    executeOperation(RenameElement{element.id, name}, QStringLiteral("Название слоя"));
 }
 
-void MainWindow::setLayerFlag(const QString& flag, bool value) {
-    if (updating_ || codePending_ || !session_->document().visualEditable) return;
-    const auto indices = canvas_->selectedIndices();
-    if (indices.isEmpty()) return;
-    // Lock/unlock is always available; printing is a design change protected by the lock.
-    if (flag == QStringLiteral("printable") && selectionLocked()) {
-        setNotice(QStringLiteral("Сначала разблокируйте выбранные слои.")); refreshProperties(); return;
-    }
-    auto next = session_->document();
-    for (int index : indices) {
-        auto& element = next.elements[index];
-        if (flag == QStringLiteral("locked")) element.locked = value;
-        else if (flag == QStringLiteral("visible")) element.editorVisible = value;
-        else if (flag == QStringLiteral("printable")) element.printable = value;
-    }
-    commitDocument(std::move(next), QStringLiteral("Параметры слоёв"));
+void MainWindow::setLayerFlag(LayerFlag flag, bool value) {
+    if (updating_) return;
+    executeOperation(SetElementFlags{selection_->ids(), flag, value}, QStringLiteral("Параметры слоёв"));
 }
 
 void MainWindow::addElement(ElementType type, QPoint position) {
     if (!session_->document().visualEditable) { setNotice(QStringLiteral("Этот ZPL редактируется во вкладке кода. Создайте новую этикетку для визуального дизайна.")); return; }
-    if (session_->document().elements.size() >= 200) { setNotice(QStringLiteral("На этикетке уже 200 элементов — предел текущей версии.")); return; }
     if (type == ElementType::Image) { chooseImage(position); return; }
-    auto next = session_->document();
-    next.elements.append(makeElement(type, position));
-    commitDocument(std::move(next), QStringLiteral("Добавить элемент"), static_cast<int>(session_->document().elements.size()));
+    executeOperation(AddElement{makeElement(type, position)}, QStringLiteral("Добавить элемент"),
+        static_cast<int>(session_->document().elements.size()));
 }
 
 bool MainWindow::importImage(const QString& path, QPoint position) {
     if (!session_->document().visualEditable) { setNotice(QStringLiteral("Импорт изображения доступен в визуальном режиме.")); return false; }
-    if (session_->document().elements.size() >= 200) { setNotice(QStringLiteral("На этикетке уже 200 элементов.")); return false; }
     auto image = loadImage(path);
     if (!image) { setNotice(image.error()); return false; }
-    auto next = session_->document(); auto element = makeElement(ElementType::Image, position);
+    auto element = makeElement(ElementType::Image, position);
     element.name = QFileInfo(path).fileName(); element.image = *image;
     const QSize size = image->size().scaled(QSize(std::max(1, session_->document().width - position.x()), std::max(1, session_->document().height - position.y())), Qt::KeepAspectRatio);
     element.width = std::min(image->width(), size.width()); element.height = std::min(image->height(), size.height());
-    next.elements.append(std::move(element));
-    commitDocument(std::move(next), QStringLiteral("Импортировать изображение"), static_cast<int>(session_->document().elements.size()));
-    return true;
+    const int index = static_cast<int>(session_->document().elements.size());
+    const auto added = session_->execute(AddElement{std::move(element)}, QStringLiteral("Импортировать изображение"));
+    if (!added) { setNotice(added.error()); return false; }
+    selectElement(index);
+    return *added;
 }
 
 void MainWindow::chooseImage(QPoint position) {
@@ -2407,48 +1668,31 @@ void MainWindow::chooseImage(QPoint position) {
 }
 
 void MainWindow::duplicateElement() {
-    if (codePending_ || !session_->document().visualEditable || selected_ < 0) return;
+    if (session_->hasPendingSource() || !session_->document().visualEditable || selected_ < 0) return;
     const auto indices = canvas_->selectedIndices();
     if (session_->document().elements.size() + indices.size() > 200) { setNotice(QStringLiteral("После дублирования будет превышен предел 200 элементов.")); return; }
     const auto copies = session_->duplicateElements(indices);
     if (!copies.isEmpty()) canvas_->setSelectedIndices(copies);
 }
 void MainWindow::deleteElement() {
-    if (!codePending_) session_->deleteElements(canvas_->selectedIndices());
+    if (!session_->hasPendingSource()) session_->deleteElements(canvas_->selectedIndices());
 }
 void MainWindow::moveLayer(int direction) {
-    if (codePending_ || selectionLocked() || !session_->document().visualEditable || selected_ < 0) return;
-    auto next = session_->document();
-    QSet<QUuid> selectedIds;
-    for (int index : canvas_->selectedIndices()) selectedIds.insert(next.elements[index].id);
-    if (std::abs(direction) >= 200) {
-        QList<Element> selected, other;
-        for (const auto& element : next.elements) (selectedIds.contains(element.id) ? selected : other).append(element);
-        next.elements = direction > 0 ? other + selected : selected + other;
-    } else if (direction > 0) {
-        for (int i = int(next.elements.size()) - 2; i >= 0; --i)
-            if (selectedIds.contains(next.elements[i].id) && !selectedIds.contains(next.elements[i + 1].id)) next.elements.swapItemsAt(i, i + 1);
-    } else {
-        for (int i = 1; i < next.elements.size(); ++i)
-            if (selectedIds.contains(next.elements[i].id) && !selectedIds.contains(next.elements[i - 1].id)) next.elements.swapItemsAt(i, i - 1);
-    }
-    commitDocument(std::move(next), QStringLiteral("Порядок слоёв"));
+    executeOperation(ReorderElements{selection_->ids(), direction}, QStringLiteral("Порядок слоёв"));
 }
 
 void MainWindow::showGs1Builder() {
-    if (codePending_ || selectionLocked() || !session_->document().visualEditable || selected_ < 0
+    if (session_->hasPendingSource() || selectionLocked() || !session_->document().visualEditable || selected_ < 0
         || canvas_->selectedIndices().size() != 1) return;
     if (session_->document().elements[selected_].type != ElementType::DataMatrix) return;
     Gs1Dialog dialog(session_->document().elements[selected_].text, this);
     if (dialog.exec() != QDialog::Accepted) return;
-    auto next = session_->document();
-    next.elements[selected_].gs1 = true;
-    next.elements[selected_].text = dialog.data();
-    commitDocument(std::move(next), QStringLiteral("Настроить GS1 DataMatrix"));
+    executeOperation(UpdateText{session_->document().elements[selected_].id, dialog.data(), true, true},
+        QStringLiteral("Настроить GS1 DataMatrix"));
 }
 
 bool MainWindow::showPlaceholderValues() {
-    if (codePending_ || !session_->document().visualEditable) return false;
+    if (session_->hasPendingSource() || !session_->document().visualEditable) return false;
     const auto names = dataMatrixParameters(session_->document());
     if (!names) { setNotice(names.error()); return false; }
     if (names->isEmpty()) {
@@ -2542,7 +1786,7 @@ void MainWindow::showPrintDialog() {
 }
 
 void MainWindow::showLabelSetup() {
-    if (codePending_ || !session_->document().visualEditable) {
+    if (session_->hasPendingSource() || !session_->document().visualEditable) {
         setNotice(QStringLiteral("Настройка формата доступна после применения ZPL в визуальном режиме.")); return;
     }
     QDialog dialog(this); dialog.setWindowTitle(QStringLiteral("Формат этикетки"));
@@ -2601,10 +1845,10 @@ void MainWindow::showLabelSetup() {
     });
     update();
     if (dialog.exec() != QDialog::Accepted) return;
-    auto next = session_->document(); next.dpi = resolution->currentData().toInt();
+    auto next = labelSettings(session_->document()); next.dpi = resolution->currentData().toInt();
     next.width = qRound(width->value() * next.dpi / 25.4); next.height = qRound(height->value() * next.dpi / 25.4);
     if (next.width == session_->document().width && next.height == session_->document().height && next.dpi == session_->document().dpi) return;
-    commitDocument(std::move(next), QStringLiteral("Формат этикетки в миллиметрах"));
+    executeOperation(next, QStringLiteral("Формат этикетки в миллиметрах"));
     restoreCanvasZoom();
 }
 
@@ -2631,28 +1875,24 @@ void MainWindow::showCanvasLayout() {
 }
 
 bool MainWindow::applySource() {
-    sourceTimer_->stop();
-    if (!codePending_) return true;
-    auto imported = fromZpl(code_->toPlainText());
-    if (!imported) {
-        sourceStatus_->setText(QStringLiteral("ZPL не применён: %1 Последний применённый макет сохранён.").arg(imported.error()));
+    sourceAdapter_->cancelApply();
+    if (!session_->hasPendingSource()) return true;
+    const auto applied = sourceAdapter_->apply();
+    if (!applied) {
+        sourceStatus_->setText(QStringLiteral("ZPL не применён: %1 Последний применённый макет сохранён.").arg(applied.error()));
         setNotice(sourceStatus_->text());
         refreshSourceDiagnostics();
         return false;
     }
-    imported->dpi = session_->document().dpi;
-    codePending_ = false;
-    session_->clearPendingSource();
-    selected_ = -1;
-    session_->commit(std::move(*imported), QStringLiteral("Применить ZPL"), true);
-    refreshPreview(); return true;
+    refreshPreview();
+    return true;
 }
 
 bool MainWindow::openFile(const QString& path) {
     auto result = session_->open(path);
     if (!result) { setNotice(result.error()); return false; }
-    selectElement(-1); codePending_ = session_->hasPendingSource(); refreshPreview(); restoreCanvasZoom(); updateTitle();
-    if (codePending_) { restoreDocument(session_->document()); editorTabs_->setCurrentIndex(1); }
+    selectElement(-1); refreshPreview(); restoreCanvasZoom(); updateTitle();
+    if (session_->hasPendingSource()) { restoreDocument(session_->document()); editorTabs_->setCurrentIndex(1); }
     if (!session_->layoutWarning().isEmpty()) setNotice(session_->layoutWarning());
     return true;
 }
@@ -2664,7 +1904,7 @@ bool MainWindow::saveFile(const QString& path) {
     if (!result) { setNotice(result.error()); return false; }
     if (!previousLayoutWarning.isEmpty()) {
         QStringList notes = session_->document().importNotes;
-        notes.append(preview_.diagnostics); notes.removeDuplicates();
+        notes.append(previews_->editorPreview().diagnostics); notes.removeDuplicates();
         diagnostics_->setPlainText(notes.isEmpty() ? QStringLiteral("Ошибок рендеринга нет.\nПревью построено локально библиотекой QtZpl.") : notes.join(QStringLiteral("\n\n")));
         if (notice_->text() == previousLayoutWarning)
             setNotice(QStringLiteral("Этикетка и настройки холста сохранены."));
@@ -2725,12 +1965,12 @@ void MainWindow::choosePreset() {
     if (accepted) openPreset(path, static_cast<int>(names.indexOf(choice)));
 }
 void MainWindow::exportPng() {
-    const bool pendingSource = codePending_;
+    const bool pendingSource = session_->hasPendingSource();
     if (!applySource()) return;
     if (!pendingSource) refreshPreview();
-    if (!cleanPreviewError_.isEmpty() || cleanPreview_.image.isNull()) return;
+    if (!previews_->pageError().isEmpty() || previews_->pagePreview().image.isNull()) return;
     const auto path = QFileDialog::getSaveFileName(this, QStringLiteral("Сохранить превью"), QStringLiteral("label.png"), QStringLiteral("PNG (*.png)"));
-    if (!path.isEmpty() && !cleanPreview_.image.save(path, "PNG")) setNotice(QStringLiteral("Не удалось сохранить PNG."));
+    if (!path.isEmpty() && !previews_->pagePreview().image.save(path, "PNG")) setNotice(QStringLiteral("Не удалось сохранить PNG."));
 }
 void MainWindow::updateTitle() {
     const QString name = session_->filePath().isEmpty() ? QStringLiteral("Новая этикетка") : QFileInfo(session_->filePath()).fileName();
@@ -2743,8 +1983,8 @@ void MainWindow::updateHistoryActions() {
         redoAction_->setEnabled(code_->document()->isRedoAvailable());
         return;
     }
-    undoAction_->setEnabled(!codePending_ && undo_->canUndo());
-    redoAction_->setEnabled(!codePending_ && undo_->canRedo());
+    undoAction_->setEnabled(!session_->hasPendingSource() && undo_->canUndo());
+    redoAction_->setEnabled(!session_->hasPendingSource() && undo_->canRedo());
 }
 void MainWindow::setNotice(const QString& text) { notice_->setText(text); notice_->setToolTip(text); }
 void MainWindow::closeEvent(QCloseEvent* event) {
@@ -2767,6 +2007,6 @@ bool MainWindow::smokeTest(const QString& directory) {
     const auto saved = toZpl(session_->document());
     if (!openFile(path) || toZpl(session_->document()) != saved) return false;
     refreshPreview();
-    return !preview_.image.isNull() && preview_.image.save(QDir(directory).filePath(QStringLiteral("smoke-label.png")));
+    return !previews_->editorPreview().image.isNull() && previews_->editorPreview().image.save(QDir(directory).filePath(QStringLiteral("smoke-label.png")));
 }
 } // namespace Designer

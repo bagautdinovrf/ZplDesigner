@@ -548,12 +548,14 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
             && !std::holds_alternative<QtZpl::FieldReverse>(command.payload)
             && !std::holds_alternative<QtZpl::FieldDirection>(command.payload)
             && !std::holds_alternative<QtZpl::Barcode>(command.payload)
+            && !std::holds_alternative<QtZpl::FieldHex>(command.payload)
             && !std::holds_alternative<QtZpl::FieldData>(command.payload))
             raw(u"Метаданные шаблона DataMatrix не соответствуют следующему полю; сохранён исходный ZPL."_s);
         std::visit([&](const auto& value) {
             using T = std::decay_t<decltype(value)>;
             if constexpr (std::is_same_v<T, QtZpl::FormatStart> || std::is_same_v<T, QtZpl::FormatEnd>
-                          || std::is_same_v<T, QtZpl::PrintWidth> || std::is_same_v<T, QtZpl::LabelLength>) { }
+                          || std::is_same_v<T, QtZpl::PrintWidth> || std::is_same_v<T, QtZpl::LabelLength>
+                          || std::is_same_v<T, QtZpl::FieldHex>) { }
             else if constexpr (std::is_same_v<T, QtZpl::Comment>) {
                 const auto decoded = decodeTemplateMetadata(value.text);
                 if (decoded && templateStage == TemplateStage::None && !haveOrigin && !fieldProduced && !barcode) {

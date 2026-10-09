@@ -11,14 +11,6 @@ namespace Designer {
 using namespace Qt::StringLiterals;
 using namespace Internal;
 namespace Internal {
-QString labelSource(const QtZpl::Document& parsed, const QString& source, int pageIndex)
-{
-    const auto& commands = parsed.labels()[pageIndex].commands();
-    if (commands.isEmpty()) return {};
-    return source.mid(commands.first().offset,
-                      commands.last().offset + commands.last().source.size() - commands.first().offset);
-}
-
 std::expected<QtZpl::Document, QString> checkedParse(const QString& source)
 {
     if (source.size() > maximumSource || source.toUtf8().size() > maximumSource)
@@ -38,13 +30,12 @@ std::expected<QtZpl::RenderResult, QString> checkedRenderPage(const QString& sou
         return std::unexpected(u"Номер этикетки вне диапазона."_s);
     QtZpl::RenderOptions options;
     options.dpi = dpi;
-    auto result = QtZpl::render(labelSource(*parsed, source, pageIndex), {}, options);
+    // Render the exact parsed snapshot. Slicing normalized command text used
+    // to lose spelling/CRLF information and require guessed offset rebasing.
+    auto result = QtZpl::renderLabel(*parsed, pageIndex, options);
     if (!result) return std::unexpected(result.error().message);
-    const auto& commands = parsed->labels()[pageIndex].commands();
-    if (!commands.isEmpty())
-        for (auto& diagnostic : result->diagnostics)
-            if (diagnostic.offset >= 0) diagnostic.offset += commands.first().offset;
-    return *result;
+    return QtZpl::RenderResult{{std::move(result->image)}, std::move(result->diagnostics),
+                               std::move(result->fields)};
 }
 
 std::expected<QtZpl::RenderResult, QString> checkedRender(const QString& source, int dpi)
@@ -181,28 +172,40 @@ std::expected<Preview, QString> renderPreviewPage(const DesignDocument& document
 
 QList<SourceDiagnostic> sourceDiagnostics(const DesignDocument& document, int pageIndex)
 {
+    const auto localDiagnostic = [](const QString& code, const QString& message, int offset = -1) {
+        QtZpl::Diagnostic detail;
+        detail.severity = QtZpl::Severity::Error;
+        detail.code = code;
+        detail.message = message;
+        detail.offset = offset;
+        return SourceDiagnostic{message, offset, std::move(detail)};
+    };
     if (document.visualEditable) {
         const auto valid = validateForExport(document);
-        if (!valid) return {{valid.error(), -1}};
+        if (!valid) return {localDiagnostic(u"designer-export"_s, valid.error())};
     }
     const QString source = toZpl(document);
     if (source.size() > maximumSource || source.toUtf8().size() > maximumSource)
-        return {{u"ZPL превышает предел 8 МиБ в UTF-8."_s, -1}};
+        return {localDiagnostic(u"designer-source-limit"_s, u"ZPL превышает предел 8 МиБ в UTF-8."_s)};
     const auto parsed = QtZpl::parse(source);
-    if (!parsed) return {{parsed.error().message, static_cast<int>(parsed.error().offset)}};
+    if (!parsed) return {localDiagnostic(parsed.error().code, parsed.error().message,
+                                        static_cast<int>(parsed.error().offset))};
     QList<SourceDiagnostic> diagnostics;
     const auto append = [&diagnostics](const QtZpl::Diagnostic& diagnostic) {
         const auto text = diagnosticText(diagnostic);
         const int offset = static_cast<int>(diagnostic.offset);
         if (std::ranges::none_of(diagnostics, [&](const SourceDiagnostic& existing) {
-            return existing.text == text && existing.offset == offset;
-        })) diagnostics.append({text, offset});
+            return existing.detail.code == diagnostic.code && existing.detail.severity == diagnostic.severity
+                && existing.detail.message == diagnostic.message && existing.detail.offset == diagnostic.offset
+                && existing.detail.labelIndex == diagnostic.labelIndex && existing.detail.fieldId == diagnostic.fieldId
+                && existing.detail.sourceSpan == diagnostic.sourceSpan;
+        })) diagnostics.append({text, offset, diagnostic});
     };
     for (const auto& diagnostic : parsed->diagnostics()) append(diagnostic);
     qsizetype safetyOffset = -1;
     const QString safety = validateParsed(*parsed, &safetyOffset);
     if (!safety.isEmpty()) {
-        diagnostics.append({safety, static_cast<int>(safetyOffset)});
+        diagnostics.append(localDiagnostic(u"designer-source-safety"_s, safety, static_cast<int>(safetyOffset)));
         return diagnostics;
     }
     // The normal preview already supplies render diagnostics for editable
@@ -217,14 +220,17 @@ QList<SourceDiagnostic> sourceDiagnostics(const DesignDocument& document, int pa
     }
     // The diagnostic panel refers to the visible source, before placeholders
     // are expanded, so every offset still addresses the editor's exact text.
-    const auto rendered = checkedRenderPage(source, document.dpi, pageIndex);
+    QtZpl::RenderOptions options;
+    options.dpi = document.dpi;
+    const auto rendered = QtZpl::renderLabel(*parsed, pageIndex, options);
     if (rendered) {
         for (const auto& diagnostic : rendered->diagnostics) append(diagnostic);
     } else {
-        const int offset = pageIndex >= 0 && pageIndex < parsed->labels().size()
-            && !parsed->labels()[pageIndex].commands().isEmpty()
-            ? static_cast<int>(parsed->labels()[pageIndex].commands().first().offset) : -1;
-        diagnostics.append({rendered.error(), offset});
+        // RenderError identifies a page, not a source command. Do not invent a
+        // clickable position at ^XA for a failure whose location is unknown.
+        auto diagnostic = localDiagnostic(rendered.error().code, rendered.error().message);
+        if (rendered.error().labelIndex >= 0) diagnostic.detail.labelIndex = rendered.error().labelIndex;
+        diagnostics.append(std::move(diagnostic));
     }
     return diagnostics;
 }

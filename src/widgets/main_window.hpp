@@ -1,6 +1,7 @@
 #pragma once
 
 #include "design_document.hpp"
+#include "document_operations.hpp"
 #include "designer_theme.hpp"
 #include "workspace_preferences.hpp"
 #include "zpl_source_map.hpp"
@@ -26,8 +27,13 @@ class QUndoStack;
 namespace Designer {
 class LabelCanvas;
 class DocumentSession;
+class ElementSelection;
+class SourceEditorAdapter;
+class LayersList;
+class SourceDiagnosticsList;
 class PreviewWidget;
-class SelectionProperties;
+class PreviewCoordinator;
+class PropertiesPanel;
 class MainWindow final : public QMainWindow {
     Q_OBJECT
 public:
@@ -49,13 +55,11 @@ protected:
     void closeEvent(QCloseEvent* event) override;
     void changeEvent(QEvent* event) override;
 private:
-    friend class DocumentSession;
     void buildUi();
     void buildMenus();
     void buildCommandPanels(QMenu* viewMenu);
     void setEditorLayout(EditorLayout layout);
     void updateEditorPresentation();
-    void applyLiveSource();
     void setWorkspaceMode(bool focus);
     void applyWorkspaceLayout();
     void rememberWorkspaceSizes();
@@ -66,11 +70,9 @@ private:
     void positionCanvasDimensionsFooter();
     bool eventFilter(QObject* watched, QEvent* event) override;
     void restoreDocument(const DesignDocument& document);
-    void commitDocument(DesignDocument document, const QString& title, int selection = -2);
     void refreshProperties();
     void refreshLayers();
-    void editProperties();
-    void editBarcodeType();
+    void executeOperation(const EditOperation& operation, const QString& title, int selection = -2);
     void copyElements(bool cut = false);
     void pasteElements();
     void groupSelection(bool ungroup = false);
@@ -82,10 +84,11 @@ private:
     void editLabelSettings();
     void refreshPropertyUnits();
     void renameLayer();
-    void setLayerFlag(const QString& flag, bool value);
+    void setLayerFlag(LayerFlag flag, bool value);
     bool selectionLocked() const;
     void exportZpl();
     void refreshCleanPreview();
+    void presentPreview();
     void refreshSourceDiagnostics();
     void resizeElement(int index, QSize size);
     [[nodiscard]] QSize elementSize(int index) const;
@@ -93,7 +96,6 @@ private:
     void syncSelection();
     void syncSourceSelection(bool allowCaret = false);
     void syncDesignSelection(bool reveal = false);
-    bool sourceMatchesDocument();
     void showGs1Builder();
     bool showPlaceholderValues();
     void exportResolvedZpl();
@@ -116,28 +118,17 @@ private:
     void setNotice(const QString& text);
 
     DocumentSession* session_ = nullptr;
-    Preview preview_;
-    Preview printPreview_;
-    QString previewError_;
+    PropertiesPanel* propertiesPanel_ = nullptr;
+    ElementSelection* selection_ = nullptr;
     PreviewWidget* previewWidget_ = nullptr;
-    Preview cleanPreview_;
-    QString cleanPreviewError_;
-    int previewPage_ = 0;
+    PreviewCoordinator* previews_ = nullptr;
     int selected_ = -1;
     bool updating_ = false;
-    bool codePending_ = false;
-    bool sourceSelectionActive_ = false;
-    bool sourceCaretActive_ = false;
-    bool syncingSourceSelection_ = false;
-    QString mappedSource_;
-    int mappedSourceRevision_ = -1;
-    QList<SourceElementRange> sourceElementRanges_;
     QUndoStack* undo_ = nullptr;
     QAction* undoAction_ = nullptr;
     QAction* redoAction_ = nullptr;
     QAction* previewAction_ = nullptr;
-    QTimer* previewTimer_ = nullptr;
-    QTimer* sourceTimer_ = nullptr;
+    SourceEditorAdapter* sourceAdapter_ = nullptr;
     LabelCanvas* canvas_ = nullptr;
     QTabWidget* editorTabs_ = nullptr;
     QSplitter* editorSplitter_ = nullptr;
@@ -157,14 +148,11 @@ private:
     QWidget* inspectorSlot_ = nullptr;
     QWidget* inspectorCard_ = nullptr;
     QLabel* documentName_ = nullptr;
-    QLabel* objectSubtitle_ = nullptr;
-    QLabel* objectSymbol_ = nullptr;
     QLabel* layerCount_ = nullptr;
     QLabel* canvasSelection_ = nullptr;
     QWidget* canvasZoomControls_ = nullptr;
     QLabel* canvasZoomTitle_ = nullptr;
     QLabel* canvasDimensionsFooter_ = nullptr;
-    QWidget* contentSection_ = nullptr;
     QToolButton* fileButton_ = nullptr;
     QToolBar* documentCommandPanel_ = nullptr;
     QToolBar* editCommandPanel_ = nullptr;
@@ -177,65 +165,21 @@ private:
     QAction* darkThemeAction_ = nullptr;
     WorkspacePreferences workspacePreferences_;
     bool applyingWorkspace_ = false;
-    QListWidget* layers_ = nullptr;
+    LayersList* layers_ = nullptr;
     QPlainTextEdit* code_ = nullptr;
     QPlainTextEdit* diagnostics_ = nullptr;
-    QListWidget* sourceDiagnostics_ = nullptr;
-    SelectionProperties* selectionProperties_ = nullptr;
-    QPlainTextEdit* content_ = nullptr;
-    QLabel* typeTitle_ = nullptr;
+    SourceDiagnosticsList* sourceDiagnostics_ = nullptr;
     QLabel* dimensions_ = nullptr;
     QLabel* notice_ = nullptr;
     QLabel* zoomLabel_ = nullptr;
-    QLabel* sizeHint_ = nullptr;
-    QWidget* elementForm_ = nullptr;
     QSpinBox* labelWidth_ = nullptr;
     QSpinBox* labelHeight_ = nullptr;
     QComboBox* dpi_ = nullptr;
-    QSpinBox* x_ = nullptr;
-    QSpinBox* y_ = nullptr;
-    QSpinBox* width_ = nullptr;
-    QSpinBox* height_ = nullptr;
-    QSpinBox* thickness_ = nullptr;
-    QSpinBox* fontHeight_ = nullptr;
-    QSpinBox* fontWidth_ = nullptr;
-    QSpinBox* blockWidth_ = nullptr;
-    QSpinBox* blockLines_ = nullptr;
-    QSpinBox* blockSpacing_ = nullptr;
-    QSpinBox* blockIndent_ = nullptr;
-    QComboBox* blockAlignment_ = nullptr;
-    QComboBox* code128Mode_ = nullptr;
-    QComboBox* barcodeType_ = nullptr;
-    QComboBox* propertyUnits_ = nullptr;
-    QComboBox* qrCorrection_ = nullptr;
-    QSpinBox* pdfRowHeight_ = nullptr;
-    QSpinBox* pdfColumns_ = nullptr;
-    QSpinBox* pdfSecurity_ = nullptr;
-    QPushButton* qrPayload_ = nullptr;
-    QPushButton* tableEdit_ = nullptr;
-    QPushButton* barcodeOptions_ = nullptr;
-    QPushButton* advancedText_ = nullptr;
-    QCheckBox* whiteGraphic_ = nullptr;
-    QComboBox* diagonalDirection_ = nullptr;
     QCheckBox* layerLocked_ = nullptr;
     QCheckBox* layerVisible_ = nullptr;
     QCheckBox* layerPrintable_ = nullptr;
-    QCheckBox* interpretationAbove_ = nullptr;
-    QSpinBox* module_ = nullptr;
-    QSpinBox* threshold_ = nullptr;
-    QComboBox* orientation_ = nullptr;
-    QCheckBox* dither_ = nullptr;
-    QCheckBox* imageKeepAspectRatio_ = nullptr;
-    QCheckBox* geometryAspect_ = nullptr;
-    QPushButton* imageEdit_ = nullptr;
-    QCheckBox* reverse_ = nullptr;
-    QCheckBox* readable_ = nullptr;
-    QCheckBox* gs1_ = nullptr;
     QCheckBox* grid_ = nullptr;
     QCheckBox* snap_ = nullptr;
-    QPushButton* gs1Builder_ = nullptr;
-    QPushButton* placeholderValues_ = nullptr;
-    QLabel* gs1Status_ = nullptr;
     bool alignToLabel_ = false;
 };
 } // namespace Designer

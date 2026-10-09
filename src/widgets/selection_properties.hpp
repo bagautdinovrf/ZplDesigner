@@ -1,5 +1,6 @@
 #pragma once
 #include "design_document.hpp"
+#include "document_operations.hpp"
 #include "canvas_layout.hpp"
 #include <QWidget>
 #include <QSet>
@@ -14,7 +15,7 @@ public:
     void setSelection(const DesignDocument& document, const QList<int>& indices);
     void setDisplayUnits(CanvasUnit unit, int dpi);
 signals:
-    void changesRequested(QMap<QString, int> values);
+    void changesRequested(Designer::SelectionPropertyValues values);
 private:
     QFormLayout* form_;
     QMap<QString, QSpinBox*> fields_;
@@ -22,5 +23,4 @@ private:
     QString selectionState_;
     QSet<QString> changedFields_;
 };
-bool applySelectionProperties(DesignDocument& document, const QList<int>& indices, const QMap<QString, int>& values);
 }
