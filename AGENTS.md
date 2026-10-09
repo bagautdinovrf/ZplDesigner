@@ -4,7 +4,8 @@ Native Qt Widgets editor. Read this file and README.md before modifying it.
 
 - Use Qt 6.11 or newer and the latest supported C++ dialect. Windows builds
   explicitly use MSVC `/std:c++latest`; CMake's MSVC metadata remains CXX23 for
-  compatibility with CMake 3.30. Other compilers use C++26.
+  compatibility with CMake 3.30. For other compilers, CMake selects the newest
+  supported standard it recognizes; C++23 support is the minimum prerequisite.
 - The sibling `../qt-zpl` owns parsing and rendering. Link `QtZpl::QtZpl` and
   generate every preview through that library. Do not introduce another renderer
   or remote service, and do not modify the sibling checkout as an incidental fix.
