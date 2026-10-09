@@ -80,6 +80,8 @@ private:
     QComboBox* blockAlignment_ = nullptr;
     QComboBox* code128Mode_ = nullptr;
     QComboBox* barcodeType_ = nullptr;
+    QComboBox* eacStyle_ = nullptr;
+    QLabel* eacHint_ = nullptr;
     QComboBox* propertyUnits_ = nullptr;
     QComboBox* qrCorrection_ = nullptr;
     QSpinBox* pdfRowHeight_ = nullptr;

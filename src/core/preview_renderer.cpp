@@ -87,7 +87,7 @@ std::expected<Preview, QString> renderPreviewImpl(const DesignDocument& template
     if (document.originalZpl.isEmpty())
         for (const auto& element : document.elements) {
             if (!element.printable) continue;
-            const auto error = validateElement(element, false);
+            const auto error = validateElement(element, false, document.dpi);
             if (!error.isEmpty()) return std::unexpected(error);
         }
     const auto rendered = checkedRenderPage(printerZpl(document, false), document.dpi, pageIndex);
@@ -123,12 +123,12 @@ std::expected<Preview, QString> renderPreviewImpl(const DesignDocument& template
         }
         if (element.type == ElementType::Box || element.type == ElementType::Line
             || element.type == ElementType::Ellipse || element.type == ElementType::Circle
-            || element.type == ElementType::Diagonal || element.type == ElementType::Table) {
+            || element.type == ElementType::Diagonal || element.type == ElementType::Table || element.type == ElementType::Eac) {
             const int height = element.type == ElementType::Circle ? element.width : element.height;
             const int justification = element.originJustification < 0 ? document.defaultJustification : element.originJustification;
-            const bool table = element.type == ElementType::Table;
-            const QRect logicalBounds(element.x - (!table && justification == 1 ? element.width : 0),
-                element.y - (!table && element.baselineOrigin ? height : 0), element.width, height);
+            const bool aggregate = element.type == ElementType::Table || element.type == ElementType::Eac;
+            const QRect logicalBounds(element.x - (!aggregate && justification == 1 ? element.width : 0),
+                element.y - (!aggregate && element.baselineOrigin ? height : 0), element.width, height);
             const QRect bounds = mapDocumentRect(document, logicalBounds);
             const QRect clipped = bounds.intersected(preview.image.rect());
             preview.bounds.append(clipped.isEmpty() ? bounds : clipped);

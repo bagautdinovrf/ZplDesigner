@@ -206,7 +206,7 @@ void DesignerExtensionsTests::hiddenObjectsAreSkippedWhenSelectingBehind() {
 void DesignerExtensionsTests::extendedPaletteAndBarcodeSettings() {
     MainWindow window; window.show();
     const auto* palette = window.findChild<QListWidget*>(u"elementPalette"_s); QVERIFY(palette);
-    QCOMPARE(palette->count(), 11); // Pointer, eight drawing elements, and two barcode families.
+    QCOMPARE(palette->count(), 12); // Pointer, nine drawing elements (including EAC), and two barcode families.
     QCOMPARE(palette->item(0)->data(Qt::UserRole).toInt(), -1);
     QCOMPARE(palette->item(0)->text(), u"Выбор объектов"_s);
     DesignDocument document; auto matrix = makeElement(ElementType::DataMatrix);

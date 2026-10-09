@@ -15,7 +15,7 @@ inline constexpr qsizetype maximumField = 1024;
 bool safeSize(int width, int height);
 bool safeCoordinate(int value);
 QString diagnosticText(const QtZpl::Diagnostic& value);
-QString validateElement(const Element& element, bool preservePlaceholders = true);
+QString validateElement(const Element& element, bool preservePlaceholders = true, int dpi = 0);
 QString validateParsed(const QtZpl::Document& parsed, qsizetype* errorOffset = nullptr);
 std::expected<QtZpl::RenderResult, QString> checkedRender(const QString& source, int dpi);
 // Avoid serializing editor snapshots for each canvas/isolated-field render.

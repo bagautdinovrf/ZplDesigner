@@ -13,6 +13,7 @@
 #include "layers_list.hpp"
 #include "diagnostics_list.hpp"
 #include "element_presentation.hpp"
+#include "eac_mark.hpp"
 #include "properties_panel.hpp"
 #include "workspace_widgets.hpp"
 #include "zpl_source_editor.hpp"
@@ -232,13 +233,15 @@ public:
         pointer->setData(Qt::UserRole, -1); pointer->setSizeHint({31, 32}); pointer->setToolTip(QStringLiteral("Выбор и перемещение объектов"));
         for (auto type : {ElementType::Text, ElementType::Box, ElementType::Line, ElementType::Circle,
                          ElementType::Ellipse, ElementType::Image, ElementType::Code128,
-                         ElementType::DataMatrix, ElementType::Table, ElementType::Diagonal}) {
+                         ElementType::DataMatrix, ElementType::Table, ElementType::Diagonal, ElementType::Eac}) {
             const auto name = type == ElementType::Code128 ? QStringLiteral("1D-код")
                 : type == ElementType::DataMatrix ? QStringLiteral("2D-код") : elementTypeName(type);
             auto* item = new QListWidgetItem(elementIcon(type), name, this);
             item->setData(Qt::UserRole, static_cast<int>(type));
             item->setSizeHint({31, 32});
-            item->setToolTip(isBarcodeType(type)
+            item->setToolTip(type == ElementType::Eac
+                ? QStringLiteral("Единый знак обращения EAC\nПеретащите на этикетку или нажмите дважды. Цвет и фон выбираются в свойствах.")
+                : isBarcodeType(type)
                 ? name + QStringLiteral("\nПеретащите на этикетку или нажмите дважды. Тип кода выбирается в свойствах.")
                 : name + QStringLiteral("\nПеретащите на этикетку или нажмите дважды"));
         }
@@ -1642,7 +1645,10 @@ void MainWindow::setLayerFlag(LayerFlag flag, bool value) {
 void MainWindow::addElement(ElementType type, QPoint position) {
     if (!session_->document().visualEditable) { setNotice(QStringLiteral("Этот ZPL редактируется во вкладке кода. Создайте новую этикетку для визуального дизайна.")); return; }
     if (type == ElementType::Image) { chooseImage(position); return; }
-    executeOperation(AddElement{makeElement(type, position)}, QStringLiteral("Добавить элемент"),
+    auto element = makeElement(type, position);
+    if (type == ElementType::Eac)
+        element.width = element.height = 2 * eacMinimumSize(session_->document().dpi, element.eacStyle);
+    executeOperation(AddElement{std::move(element)}, QStringLiteral("Добавить элемент"),
         static_cast<int>(session_->document().elements.size()));
 }
 

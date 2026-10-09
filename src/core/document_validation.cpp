@@ -3,6 +3,7 @@
 #include "gs1_data.hpp"
 #include "value_placeholders.hpp"
 #include "data_matrix_values.hpp"
+#include "eac_mark.hpp"
 
 #include <algorithm>
 #include <type_traits>
@@ -24,7 +25,7 @@ QString diagnosticText(const QtZpl::Diagnostic& value)
     return u"%1: %2"_s.arg(value.code, value.message);
 }
 
-QString validateElement(const Element& element, bool preservePlaceholders)
+QString validateElement(const Element& element, bool preservePlaceholders, int dpi)
 {
     if (!safeCoordinate(element.x) || !safeCoordinate(element.y)
         || !safeSize(element.width, element.height))
@@ -74,6 +75,18 @@ QString validateElement(const Element& element, bool preservePlaceholders)
         return u"Некорректные расширенные параметры штрихкода."_s;
     if (element.type == ElementType::MaxiCode && element.orientation != u'N')
         return u"MaxiCode имеет фиксированный размер и ориентацию ^BD."_s;
+    if (element.type == ElementType::Eac) {
+        if (static_cast<unsigned>(element.eacStyle) > static_cast<unsigned>(EacStyle::WhiteTransparent)
+            || element.width != element.height || element.width % eacGridUnits(element.eacStyle) != 0
+            || element.orientation != u'N' || element.reverse)
+            return u"Знак ЕАС должен сохранять квадратную сетку 9 × 9, без поворота и произвольной инверсии."_s;
+        if (dpi > 0 && element.width < eacMinimumSize(dpi, element.eacStyle))
+            return u"Базовый размер букв ЕАС должен быть не менее 5 мм при выбранном DPI."_s;
+        for (const auto& child : eacElements(element)) {
+            const auto error = validateElement(child, preservePlaceholders);
+            if (!error.isEmpty()) return error;
+        }
+    }
     if (element.type == ElementType::Table) {
         if (element.tableColumnWidths.isEmpty() || element.tableColumnWidths.size() > 12
             || element.tableRowHeights.isEmpty() || element.tableRowHeights.size() > 12
@@ -285,7 +298,7 @@ std::expected<void, QString> validateForExport(const DesignDocument& document, b
         qint64 graphicBytes = 0;
         for (const auto& element : document.elements) {
             if (!element.printable) continue;
-            const QString error = validateElement(element, preservePlaceholders);
+            const QString error = validateElement(element, preservePlaceholders, document.dpi);
             if (!error.isEmpty()) return std::unexpected(error);
             if (element.type == ElementType::Image) {
                 // Reject guaranteed overflow before raster conversion/allocation.

@@ -71,6 +71,8 @@ add_library(designer_core STATIC
     src/core/element_clipboard.hpp
     src/core/editor_metadata.cpp
     src/core/editor_metadata.hpp
+    src/core/eac_mark.cpp
+    src/core/eac_mark.hpp
     src/core/image_operations.cpp
     src/core/image_operations.hpp
     src/core/preview_pages.hpp
@@ -234,7 +236,7 @@ if(DESIGNER_BUILD_TESTS)
         add_test(NAME designer_${feature} COMMAND designer_${feature}_tests -o ${CMAKE_CURRENT_BINARY_DIR}/${feature}-results.txt,txt)
         set_tests_properties(designer_${feature} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 90)
     endforeach()
-    foreach(feature editor_panels source_editor_adapter preview_coordinator element_selection workspace window_geometry ui_translations split_editor projects table_barcodes designer_extensions printer_profiles extended_zpl canvas_transforms advanced_dialogs)
+    foreach(feature eac editor_panels source_editor_adapter preview_coordinator element_selection workspace window_geometry ui_translations split_editor projects table_barcodes designer_extensions printer_profiles extended_zpl canvas_transforms advanced_dialogs)
         qt_add_executable(designer_${feature}_tests tests/test_${feature}.cpp)
         target_link_libraries(designer_${feature}_tests PRIVATE Qt6::Test designer_widgets)
         designer_target_settings(designer_${feature}_tests)

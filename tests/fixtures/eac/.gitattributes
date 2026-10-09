@@ -1,0 +1,2 @@
+# Preserve the exact request bodies hashed in provenance.json.
+*.zpl -text

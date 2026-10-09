@@ -1,4 +1,5 @@
 #include "zpl_source_map.hpp"
+#include "eac_mark.hpp"
 
 #include <QtZpl/qtzpl.hpp>
 
@@ -13,7 +14,8 @@ QList<SourceElementRange> sourceElementRanges(const DesignDocument& document,
     for (qsizetype index = 0; index < document.elements.size(); ++index) {
         const auto& element = document.elements[index];
         if (!element.printable) continue;
-        const auto count = element.type == ElementType::Table ? tableElements(element).size() : 1;
+        const auto count = element.type == ElementType::Table ? tableElements(element).size()
+            : element.type == ElementType::Eac ? eacElements(element).size() : 1;
         for (qsizetype field = 0; field < count; ++field) fieldOwners.append(int(index));
     }
     if (fieldOwners.isEmpty()) return {};

@@ -3,6 +3,7 @@
 #include "preview_coordinator.hpp"
 #include "element_selection.hpp"
 #include "element_presentation.hpp"
+#include "eac_mark.hpp"
 #include "selection_properties.hpp"
 #include "workspace_widgets.hpp"
 #include "dot_spin_box.hpp"
@@ -70,6 +71,14 @@ PropertiesPanel::PropertiesPanel(DocumentSession* session, PreviewCoordinator* p
     barcodeType_->setObjectName(QStringLiteral("barcodeType"));
     contentLayout->insertWidget(1, propertyField(QStringLiteral("Тип кода"), barcodeType_, contentSection));
     connect(barcodeType_, &QComboBox::currentIndexChanged, this, &PropertiesPanel::editBarcodeType);
+    eacStyle_ = new QComboBox(properties);
+    eacStyle_->setObjectName(QStringLiteral("eacStyle"));
+    eacStyle_->addItem(QStringLiteral("Чёрный на белом"), static_cast<int>(EacStyle::BlackOnWhite));
+    eacStyle_->addItem(QStringLiteral("Белый на чёрном"), static_cast<int>(EacStyle::WhiteOnBlack));
+    eacStyle_->addItem(QStringLiteral("Чёрный без фона"), static_cast<int>(EacStyle::BlackTransparent));
+    eacStyle_->addItem(QStringLiteral("Белый без фона"), static_cast<int>(EacStyle::WhiteTransparent));
+    contentLayout->insertWidget(1, propertyField(QStringLiteral("Оформление"), eacStyle_, contentSection));
+    connect(eacStyle_, &QComboBox::currentIndexChanged, this, &PropertiesPanel::editProperties);
     x_ = dotSpin(QStringLiteral("elementX"), -4096, 4096, properties); geometryGrid->addWidget(propertyField(QStringLiteral("X"), x_, geometry), 0, 0);
     y_ = dotSpin(QStringLiteral("elementY"), -4096, 4096, properties); geometryGrid->addWidget(propertyField(QStringLiteral("Y"), y_, geometry), 0, 1);
     width_ = dotSpin(QStringLiteral("elementWidth"), 1, 4096, properties); geometryGrid->addWidget(propertyField(QStringLiteral("Ширина"), width_, geometry), 1, 0);
@@ -90,6 +99,10 @@ PropertiesPanel::PropertiesPanel(DocumentSession* session, PreviewCoordinator* p
         auto* row = new QWidget(contentSection); auto* layout = new QVBoxLayout(row); layout->setContentsMargins(0, 0, 0, 0); layout->addWidget(control);
         control->setProperty("propertyField", QVariant::fromValue<QObject*>(row)); contentLayout->addWidget(row);
     };
+    eacHint_ = caption(QString(), properties);
+    eacHint_->setObjectName(QStringLiteral("eacHint"));
+    eacHint_->setWordWrap(true);
+    primaryRow(eacHint_);
     gs1_->setObjectName(QStringLiteral("dataMatrixGs1")); primaryRow(gs1_);
     gs1Builder_ = new QPushButton(QStringLiteral("Мастер GS1…"), properties);
     gs1Builder_->setObjectName(QStringLiteral("gs1Builder")); primaryRow(gs1Builder_);
@@ -256,7 +269,13 @@ void PropertiesPanel::refresh() {
     if (valid) {
         const auto& e = session_->document().elements[selected_];
         const QSize size = elementSize(selected_);
+        const bool eac = e.type == ElementType::Eac;
+        const int minimumSize = eac ? eacMinimumSize(session_->document().dpi, e.eacStyle) : 1;
+        width_->setMinimum(minimumSize); height_->setMinimum(minimumSize);
+        width_->setSingleStep(eac ? eacGridUnits(e.eacStyle) : 1);
+        height_->setSingleStep(eac ? eacGridUnits(e.eacStyle) : 1);
         x_->setValue(e.x); y_->setValue(e.y); width_->setValue(size.width()); height_->setValue(size.height());
+        eacStyle_->setCurrentIndex(eacStyle_->findData(static_cast<int>(e.eacStyle)));
         if (content_->toPlainText() != e.text) content_->setPlainText(e.text);
         content_->setFixedHeight(e.text.contains(u'\n') || e.blockWidth > 0 ? 90 : 30);
         fontHeight_->setValue(e.fontHeight); fontWidth_->setValue(e.fontWidth); thickness_->setValue(e.thickness);
@@ -280,8 +299,19 @@ void PropertiesPanel::refresh() {
         const bool image = e.type == ElementType::Image;
         geometryAspect_->setEnabled(image && !selectionLocked() && !session_->hasPendingSource());
         geometryAspect_->setChecked(image ? e.imageKeepAspectRatio
-            : e.type == ElementType::Circle || e.type == ElementType::QrCode || e.type == ElementType::DataMatrix);
+            : eac || e.type == ElementType::Circle || e.type == ElementType::QrCode || e.type == ElementType::DataMatrix);
         auto* form = elementForm_->findChild<QFormLayout*>(QStringLiteral("detailForm"));
+        setPropertyRowVisible(form, eacStyle_, eac);
+        setPropertyRowVisible(form, eacHint_, eac);
+        if (eac) {
+            eacHint_->setText(QStringLiteral("По решению КТС № 711: знак не менее 5 мм, пропорции фиксированы. "
+                "Шаг размера: %1 dots. DPI макета (%2) должен совпадать с DPI печати. Обеспечьте контраст с фоном.")
+                .arg(eacGridUnits(e.eacStyle)).arg(session_->document().dpi)
+                + (e.eacStyle == EacStyle::WhiteOnBlack
+                    ? QStringLiteral("\nРазмер включает чёрное поле вокруг знака.") : QString()));
+            eacStyle_->setToolTip(QStringLiteral("Варианты «без фона» не добавляют фоновый квадрат. "
+                "Для белого знака нужен тёмный фон."));
+        }
         setPropertyRowVisible(form, barcodeType_, code);
         if (code) {
             const QSignalBlocker blocker(barcodeType_);
@@ -321,10 +351,10 @@ void PropertiesPanel::refresh() {
         setPropertyRowVisible(form, code128Mode_, e.type == ElementType::Code128);
         setPropertyRowVisible(form, interpretationAbove_, isLinearBarcodeType(e.type) && e.humanReadable
             && e.type != ElementType::Codabar && e.type != ElementType::Code39);
-        setPropertyRowVisible(form, thickness_, !text && !code && !image && !table);
-        setPropertyRowVisible(form, whiteGraphic_, !text && !code && !image && !table);
+        setPropertyRowVisible(form, thickness_, !text && !code && !image && !table && !eac);
+        setPropertyRowVisible(form, whiteGraphic_, !text && !code && !image && !table && !eac);
         setPropertyRowVisible(form, diagonalDirection_, e.type == ElementType::Diagonal);
-        setPropertyRowVisible(form, reverse_, !table);
+        setPropertyRowVisible(form, reverse_, !table && !eac);
         setPropertyRowVisible(form, module_, code && e.type != ElementType::MaxiCode);
         setPropertyRowVisible(form, orientation_, (text || code) && e.type != ElementType::MaxiCode);
         orientation_->setEnabled(!e.useDefaultOrientation);
@@ -347,6 +377,7 @@ void PropertiesPanel::refresh() {
             : QStringLiteral("Размер меняет шрифт. Фактические размеры округляются до точек."))
             : code ? QStringLiteral("Модуль: %1 мм. Размер меняется целыми модулями; пропорции QR и DataMatrix сохраняются.")
                 .arg(e.moduleWidth * 25.4 / session_->document().dpi, 0, 'f', 3)
+            : eac ? QStringLiteral("Ширина и высота изменяются вместе. Минимальный размер зависит от DPI печати.")
             : e.type == ElementType::Circle ? QStringLiteral("Ширина и высота задают один диаметр.")
             : QStringLiteral("Меняйте размеры здесь или тяните маркеры рамки на холсте."));
         sizeHint_->setText(sizeHint_->text() + QStringLiteral("\nФактически: %1 × %2 dots = %3 × %4 мм.")
@@ -369,6 +400,12 @@ void PropertiesPanel::editProperties() {
     if (updating_ || selectionLocked() || selectedIndices().size() != 1 || !session_->document().visualEditable || selected_ < 0 || selected_ >= session_->document().elements.size()) return;
     ElementProperties e;
     e.x = x_->value(); e.y = y_->value();
+    if (session_->document().elements[selected_].type == ElementType::Eac) {
+        e.eacStyle = static_cast<EacStyle>(eacStyle_->currentData().toInt());
+        emit editRequested(UpdateElementProperties{session_->document().elements[selected_].id, std::move(e)},
+            QStringLiteral("Изменить свойства EAC"));
+        return;
+    }
     e.text = content_->toPlainText(); e.fontHeight = fontHeight_->value(); e.fontWidth = fontWidth_->value();
     e.thickness = thickness_->value(); e.moduleWidth = module_->value(); e.threshold = threshold_->value();
     e.orientation = orientation_->currentData().toString().at(0);

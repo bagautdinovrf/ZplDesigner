@@ -3,6 +3,7 @@
 #include "gs1_data.hpp"
 #include "value_placeholders.hpp"
 #include "editor_metadata.hpp"
+#include "eac_mark.hpp"
 
 #include <algorithm>
 #include <type_traits>
@@ -206,6 +207,12 @@ static QString serializeElement(const Element& input, bool preservePlaceholders,
     if (resetDirection) result += u"^FWN,%1"_s.arg(defaultJustification);
     if (element.reverse && element.type != ElementType::Image) result += u"^FR"_s;
     switch (element.type) {
+    case ElementType::Eac: {
+        result.clear();
+        for (const auto& child : eacElements(element))
+            result += serializeElement(child, preservePlaceholders, false, false, defaultOrientation, defaultJustification);
+        return result;
+    }
     case ElementType::Table: {
         result.clear();
         for (const auto& child : tableElements(element))
@@ -948,7 +955,7 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
             // Non-printing objects were structurally checked by the snapshot
             // decoder; incomplete barcode input must remain editable there.
             if (!element.printable) continue;
-            const auto invalid = validateElement(element);
+            const auto invalid = validateElement(element, true, result.dpi);
             if (!invalid.isEmpty()) raw(invalid);
         }
     }

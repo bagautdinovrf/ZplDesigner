@@ -1,5 +1,6 @@
 #include "project_codec.hpp"
 #include "element_clipboard.hpp"
+#include "eac_mark.hpp"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -169,6 +170,9 @@ std::expected<ProjectState, QString> decodeProject(const QByteArray& bytes)
         auto decoded = decodeElements(QJsonDocument(objects).toJson(QJsonDocument::Compact));
         if (!decoded) return std::unexpected(u"Не удалось прочитать объекты проекта: %1"_s.arg(decoded.error()));
         document.elements = std::move(*decoded);
+        for (const auto& element : document.elements)
+            if (element.type == ElementType::Eac && element.width < eacMinimumSize(document.dpi, element.eacStyle))
+                return std::unexpected(u"Базовый размер букв ЕАС в проекте меньше 5 мм при выбранном DPI."_s);
     }
     if (!document.visualEditable && !document.elements.isEmpty()) return invalid();
     if (!root.value(u"source"_s).isObject()) return invalid();

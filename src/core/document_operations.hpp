@@ -17,6 +17,7 @@ struct ElementProperties {
     std::optional<int> fontHeight, fontWidth, thickness, moduleWidth, threshold;
     std::optional<QChar> orientation;
     std::optional<bool> humanReadable, reverse, dither, graphicWhite;
+    std::optional<EacStyle> eacStyle;
     std::optional<QChar> diagonalDirection;
     std::optional<bool> imageKeepAspectRatio, gs1;
     std::optional<int> blockWidth, blockMaxLines, blockLineSpacing, blockHangingIndent;

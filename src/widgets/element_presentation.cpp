@@ -1,8 +1,10 @@
 #include "element_presentation.hpp"
+#include "eac_mark.hpp"
 
 #include <QApplication>
 #include <QIconEngine>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPalette>
 
 namespace Designer {
@@ -57,6 +59,15 @@ public:
         p.drawRect(5, 6, 23, 21);
         p.drawLine(5, 13, 28, 13); p.drawLine(5, 20, 28, 20);
         p.drawLine(13, 6, 13, 27); p.drawLine(21, 6, 21, 27); break;
+    case ElementType::Eac: {
+        const auto path = eacMarkPath();
+        const auto bounds = path.boundingRect();
+        p.translate(5, 5);
+        p.scale(22 / bounds.width(), 22 / bounds.height());
+        p.translate(-bounds.left(), -bounds.top());
+        p.fillPath(path, color);
+        break;
+    }
     }
     painter->restore();
     }
@@ -74,6 +85,7 @@ QString elementSymbol(ElementType type) {
     if (type == ElementType::Circle || type == ElementType::Ellipse) return QStringLiteral("○");
     if (type == ElementType::Line || type == ElementType::Diagonal) return QStringLiteral("╱");
     if (type == ElementType::Image) return QStringLiteral("▧");
+    if (type == ElementType::Eac) return QStringLiteral("EAC");
     return QStringLiteral("□");
 }
 

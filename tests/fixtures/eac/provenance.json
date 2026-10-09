@@ -1,0 +1,66 @@
+{
+  "generated_on": "2026-10-09",
+  "renderer": "Labelary public API",
+  "endpoint": "https://api.labelary.com/v1/printers/8dpmm/labels/0.7882x0.7882/0/",
+  "geometry_source": "https://eec.eaeunion.org/upload/medialibrary/986/PologenieEAC.pdf",
+  "geometry_figure": 3,
+  "inverse_margin_figure": 4,
+  "construction": "Independent manually transcribed rectangles, integer module of 10 dots; no Designer-generated ZPL.",
+  "label": "160x160 dots with black backing rectangle (0,0,60,160). Each element starts at (20,20).",
+  "styles": "Glyph is 90x90 dots. white-on-black adds a 10-dot border, 110x110 total; its glyph starts at (30,30).",
+  "purpose": "Test normative shape, spacing, opaque background clearing, inverse border, and transparent overlaps.",
+  "files": [
+    {
+      "style": "black-on-white",
+      "size": [
+        160,
+        160
+      ],
+      "gray_levels": [
+        0,
+        255
+      ],
+      "zpl_sha256": "c53021a5af3a857b934a55f0cf45e0823a5d7d90618a7b3b1c9b275735b79d88",
+      "png_sha256": "b6eef93a5dd079230c17d5eb71e7ae889e1a2f9b855c1c5c61cb0395adec6098"
+    },
+    {
+      "style": "white-on-black",
+      "size": [
+        160,
+        160
+      ],
+      "gray_levels": [
+        0,
+        255
+      ],
+      "zpl_sha256": "176008d910d43679304c79fabe9b194669712dfa44ea17dabeadc8b037dc3c05",
+      "png_sha256": "a3d961c984e14d8797465739a5c27a5e79acdf24971a8bb82860f9c723097b92"
+    },
+    {
+      "style": "black-transparent",
+      "size": [
+        160,
+        160
+      ],
+      "gray_levels": [
+        0,
+        255
+      ],
+      "zpl_sha256": "fb797383419b7e4ec68a49e1946d46aeacbcd9d7b0bab27126efb40e63cca0ac",
+      "png_sha256": "06af826844381fdfd4447bc58ba69ffcfe86018e3bd79aefad3a61aa03cbd9df"
+    },
+    {
+      "style": "white-transparent",
+      "size": [
+        160,
+        160
+      ],
+      "gray_levels": [
+        0,
+        255
+      ],
+      "zpl_sha256": "fe9ce63c8c169ec374c314dd1271a5651347353c06f253530668a47c1290c53a",
+      "png_sha256": "f95f745fad6d862349cd7ba306e14cc21edd058abb7c5d0bde4b4bb755148b90"
+    }
+  ]
+}

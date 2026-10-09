@@ -1,4 +1,5 @@
 #include "design_document.hpp"
+#include "eac_mark.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -39,6 +40,7 @@ QString elementTypeName(ElementType type)
     case ElementType::Aztec: return QStringLiteral("Aztec");
     case ElementType::MaxiCode: return QStringLiteral("MaxiCode");
     case ElementType::Diagonal: return QStringLiteral("Диагональная линия");
+    case ElementType::Eac: return QStringLiteral("ЕАС");
     }
     return {};
 }
@@ -177,6 +179,7 @@ Element makeElement(ElementType type, QPoint position)
     else if (type == ElementType::Code128) { element.text = QStringLiteral("1234567890"); }
     else if (type == ElementType::Image) { element.width = element.height = 160; }
     else if (type == ElementType::Table) { element.width = 240; element.height = 96; element.fontHeight = 24; }
+    else if (type == ElementType::Eac) { element.width = element.height = 90; }
     else if (type == ElementType::Ean13) { element.text = QStringLiteral("5901234123457"); element.moduleWidth = 2; }
     else if (type == ElementType::Ean8) { element.text = QStringLiteral("96385074"); element.moduleWidth = 2; }
     else if (type == ElementType::UpcA) { element.text = QStringLiteral("036000291452"); element.moduleWidth = 2; }
@@ -245,6 +248,12 @@ Element resizedElement(const Element& element, QSize requestedSize, QSize curren
             resized.width = requestedSize.width();
             resized.height = requestedSize.height();
         }
+        break;
+    }
+    case ElementType::Eac: {
+        const int side = widthControlsUniformResize(requestedSize, currentRenderedSize)
+            ? requestedSize.width() : requestedSize.height();
+        resized.width = resized.height = eacSizeForRequest(side, 203, element.eacStyle);
         break;
     }
     case ElementType::Circle:
@@ -424,6 +433,10 @@ DesignDocument sampleDocument()
     auto dataMatrix = makeElement(ElementType::DataMatrix, {664, 680});
     dataMatrix.text = QStringLiteral("(01)09506000134352(21)NL-00001"); dataMatrix.moduleWidth = 5;
     document.elements.append(dataMatrix);
+    auto eac = makeElement(ElementType::Eac, {713, 218});
+    eac.name = QStringLiteral("ЕАС — единый знак обращения");
+    eac.width = eac.height = 54;
+    document.elements.append(eac);
     addText(QStringLiteral("ДЕМО / МОРСКАЯ КОЛЛЕКЦИЯ / 0001"), {314, 758}, 12);
     return document;
 }

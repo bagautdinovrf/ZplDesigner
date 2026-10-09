@@ -1,4 +1,5 @@
 #include "document_session.hpp"
+#include "eac_mark.hpp"
 #include <QSignalBlocker>
 #include "data_matrix_values.hpp"
 #include "project_codec.hpp"
@@ -274,6 +275,8 @@ QList<int> validIndices(const DesignDocument& document, const QList<int>& indice
 QRectF renderedRect(const DesignDocument& document, int index, const QList<QRect>& bounds)
 {
     const auto& element = document.elements[index];
+    if (element.type == ElementType::Eac)
+        return mapDocumentRect(document, {element.x, element.y, element.width, element.height});
     // Preview clips shapes at the label edge for hit testing. Layout needs their
     // full geometry, so centering an overflowing box really brings it inside.
     if (element.type == ElementType::Box || element.type == ElementType::Line
@@ -629,7 +632,10 @@ std::expected<bool, QString> DocumentSession::applySource(DocumentRevision expec
         emit pendingSourceChanged();
         return std::unexpected(sourceError_);
     }
-    imported->dpi = document_.dpi;
+    // EAC metadata carries the DPI used to enforce its physical minimum.
+    // Keep that portable value when applying a complete saved label.
+    if (std::ranges::none_of(imported->elements, [](const Element& element) { return element.type == ElementType::Eac; }))
+        imported->dpi = document_.dpi;
     // Observers of the synchronous undo command must see the completed transition.
     pendingSource_.reset();
     sourceError_.clear();
@@ -803,6 +809,9 @@ QList<int> DocumentSession::pasteElements(const QList<Element>& elements, QPoint
             element.groupId = groups.value(element.groupId);
         }
         element.x += offset.x(); element.y += offset.y();
+        if (element.type == ElementType::Eac)
+            element.width = element.height = eacSizeForRequest(
+                std::max(element.width, element.height), next.dpi, element.eacStyle);
         element.sourcePrefix.clear(); element.sourceZpl.clear();
         element.sourceState.clear(); element.sourceSignature.clear();
         inserted.append(int(next.elements.size()));
@@ -957,7 +966,8 @@ std::expected<void, QString> DocumentSession::open(const QString& path)
     if (!parsed)
         return std::unexpected(parsed.error());
     auto layout = readLayout(path, bytes);
-    parsed->dpi = layout.dpi;
+    if (std::ranges::none_of(parsed->elements, [](const Element& element) { return element.type == ElementType::Eac; }))
+        parsed->dpi = layout.dpi;
     resetState(std::move(*parsed), path, std::move(layout.settings), std::move(layout.warning));
     return {};
 }

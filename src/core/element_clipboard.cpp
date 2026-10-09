@@ -77,6 +77,7 @@ QByteArray encodeElements(const QList<Element>& elements)
         object[u"pdf417Columns"_s] = element.pdf417Columns;
         object[u"pdf417Security"_s] = element.pdf417Security;
         object[u"pdf417RowHeight"_s] = element.pdf417RowHeight;
+        if (element.type == ElementType::Eac) object[u"eacStyle"_s] = int(element.eacStyle);
         if (element.type == ElementType::Table) {
             QJsonArray columns, rows, cells;
             for (const int size : element.tableColumnWidths) columns.append(size);
@@ -115,8 +116,15 @@ std::expected<QList<Element>, QString> decodeElements(const QByteArray& data)
         if (!value.isObject()) return invalid();
         const auto object = value.toObject();
         const auto type = object.value(u"type"_s).toInt(-1);
-        if (type < 0 || type > int(ElementType::Diagonal)) return invalid();
+        if (type < 0 || type > int(ElementType::Eac)) return invalid();
         Element element = makeElement(static_cast<ElementType>(type));
+        if (element.type == ElementType::Eac) {
+            const auto style = object.value(u"eacStyle"_s);
+            const int value = style.toInt(-1);
+            if (!style.isDouble() || style.toDouble() != value || value < 0
+                || value > int(EacStyle::WhiteTransparent)) return invalid();
+            element.eacStyle = static_cast<EacStyle>(value);
+        }
         for (const auto& field : integers) {
             const auto number = object.value(QLatin1StringView(field.name));
             if (!number.isDouble() || !std::isfinite(number.toDouble())

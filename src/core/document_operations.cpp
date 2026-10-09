@@ -1,4 +1,5 @@
 #include "document_operations.hpp"
+#include "eac_mark.hpp"
 
 #include <QSet>
 
@@ -73,6 +74,10 @@ bool validProperties(const Element& before, const ElementProperties& values)
         return !value || *value == current || oneOf(value, allowed);
     };
     return number(values.x, before.x, -4096, 4096) && number(values.y, before.y, -4096, 4096)
+        && (!values.eacStyle || (before.type == ElementType::Eac
+            && static_cast<unsigned>(*values.eacStyle) <= static_cast<unsigned>(EacStyle::WhiteTransparent)))
+        && (before.type != ElementType::Eac
+            || ((!values.orientation || *values.orientation == u'N') && (!values.reverse || !*values.reverse)))
         && number(values.fontHeight, before.fontHeight, 1, 512) && number(values.fontWidth, before.fontWidth, 0, 512)
         && number(values.thickness, before.thickness, 1, 4096) && number(values.moduleWidth, before.moduleWidth, 1, 10)
         && number(values.threshold, before.threshold, 0, 255) && character(values.orientation, before.orientation, u"NRIB")
@@ -104,6 +109,7 @@ bool updateProperties(Element& element, const ElementProperties& values)
     changed |= assign(element.reverse, values.reverse);
     changed |= assign(element.dither, values.dither);
     changed |= assign(element.graphicWhite, values.graphicWhite);
+    changed |= assign(element.eacStyle, values.eacStyle);
     changed |= assign(element.diagonalDirection, values.diagonalDirection);
     changed |= assign(element.imageKeepAspectRatio, values.imageKeepAspectRatio);
     if (values.gs1) changed |= assign(element.gs1, element.type == ElementType::DataMatrix && *values.gs1);
@@ -251,7 +257,15 @@ OperationResult applyOperation(DesignDocument& document, const UpdateElementProp
     if (element.type == ElementType::MaxiCode && request.properties.orientation
         && *request.properties.orientation != element.orientation && *request.properties.orientation != u'N')
         return std::unexpected(QStringLiteral("MaxiCode имеет фиксированную ориентацию."));
-    const bool changed = updateProperties(element, request.properties);
+    bool changed = updateProperties(element, request.properties);
+    if (element.type == ElementType::Eac) {
+        const auto& before = document.elements[*index];
+        const int requested = before.eacStyle == element.eacStyle ? element.width
+            : element.width / eacGridUnits(before.eacStyle) * eacGridUnits(element.eacStyle);
+        const int size = eacSizeForRequest(requested, document.dpi, element.eacStyle);
+        changed |= assign(element.width, size);
+        changed |= assign(element.height, size);
+    }
     return replaceChanged(document, *index, std::move(element), changed);
 }
 
@@ -307,6 +321,8 @@ OperationResult applyOperation(DesignDocument& document, const ResizeElement& re
     auto effective = before;
     if (effective.useDefaultOrientation) effective.orientation = document.defaultOrientation;
     auto resized = resizedElement(effective, request.requestedSize, request.currentSize);
+    if (resized.type == ElementType::Eac)
+        resized.width = resized.height = eacSizeForRequest(resized.width, document.dpi, resized.eacStyle);
     resized.orientation = before.orientation;
     const bool changed = resized.width != before.width || resized.height != before.height
         || resized.fontWidth != before.fontWidth || resized.fontHeight != before.fontHeight
@@ -384,6 +400,12 @@ OperationResult applyOperation(DesignDocument& document, const UpdateLabelSettin
     changed |= assign(next.printMirror, request.printMirror);
     changed |= assign(next.printInverted, request.printInverted);
     changed |= assign(next.labelReverse, request.labelReverse);
+    for (auto& element : next.elements) {
+        if (element.type != ElementType::Eac) continue;
+        const int size = eacSizeForRequest(element.width, next.dpi, element.eacStyle);
+        changed |= assign(element.width, size);
+        changed |= assign(element.height, size);
+    }
     if (changed) {
         next.originalZpl.clear();
         document = std::move(next);
@@ -397,14 +419,20 @@ OperationResult applyOperation(DesignDocument& document, const AddElement& reque
         return std::unexpected(QStringLiteral("Добавление доступно только в визуальном режиме."));
     if (document.elements.size() >= 200)
         return std::unexpected(QStringLiteral("На этикетке уже 200 элементов — предел текущей версии."));
-    const auto& element = request.element;
+    auto element = request.element;
     if (element.id.isNull() || std::ranges::any_of(document.elements, [&](const Element& existing) {
         return existing.id == element.id;
     })) return std::unexpected(QStringLiteral("Идентификатор нового элемента должен быть уникальным."));
-    if (static_cast<unsigned>(element.type) > static_cast<unsigned>(ElementType::Diagonal)
+    if (static_cast<unsigned>(element.type) > static_cast<unsigned>(ElementType::Eac)
         || element.width < 1 || element.width > 4096 || element.height < 1 || element.height > 4096
         || element.x < -4096 || element.x > 4096 || element.y < -4096 || element.y > 4096)
         return std::unexpected(QStringLiteral("Недопустимый тип или геометрия нового элемента."));
+    if (element.type == ElementType::Eac) {
+        if (static_cast<unsigned>(element.eacStyle) > static_cast<unsigned>(EacStyle::WhiteTransparent)
+            || element.orientation != u'N' || element.reverse)
+            return std::unexpected(QStringLiteral("Недопустимые параметры знака ЕАС."));
+        element.width = element.height = eacSizeForRequest(std::max(element.width, element.height), document.dpi, element.eacStyle);
+    }
     document.elements.append(element);
     document.originalZpl.clear();
     return true;

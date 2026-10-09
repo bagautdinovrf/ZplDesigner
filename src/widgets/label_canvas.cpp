@@ -1,5 +1,6 @@
 #include "label_canvas.hpp"
 #include "designer_theme.hpp"
+#include "eac_mark.hpp"
 
 #include <QCursor>
 #include <QDragEnterEvent>
@@ -125,12 +126,12 @@ QRectF displayRect(const DesignDocument& document, const QRectF& rect)
 
 QRect logicalFallbackBounds(const DesignDocument& document, const Element& element)
 {
-    const bool table = element.type == ElementType::Table;
+    const bool aggregate = element.type == ElementType::Table || element.type == ElementType::Eac;
     const int width = std::max(1, element.width);
     const int height = std::max(1, element.type == ElementType::Circle ? element.width : element.height);
     const int justification = element.originJustification < 0 ? document.defaultJustification : element.originJustification;
-    return {element.x - (!table && justification == 1 ? width : 0),
-            element.y - (!table && element.baselineOrigin ? height : 0), width, height};
+    return {element.x - (!aggregate && justification == 1 ? width : 0),
+            element.y - (!aggregate && element.baselineOrigin ? height : 0), width, height};
 }
 
 std::optional<ElementType> droppedElement(const QMimeData* mime)
@@ -140,7 +141,7 @@ std::optional<ElementType> droppedElement(const QMimeData* mime)
     bool valid = false;
     const int value = QString::fromUtf8(mime->data(elementMime)).toInt(&valid);
     if (!valid || value < static_cast<int>(ElementType::Text)
-        || value > static_cast<int>(ElementType::Diagonal))
+        || value > static_cast<int>(ElementType::Eac))
         return std::nullopt;
     return static_cast<ElementType>(value);
 }
@@ -185,6 +186,7 @@ bool sameGestureElement(const Element& before, const Element& after)
         && before.interpretationAbove == after.interpretationAbove
         && before.code128CheckDigit == after.code128CheckDigit && before.barcodeRatio == after.barcodeRatio
         && before.threshold == after.threshold && before.dither == after.dither
+        && before.eacStyle == after.eacStyle
         && before.image == after.image;
 }
 
@@ -669,7 +671,7 @@ bool LabelCanvas::keepsResizeAspectRatio() const
     const auto& element = m_document.elements[m_selectedIndex];
     return element.type == ElementType::Circle || element.type == ElementType::QrCode
         || element.type == ElementType::DataMatrix || element.type == ElementType::Aztec
-        || element.type == ElementType::Gs1DataBar
+        || element.type == ElementType::Gs1DataBar || element.type == ElementType::Eac
         || (element.type == ElementType::Image && element.imageKeepAspectRatio);
 }
 
@@ -881,6 +883,9 @@ QSize LabelCanvas::resizedDimensions(QPointF delta, bool bypass) const
         if (m_resizeHandle != ResizeHandle::Right && !qFuzzyIsNull(delta.y()))
             height = snapped(height + delta.y(), false);
     }
+    const auto& element = m_document.elements[m_selectedIndex];
+    if (element.type == ElementType::Eac)
+        width = height = eacSizeForRequest(width, m_document.dpi, element.eacStyle);
     return {width, height};
 }
 

@@ -13,7 +13,8 @@
 namespace Designer {
 enum class ElementType { Text, Box, Line, Ellipse, Circle, Code128, QrCode, DataMatrix, Image,
                          Table, Ean13, Ean8, UpcA, UpcE, Code39, Pdf417, Codabar,
-                         Code93, Interleaved2of5, Industrial2of5, Gs1DataBar, MicroPdf417, Aztec, MaxiCode, Diagonal };
+                         Code93, Interleaved2of5, Industrial2of5, Gs1DataBar, MicroPdf417, Aztec, MaxiCode, Diagonal, Eac };
+enum class EacStyle { BlackOnWhite, WhiteOnBlack, BlackTransparent, WhiteTransparent };
 struct Element {
     QUuid id = QUuid::createUuid();
     QUuid groupId;
@@ -40,6 +41,7 @@ struct Element {
     QChar textDirection = u'H';
     int characterSpacing = 0;
     bool graphicWhite = false;
+    EacStyle eacStyle = EacStyle::BlackOnWhite;
     QChar diagonalDirection = u'R';
     int moduleWidth = 3;
     double barcodeRatio = 3.0;

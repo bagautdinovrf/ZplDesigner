@@ -1,10 +1,12 @@
 #include "editor_metadata.hpp"
 #include "element_clipboard.hpp"
+#include "eac_mark.hpp"
 #include <QtZpl/qtzpl.hpp>
 #include <QCryptographicHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <algorithm>
 
 namespace Designer {
 using namespace Qt::StringLiterals;
@@ -38,7 +40,7 @@ QString writeEditorMetadata(const DesignDocument& document, QString source)
 {
     bool modern = source.contains(modernPrefix);
     for (const auto& element : document.elements)
-        modern |= element.type == ElementType::Table || element.locked || !element.editorVisible || !element.printable
+        modern |= element.type == ElementType::Table || element.type == ElementType::Eac || element.locked || !element.editorVisible || !element.printable
             || element.name != elementTypeName(element.type) || (isBarcodeType(element.type) && element.useDefaultOrientation);
     if (modern) {
         source = withoutMetadata(std::move(source));
@@ -58,7 +60,9 @@ QString writeEditorMetadata(const DesignDocument& document, QString source)
         // printer body here would silently lose hidden objects and table data.
         if (bytes.isEmpty()) return {};
         const auto snapshot = QJsonDocument::fromJson(bytes).object();
-        const QJsonObject metadata{{u"snapshot"_s, snapshot}, {u"sha256"_s, digest(source)}};
+        QJsonObject metadata{{u"snapshot"_s, snapshot}, {u"sha256"_s, digest(source)}};
+        if (std::ranges::any_of(document.elements, [](const Element& element) { return element.type == ElementType::Eac; }))
+            metadata[u"dpi"_s] = document.dpi;
         const auto encoded = QJsonDocument(metadata).toJson(QJsonDocument::Compact).toBase64();
         const auto parsed = QtZpl::parse(source);
         if (!parsed || parsed->labels().size() != 1) return source;
@@ -119,17 +123,24 @@ bool restoreEditorMetadata(DesignDocument& document, const QString& source)
             const auto decoded = decodeElements(QJsonDocument(object.value(u"snapshot"_s).toObject()).toJson(QJsonDocument::Compact));
             if (!decoded) return false;
             auto restored = document;
+            if (object.contains(u"dpi"_s)) {
+                const auto value = object.value(u"dpi"_s);
+                const int dpi = value.toInt(-1);
+                if (!value.isDouble() || value.toDouble() != dpi || (dpi != 203 && dpi != 300 && dpi != 600)) return false;
+                restored.dpi = dpi;
+            }
             restored.elements.clear(); restored.sourceOrder.clear();
             auto sourceElements = document.elements;
             qsizetype index = 0;
             for (auto element : *decoded) {
                 if (element.printable) {
-                    const auto count = element.type == ElementType::Table ? tableElements(element).size() : 1;
+                    const auto count = element.type == ElementType::Table ? tableElements(element).size()
+                        : element.type == ElementType::Eac ? eacElements(element).size() : 1;
                     if (index + count > sourceElements.size()) return false;
                     const auto& first = sourceElements[index];
                     element.id = first.id; element.sourcePrefix = first.sourcePrefix;
                     element.sourceState = first.sourceState;
-                    if (element.type == ElementType::Table) {
+                    if (element.type == ElementType::Table || element.type == ElementType::Eac) {
                         QString fields;
                         for (qsizetype field = 0; field < count; ++field) {
                             const auto& part = sourceElements[index + field];
