@@ -209,6 +209,17 @@ public:
         return QProxyStyle::subElementRect(element, option, widget);
     }
 
+    SubControl hitTestComplexControl(ComplexControl control, const QStyleOptionComplex* option,
+                                    const QPoint& position, const QWidget* widget) const override
+    {
+        // Display-only editable combos need the native arrow handling across the
+        // whole field, including Qt's popup release and mouse-replay safeguards.
+        if (control == CC_ComboBox && widget && widget->property("popupOnWholeControl").toBool()
+            && option->rect.contains(position))
+            return SC_ComboBoxArrow;
+        return QProxyStyle::hitTestComplexControl(control, option, position, widget);
+    }
+
     QRect subControlRect(ComplexControl control, const QStyleOptionComplex* option,
                          SubControl subControl, const QWidget* widget) const override
     {

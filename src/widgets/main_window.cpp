@@ -654,6 +654,8 @@ void MainWindow::buildUi() {
     zoom->setEditable(true);
     zoom->setInsertPolicy(QComboBox::NoInsert);
     zoom->lineEdit()->setReadOnly(true);
+    zoom->lineEdit()->setAttribute(Qt::WA_TransparentForMouseEvents);
+    zoom->setProperty("popupOnWholeControl", true);
     zoom->setCompleter(nullptr);
     auto zoomFont = zoom->font(); zoomFont.setPixelSize(11); zoom->lineEdit()->setFont(zoomFont);
     zoom->addItem(QStringLiteral("Вписать"), 0);
