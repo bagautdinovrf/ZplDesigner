@@ -2,6 +2,7 @@
 #include "design_internal.hpp"
 #include "data_matrix_values.hpp"
 #include "preview_pages.hpp"
+#include "zpl_source_map.hpp"
 
 #include <QCache>
 #include <QMutex>
@@ -25,7 +26,8 @@ std::expected<QtZpl::Document, QString> checkedParse(const QString& source)
     return *parsed;
 }
 
-std::expected<QtZpl::RenderResult, QString> checkedRenderPage(const QString& source, int dpi, int pageIndex)
+std::expected<QtZpl::RenderResult, QString> checkedRenderPage(const QString& source, int dpi, int pageIndex,
+                                                             bool fieldGeometry = false)
 {
     const auto parsed = checkedParse(source);
     if (!parsed) return std::unexpected(parsed.error());
@@ -33,6 +35,7 @@ std::expected<QtZpl::RenderResult, QString> checkedRenderPage(const QString& sou
         return std::unexpected(u"Номер этикетки вне диапазона."_s);
     QtZpl::RenderOptions options;
     options.dpi = dpi;
+    options.collectFieldGeometry = fieldGeometry;
     // Render the exact parsed snapshot. Slicing normalized command text used
     // to lose spelling/CRLF information and require guessed offset rebasing.
     auto result = QtZpl::renderLabel(*parsed, pageIndex, options);
@@ -48,55 +51,57 @@ std::expected<QtZpl::RenderResult, QString> checkedRender(const QString& source,
 
 } // namespace Internal
 namespace {
-QRect inkBounds(const QImage& image)
-{
-    int left = image.width(), top = image.height(), right = -1, bottom = -1;
-    for (int y = 0; y < image.height(); ++y) {
-        const auto* row = reinterpret_cast<const QRgb*>(image.constScanLine(y));
-        for (int x = 0; x < image.width(); ++x)
-            if (qGray(row[x]) < 128) {
-                left = std::min(left, x); right = std::max(right, x);
-                top = std::min(top, y); bottom = y;
-            }
-    }
-    return right >= left ? QRect(QPoint(left, top), QPoint(right, bottom)) : QRect{};
-}
-
-// One field rendered alone on an otherwise empty label: its ink, and the first
-// error a printer preview would reject it for.
-struct IsolatedField {
-    QRect ink;
-    QString error;
-};
-
-// Every preview refresh measures each text, barcode and image field alone. A
-// canvas drag changes one origin, so the other fields' isolated sources are
-// unchanged; the same source and dpi always render the same, so their results
-// are reused instead of repeating one full-label render per field.
-IsolatedField renderIsolatedField(const QString& source, int dpi)
+// The first error a printer preview would reject one barcode for, rendered
+// alone on an otherwise empty label; the editor canvas then hides only that
+// code. The same source and dpi always give the same answer, so unchanged codes
+// are not rendered again while another field is dragged or edited.
+QString isolatedFieldError(const QString& source, int dpi)
 {
     static QMutex mutex;
     // Cost is key length: bounded memory even for embedded graphics.
-    static QCache<QString, IsolatedField> cache(maximumSource);
+    static QCache<QString, QString> cache(maximumSource);
     const QString key = QString::number(dpi) + u'\n' + source;
     {
         const QMutexLocker lock(&mutex);
         if (const auto* cached = cache.object(key)) return *cached;
     }
-    IsolatedField field;
+    QString error;
     const auto rendered = checkedRender(source, dpi);
-    if (!rendered) field.error = rendered.error();
+    if (!rendered) error = rendered.error();
     else {
         for (const auto& diagnostic : rendered->diagnostics)
             if (diagnostic.severity == QtZpl::Severity::Error) {
-                field.error = diagnosticText(diagnostic);
+                error = diagnosticText(diagnostic);
                 break;
             }
-        if (!rendered->labels.isEmpty()) field.ink = inkBounds(rendered->labels.first());
     }
     const QMutexLocker lock(&mutex);
-    cache.insert(key, new IsolatedField(field), key.size());
-    return field;
+    cache.insert(key, new QString(error), key.size());
+    return error;
+}
+
+// Painted bounds of each element, taken from the render pass that produced the
+// raster, in its final coordinates and before clipping to the label. QtZpl
+// reports every drawing command with the ^FO...^FS segment containing it, and
+// printable elements own their segments in source order. Returns no bounds
+// when the segments do not match the model; callers then use model geometry.
+QList<QRect> paintedElementBounds(const DesignDocument& document, const QList<QtZpl::FieldGeometry>& fields)
+{
+    QList<int> owners;
+    for (qsizetype index = 0; index < document.elements.size(); ++index)
+        if (document.elements[index].printable)
+            owners.insert(owners.size(), elementFieldCount(document.elements[index]), int(index));
+    QList<QRect> bounds(document.elements.size());
+    qsizetype segment = -1;
+    qsizetype segmentStart = -1;
+    for (const auto& field : fields) {
+        if (field.field.sourceSpan.start != segmentStart) {
+            segmentStart = field.field.sourceSpan.start;
+            if (++segment >= owners.size()) return {};
+        }
+        bounds[owners[segment]] |= field.paintBounds;
+    }
+    return segment + 1 == owners.size() ? bounds : QList<QRect>{};
 }
 
 std::expected<Preview, QString> renderPreviewImpl(const DesignDocument& templateDocument, bool editor, int pageIndex = 0)
@@ -130,7 +135,8 @@ std::expected<Preview, QString> renderPreviewImpl(const DesignDocument& template
             const auto error = validateElement(element, false, document.dpi);
             if (!error.isEmpty()) return std::unexpected(error);
         }
-    const auto rendered = checkedRenderPage(printerZpl(document, false), document.dpi, pageIndex);
+    const auto rendered = checkedRenderPage(printerZpl(document, false), document.dpi, pageIndex,
+                                            document.visualEditable);
     if (!rendered) return std::unexpected(rendered.error());
     if (rendered->labels.isEmpty()) return std::unexpected(u"QtZpl не вернул изображение этикетки."_s);
     Preview preview;
@@ -156,7 +162,9 @@ std::expected<Preview, QString> renderPreviewImpl(const DesignDocument& template
         preview.diagnostics.removeDuplicates();
         return preview;
     }
-    for (const auto& element : document.elements) {
+    const auto painted = paintedElementBounds(document, rendered->fields);
+    for (qsizetype index = 0; index < document.elements.size(); ++index) {
+        const auto& element = document.elements[index];
         if (!element.printable) {
             preview.bounds.append(mapDocumentRect(document, QRect(element.x, element.y, element.width, element.height)));
             continue;
@@ -169,21 +177,14 @@ std::expected<Preview, QString> renderPreviewImpl(const DesignDocument& template
             const bool aggregate = element.type == ElementType::Table || element.type == ElementType::Eac;
             const QRect logicalBounds(element.x - (!aggregate && justification == 1 ? element.width : 0),
                 element.y - (!aggregate && element.baselineOrigin ? height : 0), element.width, height);
-            const QRect bounds = mapDocumentRect(document, logicalBounds);
-            const QRect clipped = bounds.intersected(preview.image.rect());
-            preview.bounds.append(clipped.isEmpty() ? bounds : clipped);
+            preview.bounds.append(mapDocumentRect(document, logicalBounds));
             continue;
         }
-        Element visible = element;
-        visible.reverse = false;
-        DesignDocument single;
-        single.width = document.width; single.height = document.height; single.dpi = document.dpi;
-        single.defaultOrientation = document.defaultOrientation;
-        single.defaultJustification = document.defaultJustification;
-        single.elements.append(visible);
-        QRect bounds = renderIsolatedField(printerZpl(single, false), single.dpi).ink;
-        if (bounds.isEmpty()) bounds = QRect(element.x, element.y, std::max(8, element.width), std::max(8, element.height));
-        preview.bounds.append(mapDocumentRect(document, bounds));
+        // Text, codes and images: what QtZpl painted, already in output coordinates.
+        QRect bounds = painted.value(index);
+        if (bounds.isEmpty())
+            bounds = mapDocumentRect(document, QRect(element.x, element.y, std::max(8, element.width), std::max(8, element.height)));
+        preview.bounds.append(bounds);
     }
     preview.diagnostics.removeDuplicates();
     return preview;
@@ -313,7 +314,7 @@ std::expected<Preview, QString> renderEditorPreview(const DesignDocument& docume
             if (!resolved) error = resolved.error();
             else {
                 error = validateElement(resolved->elements.first(), false);
-                if (error.isEmpty()) error = renderIsolatedField(printerZpl(*resolved, false), document.dpi).error;
+                if (error.isEmpty()) error = isolatedFieldError(printerZpl(*resolved, false), document.dpi);
             }
         }
         if (!error.isEmpty()) {

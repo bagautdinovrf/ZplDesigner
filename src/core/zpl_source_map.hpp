@@ -10,6 +10,10 @@ struct SourceElementRange {
     int elementIndex = -1;
 };
 
+// Physical ^FO...^FS fields a printable element writes to printer ZPL: one per
+// table or EAC part, otherwise exactly one. Fields keep the element order.
+qsizetype elementFieldCount(const Element& element);
+
 // Call when an applied document/source changes, then cache for cursor selection.
 // source must be the document's toZpl() output, with the editor's newline
 // normalization already applied. Offsets use UTF-16 positions in that exact

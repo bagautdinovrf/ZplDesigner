@@ -1328,18 +1328,8 @@ void LabelCanvas::paintGeometryLabel(QPainter* painter, const QColor& accent, co
         // The numbers are those written in ^FO/^FT. Rendered ink often starts
         // elsewhere (glyph bearings, symbol offsets, baselines, right anchors,
         // label reflection), so a cross marks that origin when it leaves the
-        // frame's corner, and the chip stays above both.
-        const QPointF mapped = viewportTransform().map(displayPoint(m_document, QPointF(origin)));
-        const QPointF anchor(std::round(mapped.x()), std::round(mapped.y()));
-        qreal chipTop = top;
-        if (anchor != QPointF(left, top)) {
-            const QPointF center = anchor + QPointF(0.5, 0.5);
-            painter->setRenderHint(QPainter::Antialiasing, false);
-            painter->setPen(cosmeticPen(accent.darker(125)));
-            painter->drawLine(center - QPointF(4, 0), center + QPointF(4, 0));
-            painter->drawLine(center - QPointF(0, 4), center + QPointF(0, 4));
-            chipTop = std::min(top, anchor.y() - 4);
-        }
+        // frame's corner. The chip keeps a fixed gap above the frame whatever
+        // the element's size; the cross is painted last so it stays visible.
         // Axis letters are quieter than the numbers they name.
         const std::array<std::pair<QString, bool>, 4> parts{{
             {QStringLiteral("X "), true}, {locale().toString(origin.x()), false},
@@ -1348,7 +1338,7 @@ void LabelCanvas::paintGeometryLabel(QPainter* painter, const QColor& accent, co
         qreal width = 0;
         for (const auto& [part, quiet] : parts) width += metrics.horizontalAdvance(part);
         QRectF chip(0, 0, std::ceil(width) + 14, 18);
-        chip.moveBottomLeft({left, chipTop - 6});
+        chip.moveBottomLeft({left, top - 6});
         chip = placed(chip);
         drawChipFrame(chip, Qt::black, {});
         painter->setFont(textFont);
@@ -1357,6 +1347,15 @@ void LabelCanvas::paintGeometryLabel(QPainter* painter, const QColor& accent, co
             painter->setPen(quiet ? QColor(255, 255, 255, 150) : QColor(Qt::white));
             painter->drawText(pen, part);
             pen.rx() += metrics.horizontalAdvance(part);
+        }
+        const QPointF mapped = viewportTransform().map(displayPoint(m_document, QPointF(origin)));
+        const QPointF anchor(std::round(mapped.x()), std::round(mapped.y()));
+        if (anchor != QPointF(left, top)) {
+            const QPointF center = anchor + QPointF(0.5, 0.5);
+            painter->setRenderHint(QPainter::Antialiasing, false);
+            painter->setPen(cosmeticPen(accent.darker(125)));
+            painter->drawLine(center - QPointF(4, 0), center + QPointF(4, 0));
+            painter->drawLine(center - QPointF(0, 4), center + QPointF(0, 4));
         }
     }
     painter->restore();

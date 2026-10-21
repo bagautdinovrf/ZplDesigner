@@ -5,6 +5,12 @@
 
 namespace Designer {
 
+qsizetype elementFieldCount(const Element& element)
+{
+    return element.type == ElementType::Table ? tableElements(element).size()
+        : element.type == ElementType::Eac ? eacElements(element).size() : 1;
+}
+
 QList<SourceElementRange> sourceElementRanges(const DesignDocument& document,
                                             const QString& source)
 {
@@ -14,8 +20,7 @@ QList<SourceElementRange> sourceElementRanges(const DesignDocument& document,
     for (qsizetype index = 0; index < document.elements.size(); ++index) {
         const auto& element = document.elements[index];
         if (!element.printable) continue;
-        const auto count = element.type == ElementType::Table ? tableElements(element).size()
-            : element.type == ElementType::Eac ? eacElements(element).size() : 1;
+        const auto count = elementFieldCount(element);
         for (qsizetype field = 0; field < count; ++field) fieldOwners.append(int(index));
     }
     if (fieldOwners.isEmpty()) return {};

@@ -1,6 +1,6 @@
 #include "editor_metadata.hpp"
 #include "element_clipboard.hpp"
-#include "eac_mark.hpp"
+#include "zpl_source_map.hpp"
 #include <QtZpl/qtzpl.hpp>
 #include <QCryptographicHash>
 #include <QJsonArray>
@@ -134,8 +134,7 @@ bool restoreEditorMetadata(DesignDocument& document, const QString& source)
             qsizetype index = 0;
             for (auto element : *decoded) {
                 if (element.printable) {
-                    const auto count = element.type == ElementType::Table ? tableElements(element).size()
-                        : element.type == ElementType::Eac ? eacElements(element).size() : 1;
+                    const auto count = elementFieldCount(element);
                     if (index + count > sourceElements.size()) return false;
                     const auto& first = sourceElements[index];
                     element.id = first.id; element.sourcePrefix = first.sourcePrefix;
