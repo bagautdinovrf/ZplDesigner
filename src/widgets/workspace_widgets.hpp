@@ -27,8 +27,17 @@ protected:
     void paintEvent(QPaintEvent* event) override;
 };
 
+// Each line elides to the available width, so long names never widen a panel.
+class ElidedLabel final : public QLabel {
+public:
+    using QLabel::QLabel;
+    QSize minimumSizeHint() const override;
+protected:
+    void paintEvent(QPaintEvent*) override;
+};
+
 QLabel* caption(const QString& text, QWidget* parent = nullptr, int size = 10);
-QLabel* heading(const QString& text, QWidget* parent = nullptr);
+QLabel* heading(const QString& text, QWidget* parent = nullptr, bool elide = false);
 QLabel* sectionHeading(const QString& text, QWidget* parent);
 QWidget* propertyField(const QString& text, QWidget* control, QWidget* parent);
 void setPropertyRowVisible(QFormLayout* form, QWidget* control, bool visible);

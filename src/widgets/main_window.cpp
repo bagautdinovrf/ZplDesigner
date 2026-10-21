@@ -449,14 +449,17 @@ void MainWindow::buildUi() {
     auto* labelHeading = heading(QStringLiteral("Формат этикетки"), labelPage); labelHeading->setContentsMargins(13, 12, 13, 12); labelLayout->addWidget(labelHeading);
     auto* formatSection = new WorkspaceSurface(labelPage); auto* formatLayout = new QVBoxLayout(formatSection); formatLayout->setContentsMargins(13, 12, 13, 12); formatLayout->setSpacing(10);
     auto* formatGrid = new QGridLayout; formatGrid->setSpacing(10); formatLayout->addLayout(formatGrid);
-    labelWidth_ = spin(QStringLiteral("labelWidth"), 32, 4096, labelPage);
-    formatGrid->addWidget(propertyField(QStringLiteral("Ширина, dots"), labelWidth_, formatSection), 0, 0);
-    labelHeight_ = spin(QStringLiteral("labelHeight"), 32, 4096, labelPage);
-    formatGrid->addWidget(propertyField(QStringLiteral("Высота, dots"), labelHeight_, formatSection), 0, 1);
+    labelWidth_ = static_cast<DotSpinBox*>(dotSpin(QStringLiteral("labelWidth"), 32, 4096, labelPage));
+    formatGrid->addWidget(propertyField(QStringLiteral("Ширина"), labelWidth_, formatSection), 0, 0);
+    labelHeight_ = static_cast<DotSpinBox*>(dotSpin(QStringLiteral("labelHeight"), 32, 4096, labelPage));
+    formatGrid->addWidget(propertyField(QStringLiteral("Высота"), labelHeight_, formatSection), 0, 1);
+    // Units follow the «Объект» selector, which is not visible on this page,
+    // so the fields always name their unit.
+    for (auto* field : {labelWidth_, labelHeight_}) field->setProperty("hideUnitSuffix", false);
     dpi_ = new QComboBox(labelPage); dpi_->setObjectName(QStringLiteral("dpi"));
     for (int dpi : {203, 300, 600}) dpi_->addItem(QStringLiteral("%1 dpi").arg(dpi), dpi);
     formatGrid->addWidget(propertyField(QStringLiteral("Разрешение"), dpi_, formatSection), 1, 0, 1, 2);
-    auto* formatHint = caption(QStringLiteral("Геометрия хранится в точках принтера.\nМасштаб не меняет размер этикетки."), formatSection);
+    auto* formatHint = caption(QStringLiteral("Геометрия хранится в точках принтера. Единицы — как на вкладке «Объект».\nМасштаб не меняет размер этикетки."), formatSection);
     formatHint->setWordWrap(true); formatLayout->addWidget(formatHint);
     auto* fullFormat = new QPushButton(QStringLiteral("Формат…"), labelPage);
     fullFormat->setToolTip(QStringLiteral("Размеры в миллиметрах и стандартные форматы этикеток"));
@@ -552,13 +555,14 @@ void MainWindow::buildUi() {
         canvasHeaderRow->addWidget(button); connect(button, &QPushButton::toggled, check, &QCheckBox::setChecked); connect(check, &QCheckBox::toggled, button, &QPushButton::setChecked);
     }
     auto* canvasSetup = new QPushButton(QStringLiteral("···"), canvasHeader); canvasSetup->setObjectName(QStringLiteral("canvasSetup")); canvasSetup->setProperty("compact", true); canvasSetup->setFixedWidth(25);
-    canvasSetup->setToolTip(QStringLiteral("Сетка, линейки, направляющие и безопасный отступ")); canvasHeaderRow->addWidget(canvasSetup);
+    canvasSetup->setToolTip(QStringLiteral("Сетка, линейки, направляющие, безопасный отступ и подписи выделения")); canvasHeaderRow->addWidget(canvasSetup);
     connect(canvasSetup, &QPushButton::clicked, this, &MainWindow::showCanvasLayout);
     auto* propertiesTool = addTool(canvasHeaderRow, propertiesAction_, true);
     propertiesTool->setToolTip(QStringLiteral("Показать или скрыть свойства · Ctrl+Alt+P"));
     centerLayout->addWidget(canvasHeader);
     canvas_ = new LabelCanvas(editorTabs_); canvas_->setObjectName(QStringLiteral("labelCanvas"));
     canvas_->viewport()->installEventFilter(this);
+    canvas_->setGeometryLabelsVisible(workspacePreferences_.geometrySizes, workspacePreferences_.geometryCoordinates);
     editorTabs_->addTab(canvas_, QStringLiteral("  Дизайн  "));
     sourceSlot_ = new QWidget(editorTabs_);
     auto* sourceSlotLayout = new QVBoxLayout(sourceSlot_);
@@ -1371,6 +1375,7 @@ void MainWindow::restoreDocument(const DesignDocument& document) {
     selected_ = canvas_->selectedIndex();
     updating_ = true;
     labelWidth_->setValue(session_->document().width); labelHeight_->setValue(session_->document().height);
+    refreshPropertyUnits(); // Millimetre text depends on the document DPI.
     const int dpiIndex = dpi_->findData(session_->document().dpi); dpi_->setCurrentIndex(dpiIndex < 0 ? 0 : dpiIndex);
     canvas_->setEnabled(!session_->hasPendingSource());
     labelWidth_->setEnabled(document.visualEditable && !session_->hasPendingSource()); labelHeight_->setEnabled(document.visualEditable && !session_->hasPendingSource()); dpi_->setEnabled(document.visualEditable && !session_->hasPendingSource());
@@ -1415,7 +1420,7 @@ void MainWindow::presentPreview() {
     else if (!previews_->printError().isEmpty()) setNotice(QStringLiteral("Не удалось построить превью: %1").arg(previews_->printError()));
     else if (!session_->document().visualEditable) setNotice(QStringLiteral("Режим исходного ZPL: команды сохранены. Для правок откройте вкладку «Код ZPL»."));
     else if (!notes.isEmpty()) setNotice(QStringLiteral("Превью содержит замечания (%1). Откройте панель «Проверка».").arg(notes.size()));
-    else setNotice(QStringLiteral("✓ Превью без ошибок      %1 объектов      Координаты: %2")
+    else setNotice(QStringLiteral("✓ Превью без ошибок      %1 объектов      Единицы: %2")
         .arg(session_->document().elements.size()).arg(session_->layoutSettings().unit == CanvasUnit::Dots ? QStringLiteral("dots") : QStringLiteral("мм")));
 }
 
@@ -1623,7 +1628,11 @@ void MainWindow::editLabelSettings() {
     executeOperation(labelSettings(dialog.editedDocument()), QStringLiteral("Преобразования этикетки"));
 }
 
-void MainWindow::refreshPropertyUnits() { propertiesPanel_->refreshUnits(); }
+void MainWindow::refreshPropertyUnits() {
+    propertiesPanel_->refreshUnits();
+    for (auto* field : {labelWidth_, labelHeight_})
+        field->setDisplayUnits(session_->layoutSettings().unit, session_->document().dpi);
+}
 
 bool MainWindow::selectionLocked() const {
     return std::ranges::any_of(canvas_->selectedIndices(), [this](int index) { return session_->document().elements[index].locked; });
@@ -1878,8 +1887,17 @@ void MainWindow::refreshCanvasLayout() {
 void MainWindow::showCanvasLayout() {
     CanvasLayoutDialog dialog(session_->layoutSettings(),
         {session_->document().width, session_->document().height}, session_->document().dpi, this);
-    if (dialog.exec() == QDialog::Accepted)
-        session_->setLayoutSettings(dialog.settings(), QStringLiteral("Настройки холста"));
+    dialog.setGeometryLabelsVisible(workspacePreferences_.geometrySizes, workspacePreferences_.geometryCoordinates);
+    if (dialog.exec() != QDialog::Accepted) return;
+    // Selection labels are workspace preferences: persisted per user, outside label history.
+    if (workspacePreferences_.geometrySizes != dialog.geometrySizesVisible()
+        || workspacePreferences_.geometryCoordinates != dialog.geometryCoordinatesVisible()) {
+        workspacePreferences_.geometrySizes = dialog.geometrySizesVisible();
+        workspacePreferences_.geometryCoordinates = dialog.geometryCoordinatesVisible();
+        canvas_->setGeometryLabelsVisible(workspacePreferences_.geometrySizes, workspacePreferences_.geometryCoordinates);
+        persistWorkspace();
+    }
+    session_->setLayoutSettings(dialog.settings(), QStringLiteral("Настройки холста"));
 }
 
 bool MainWindow::applySource() {

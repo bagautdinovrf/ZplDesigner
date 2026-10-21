@@ -9,6 +9,7 @@
 #include <QDropEvent>
 #include <QFileInfo>
 #include <QFocusEvent>
+#include <QFontMetricsF>
 #include <QHash>
 #include <QImageReader>
 #include <QKeyEvent>
@@ -309,6 +310,7 @@ void LabelCanvas::syncDocument(const DesignDocument& document)
     const bool pageChanged = !m_hasDocument || document.width != m_document.width
         || document.height != m_document.height;
     m_document = document;
+    m_hoverIndex = -1;
     m_preview.bounds = std::move(pendingBounds);
     m_preview.elementErrors = std::move(pendingErrors);
     m_hasDocument = true;
@@ -349,6 +351,7 @@ void LabelCanvas::setDocument(const DesignDocument& document, const Preview& pre
     }
     m_document = document;
     m_preview = preview;
+    m_hoverIndex = -1;
     m_hasDocument = true;
     if (!preserveGesture)
         m_interaction = Interaction::None;
@@ -972,9 +975,7 @@ void LabelCanvas::paintSmartGuides(QPainter* painter, const QRectF& bounds) cons
         const QPoint tick = side < 2 ? QPoint(0, 3) : QPoint(3, 0);
         painter->drawLine(from - tick, from + tick);
         painter->drawLine(to - tick, to + tick);
-        const QString text = m_layout.unit == CanvasUnit::Millimeters
-            ? tr("%1 мм").arg(locale().toString(distance.dots * 25.4 / std::max(1, m_document.dpi), 'f', 2))
-            : tr("%1 dots").arg(locale().toString(qRound(distance.dots)));
+        const QString text = formatCanvasLength(distance.dots, m_layout.unit, m_document.dpi, locale());
         const QSize size(painter->fontMetrics().horizontalAdvance(text) + 8,
                          painter->fontMetrics().height() + 4);
         const QPoint center = (from + to) / 2;
@@ -993,20 +994,45 @@ void LabelCanvas::paintSmartGuides(QPainter* painter, const QRectF& bounds) cons
 
 void LabelCanvas::drawBackground(QPainter* painter, const QRectF&)
 {
-    painter->save();
-    // The surrounding workspace texture uses screen coordinates. The paper
-    // grid is a separate foreground annotation aligned to printer dots.
+    const qreal ratio = viewport()->devicePixelRatioF();
+    const PaperLayerKey key{viewport()->size(), ratio, viewportTransform(), m_preview.image.cacheKey(),
+        m_document.width, m_document.height, m_hasDocument, m_layout.gridVisible, m_layout.gridStep,
+        designerColor(DesignerColor::Canvas).rgba(), designerColor(DesignerColor::Grid).rgba(),
+        paperInk(palette(), QPalette::Mid).rgba()};
+    const auto layerPixmap = [&] {
+        QPixmap pixmap(static_cast<int>(std::ceil(viewport()->width() * ratio)),
+                       static_cast<int>(std::ceil(viewport()->height() * ratio)));
+        pixmap.setDevicePixelRatio(ratio);
+        return pixmap;
+    };
+    const PaperLayerKey backdropKey{key.size, key.ratio, {}, 0, 0, 0, false, key.grid, 0, key.canvas, key.dots, 0};
+    if (m_backdrop.isNull() || backdropKey != m_backdropKey) {
+        m_backdrop = layerPixmap();
+        QPainter backdrop(&m_backdrop);
+        paintWorkspaceBackdrop(&backdrop, viewport()->rect(), m_layout.gridVisible);
+        m_backdropKey = backdropKey;
+    }
+    if (m_paperLayer.isNull() || key != m_paperLayerKey) {
+        m_paperLayer = layerPixmap();
+        QPainter layer(&m_paperLayer);
+        paintPaperLayer(&layer);
+        m_paperLayerKey = key;
+    }
     painter->save();
     // Remove only the scene transform. QWidget::render/grab may provide an
     // outer transform that must remain intact for this viewport's decorations.
     painter->setWorldTransform(viewportTransform().inverted(), true);
-    paintWorkspaceBackdrop(painter, viewport()->rect(), m_layout.gridVisible);
+    painter->drawPixmap(QPointF(0, 0), m_paperLayer);
     painter->restore();
-    if (!m_hasDocument) {
-        painter->restore();
-        return;
-    }
+}
 
+// Paints in viewport coordinates. The surrounding workspace texture stays
+// fixed to the screen; the paper, raster and grid follow printer dots.
+void LabelCanvas::paintPaperLayer(QPainter* painter) const
+{
+    painter->drawPixmap(QPointF(0, 0), m_backdrop);
+    if (!m_hasDocument) return;
+    painter->setTransform(viewportTransform());
     const QRectF page = labelRect();
     const qreal scale = transform().m11();
     painter->setPen(Qt::NoPen);
@@ -1016,15 +1042,34 @@ void LabelCanvas::drawBackground(QPainter* painter, const QRectF&)
                                         spread / scale, spread / scale).translated(0, 3 / scale));
     }
     painter->fillRect(page, Qt::white);
-    painter->save();
     painter->setClipRect(page);
     painter->setRenderHint(QPainter::SmoothPixmapTransform, false);
+    if (!m_layout.gridVisible) {
+        painter->drawImage(QPointF(0, 0), m_preview.image);
+        return;
+    }
+    // Keep the visible grid legible while zoomed out without changing the
+    // actual printer-dot snapping step. Paint only visible paper lines.
+    int step = m_layout.gridStep;
+    while (step * scale < 8.0) step *= 2;
+    const QRectF visible = page.intersected(mapToScene(viewport()->rect()).boundingRect());
+    QList<QLineF> lines;
+    for (qreal x = std::ceil(visible.left() / step) * step; x <= visible.right(); x += step)
+        lines.append(QLineF(x, visible.top(), x, visible.bottom()));
+    for (qreal y = std::ceil(visible.top() / step) * step; y <= visible.bottom(); y += step)
+        lines.append(QLineF(visible.left(), y, visible.right(), y));
+    painter->setBrush(Qt::NoBrush);
+    painter->setRenderHint(QPainter::Antialiasing, false);
+    painter->setPen(cosmeticPen(translucent(paperInk(palette(), QPalette::Mid), 60)));
+    painter->drawLines(lines);
+    // Multiplying the raster over the ruled paper keeps printed black pixels
+    // intact, like multiplying the grid over the raster, but in one image pass
+    // instead of thousands of single-pixel spans. The QtZpl image is unchanged.
+    painter->setCompositionMode(QPainter::CompositionMode_Multiply);
     painter->drawImage(QPointF(0, 0), m_preview.image);
-    painter->restore();
-    painter->restore();
 }
 
-void LabelCanvas::drawForeground(QPainter* painter, const QRectF& exposed)
+void LabelCanvas::drawForeground(QPainter* painter, const QRectF&)
 {
     if (!m_hasDocument)
         return;
@@ -1037,26 +1082,6 @@ void LabelCanvas::drawForeground(QPainter* painter, const QRectF& exposed)
     painter->save();
     painter->setClipRect(page);
     painter->setBrush(Qt::NoBrush);
-    if (m_layout.gridVisible) {
-        // Keep the visible grid legible while zoomed out without changing the
-        // actual printer-dot snapping step. Paint only exposed paper lines.
-        int step = m_layout.gridStep;
-        while (step * scale < 8.0) step *= 2;
-        const QRectF visible = page.intersected(exposed);
-        QList<QLineF> lines;
-        for (qreal x = std::ceil(visible.left() / step) * step; x <= visible.right(); x += step)
-            lines.append(QLineF(x, visible.top(), x, visible.bottom()));
-        for (qreal y = std::ceil(visible.top() / step) * step; y <= visible.bottom(); y += step)
-            lines.append(QLineF(visible.left(), y, visible.right(), y));
-        painter->save();
-        painter->setRenderHint(QPainter::Antialiasing, false);
-        // Multiplication keeps printed black pixels intact under the editor
-        // grid. The QtZpl image itself is never modified.
-        painter->setCompositionMode(QPainter::CompositionMode_Multiply);
-        painter->setPen(cosmeticPen(translucent(paperInk(palette(), QPalette::Mid), 60)));
-        painter->drawLines(lines);
-        painter->restore();
-    }
     if (m_layout.marginsVisible && m_layout.margin * 2 < std::min(m_document.width, m_document.height)) {
         const int margin = m_layout.margin;
         painter->setPen(cosmeticPen(accentColor.darker(125), 1, Qt::DashLine));
@@ -1182,6 +1207,158 @@ void LabelCanvas::drawForeground(QPainter* painter, const QRectF& exposed)
         painter->drawEllipse(position, 8 / scale, 8 / scale);
     }
 
+    paintGeometryLabels(painter, accentColor);
+    painter->restore();
+}
+
+// The selection keeps its labels; an idle pointer over another element adds
+// that element's labels and outline without changing the selection.
+void LabelCanvas::paintGeometryLabels(QPainter* painter, const QColor& accent) const
+{
+    if ((!m_geometrySizes && !m_geometryCoordinates) || !m_document.visualEditable || m_dropActive
+        || m_interaction == Interaction::RubberBand || m_interaction == Interaction::Guide)
+        return;
+    // A move cannot change the size, so it shows only where the selection lands.
+    // Several fields share no ZPL origin: the primary (last selected) one names
+    // its own above the whole selection, and its cross marks which point it is.
+    if (m_selectedIndex >= 0 && !selectedBounds().isEmpty())
+        paintGeometryLabel(painter, accent, selectionRect(), m_interaction != Interaction::Move,
+                           geometryOrigin(m_selectedIndex));
+    if (m_interaction == Interaction::None && m_hoverIndex >= 0 && m_hoverIndex < m_document.elements.size()
+        && m_document.elements[m_hoverIndex].editorVisible && !m_selectedIndices.contains(m_hoverIndex)) {
+        const QRectF bounds = elementBounds(m_hoverIndex);
+        if (bounds.isEmpty()) return;
+        painter->save();
+        painter->setPen(cosmeticPen(translucent(accent, 150)));
+        painter->setBrush(Qt::NoBrush);
+        painter->drawRect(bounds);
+        painter->restore();
+        paintGeometryLabel(painter, accent, bounds, true, geometryOrigin(m_hoverIndex));
+    }
+}
+
+QPoint LabelCanvas::geometryOrigin(int index) const
+{
+    if (index < 0 || index >= m_document.elements.size()) return {};
+    const auto& element = m_document.elements[index];
+    // Single and group moves commit the same delta to every selected origin.
+    const QPoint delta = m_interaction == Interaction::Move && m_selectedIndices.contains(index)
+        ? m_dragPosition - m_originPosition : QPoint{};
+    return QPoint(element.x, element.y) + delta;
+}
+
+// Geometry labels are painted in viewport pixels: zoom and monitor DPI change
+// neither their numbers nor their type size. Sizes follow the canvas unit and
+// the rendered frame; coordinates are the field's ZPL origin in printer dots.
+void LabelCanvas::paintGeometryLabel(QPainter* painter, const QColor& accent, const QRectF& bounds,
+                                     bool sizes, QPoint origin) const
+{
+    sizes = sizes && m_geometrySizes;
+    if (!sizes && !m_geometryCoordinates) return;
+    painter->save();
+    painter->setWorldTransform(viewportTransform().inverted(), true);
+    QFont textFont = font();
+    textFont.setPixelSize(11);
+    const QRectF frame = viewportTransform().mapRect(bounds);
+    const qreal left = std::round(frame.left()), right = std::round(frame.right());
+    const qreal top = std::round(frame.top()), bottom = std::round(frame.bottom());
+    const QRectF area = QRectF(viewport()->rect()).adjusted(2, 2, -2, -2);
+    const auto rulerBlocks = [this](const QRectF& chip) {
+        return (m_verticalRuler->isVisibleTo(viewport()) && chip.intersects(QRectF(m_verticalRuler->geometry())))
+            || (m_horizontalRuler->isVisibleTo(viewport()) && chip.intersects(QRectF(m_horizontalRuler->geometry())));
+    };
+    const auto placed = [&](QRectF chip) {
+        // Stay readable when the frame touches a viewport edge. Rulers are
+        // child widgets attached to the paper, so step inward past them.
+        chip.moveLeft(std::clamp(chip.left(), area.left(), std::max(area.left(), area.right() - chip.width())));
+        chip.moveTop(std::clamp(chip.top(), area.top(), std::max(area.top(), area.bottom() - chip.height())));
+        if (m_verticalRuler->isVisibleTo(viewport()) && chip.intersects(QRectF(m_verticalRuler->geometry())))
+            chip.moveLeft(m_verticalRuler->geometry().right() + 3);
+        if (m_horizontalRuler->isVisibleTo(viewport()) && chip.intersects(QRectF(m_horizontalRuler->geometry())))
+            chip.moveTop(m_horizontalRuler->geometry().bottom() + 3);
+        return QRectF(chip.toAlignedRect());
+    };
+    const auto drawChipFrame = [&](const QRectF& chip, const QColor& fill, const QColor& border) {
+        painter->setRenderHint(QPainter::Antialiasing, true);
+        painter->setPen(border.isValid() ? QPen(border, 1) : QPen(Qt::NoPen));
+        painter->setBrush(fill);
+        painter->drawRoundedRect(chip.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4);
+    };
+    if (sizes) {
+        QFont valueFont = textFont;
+        valueFont.setWeight(QFont::DemiBold);
+        const QFontMetricsF valueMetrics(valueFont);
+        const auto chipFor = [&valueMetrics](const QString& text) {
+            return QRectF(0, 0, std::ceil(valueMetrics.horizontalAdvance(text)) + 14, 18);
+        };
+        const QString widthText = formatCanvasLength(bounds.width(), m_layout.unit, m_document.dpi, locale());
+        const QString heightText = formatCanvasLength(bounds.height(), m_layout.unit, m_document.dpi, locale());
+        // Height belongs left of the frame. When the vertical ruler or the
+        // viewport edge leaves no room there, it moves to the right side.
+        qreal beside = left - 8;
+        QRectF heightChip = chipFor(heightText);
+        heightChip.moveTopLeft({beside - 6 - heightChip.width(), frame.center().y() - heightChip.height() / 2});
+        if (!area.contains(heightChip) || rulerBlocks(heightChip)) {
+            beside = right + 8;
+            heightChip.moveLeft(beside + 6);
+        }
+        const qreal below = bottom + 8;
+        painter->setRenderHint(QPainter::Antialiasing, false);
+        painter->setPen(cosmeticPen(accent.darker(125)));
+        painter->drawLine(QPointF(left, below), QPointF(right, below));
+        painter->drawLine(QPointF(left, below - 4), QPointF(left, below + 4));
+        painter->drawLine(QPointF(right, below - 4), QPointF(right, below + 4));
+        painter->drawLine(QPointF(beside, top), QPointF(beside, bottom));
+        painter->drawLine(QPointF(beside - 4, top), QPointF(beside + 4, top));
+        painter->drawLine(QPointF(beside - 4, bottom), QPointF(beside + 4, bottom));
+
+        // Dimension chips sit on the white paper next to the selection frame,
+        // so they share its paper colours in both themes.
+        QRectF widthChip = chipFor(widthText);
+        widthChip.moveTopLeft({frame.center().x() - widthChip.width() / 2, below + 6});
+        painter->setFont(valueFont);
+        for (const auto& [chip, text] : {std::pair{widthChip, widthText}, std::pair{heightChip, heightText}}) {
+            const QRectF shown = placed(chip);
+            drawChipFrame(shown, Qt::white, accent);
+            painter->setPen(accent);
+            painter->drawText(shown, Qt::AlignCenter, text);
+        }
+    }
+    if (m_geometryCoordinates) {
+        // The numbers are those written in ^FO/^FT. Rendered ink often starts
+        // elsewhere (glyph bearings, symbol offsets, baselines, right anchors,
+        // label reflection), so a cross marks that origin when it leaves the
+        // frame's corner, and the chip stays above both.
+        const QPointF mapped = viewportTransform().map(displayPoint(m_document, QPointF(origin)));
+        const QPointF anchor(std::round(mapped.x()), std::round(mapped.y()));
+        qreal chipTop = top;
+        if (anchor != QPointF(left, top)) {
+            const QPointF center = anchor + QPointF(0.5, 0.5);
+            painter->setRenderHint(QPainter::Antialiasing, false);
+            painter->setPen(cosmeticPen(accent.darker(125)));
+            painter->drawLine(center - QPointF(4, 0), center + QPointF(4, 0));
+            painter->drawLine(center - QPointF(0, 4), center + QPointF(0, 4));
+            chipTop = std::min(top, anchor.y() - 4);
+        }
+        // Axis letters are quieter than the numbers they name.
+        const std::array<std::pair<QString, bool>, 4> parts{{
+            {QStringLiteral("X "), true}, {locale().toString(origin.x()), false},
+            {QStringLiteral("   Y "), true}, {locale().toString(origin.y()), false}}};
+        const QFontMetricsF metrics(textFont);
+        qreal width = 0;
+        for (const auto& [part, quiet] : parts) width += metrics.horizontalAdvance(part);
+        QRectF chip(0, 0, std::ceil(width) + 14, 18);
+        chip.moveBottomLeft({left, chipTop - 6});
+        chip = placed(chip);
+        drawChipFrame(chip, Qt::black, {});
+        painter->setFont(textFont);
+        QPointF pen(chip.left() + 7, chip.center().y() + (metrics.ascent() - metrics.descent()) / 2);
+        for (const auto& [part, quiet] : parts) {
+            painter->setPen(quiet ? QColor(255, 255, 255, 150) : QColor(Qt::white));
+            painter->drawText(pen, part);
+            pen.rx() += metrics.horizontalAdvance(part);
+        }
+    }
     painter->restore();
 }
 
@@ -1644,8 +1821,32 @@ void LabelCanvas::mouseReleaseEvent(QMouseEvent* event)
     event->accept();
 }
 
+void LabelCanvas::setHoveredIndex(int index)
+{
+    if (m_hoverIndex == index) return;
+    m_hoverIndex = index;
+    // Hover only paints geometry labels; skip the repaint when both are off.
+    if (m_geometrySizes || m_geometryCoordinates) viewport()->update();
+}
+
+void LabelCanvas::setGeometryLabelsVisible(bool sizes, bool coordinates)
+{
+    if (m_geometrySizes == sizes && m_geometryCoordinates == coordinates) return;
+    m_geometrySizes = sizes;
+    m_geometryCoordinates = coordinates;
+    viewport()->update();
+}
+
+bool LabelCanvas::viewportEvent(QEvent* event)
+{
+    if (event->type() == QEvent::Leave) setHoveredIndex(-1);
+    return QGraphicsView::viewportEvent(event);
+}
+
 void LabelCanvas::updatePointer(QPoint viewportPosition)
 {
+    const int hit = m_document.visualEditable ? hitElement(mapToScene(viewportPosition)) : -1;
+    setHoveredIndex(m_spaceDown ? -1 : hit);
     bool horizontalGuide = false;
     const int guide = guideAt(viewportPosition, horizontalGuide);
     if (m_spaceDown)
@@ -1654,8 +1855,7 @@ void LabelCanvas::updatePointer(QPoint viewportPosition)
         viewport()->setCursor(resizeCursor(handle));
     else if (guide >= 0)
         viewport()->setCursor(horizontalGuide ? Qt::SplitVCursor : Qt::SplitHCursor);
-    else if (m_document.visualEditable && hitElement(mapToScene(viewportPosition)) >= 0
-             && !m_document.elements[hitElement(mapToScene(viewportPosition))].locked)
+    else if (hit >= 0 && !m_document.elements[hit].locked)
         viewport()->setCursor(Qt::SizeAllCursor);
     else
         viewport()->unsetCursor();

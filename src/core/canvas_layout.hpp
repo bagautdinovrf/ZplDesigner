@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QList>
+#include <QLocale>
+#include <QString>
 
 namespace Designer {
 
@@ -21,5 +23,10 @@ struct CanvasLayoutSettings {
 
     bool operator==(const CanvasLayoutSettings&) const = default;
 };
+
+// Display conversions for editor annotations. Stored geometry stays in dots.
+[[nodiscard]] double canvasUnitValue(double dots, CanvasUnit unit, int dpi);
+// Millimetres keep two decimals; dots round to whole printer dots.
+[[nodiscard]] QString formatCanvasLength(double dots, CanvasUnit unit, int dpi, const QLocale& locale);
 
 } // namespace Designer

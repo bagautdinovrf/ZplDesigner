@@ -40,7 +40,9 @@ bool accepts(ElementType type, Kind kind)
 SelectionProperties::SelectionProperties(QWidget* parent) : QWidget(parent), form_(new QFormLayout(this))
 {
     setObjectName(u"selectionProperties"_s);
-    form_->setContentsMargins(0, 12, 0, 0);
+    // Long captions move above their fields so the narrowest inspector still fits.
+    form_->setContentsMargins(13, 12, 13, 0);
+    form_->setRowWrapPolicy(QFormLayout::WrapLongRows);
     auto* hint = new QLabel(u"Параметры применяются ко всем подходящим объектам выделения. «Разные» оставляет значения без изменений."_s, this);
     hint->setWordWrap(true); form_->addRow(hint);
     for (const auto& field : fields) {

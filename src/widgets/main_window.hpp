@@ -34,6 +34,7 @@ class SourceDiagnosticsList;
 class PreviewWidget;
 class PreviewCoordinator;
 class PropertiesPanel;
+class DotSpinBox;
 class MainWindow final : public QMainWindow {
     Q_OBJECT
 public:
@@ -172,8 +173,8 @@ private:
     QLabel* dimensions_ = nullptr;
     QLabel* notice_ = nullptr;
     QLabel* zoomLabel_ = nullptr;
-    QSpinBox* labelWidth_ = nullptr;
-    QSpinBox* labelHeight_ = nullptr;
+    DotSpinBox* labelWidth_ = nullptr;
+    DotSpinBox* labelHeight_ = nullptr;
     QComboBox* dpi_ = nullptr;
     QCheckBox* layerLocked_ = nullptr;
     QCheckBox* layerVisible_ = nullptr;

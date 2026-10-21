@@ -42,8 +42,9 @@ PropertiesPanel::PropertiesPanel(DocumentSession* session, PreviewCoordinator* p
     objectSymbol_ = new ObjectBadge(QStringLiteral("T"), summary); objectSymbol_->setFixedSize(29, 29); objectSymbol_->setAlignment(Qt::AlignCenter); objectSymbol_->setForegroundRole(QPalette::Link);
     auto symbolFont = objectSymbol_->font(); symbolFont.setPixelSize(15); objectSymbol_->setFont(symbolFont);
     auto* objectText = new QVBoxLayout; objectText->setSpacing(2);
-    typeTitle_ = heading(QStringLiteral("Выберите элемент"), summary); objectText->addWidget(typeTitle_);
-    objectSubtitle_ = caption(QString(), summary); objectText->addWidget(objectSubtitle_);
+    // A long element name elides instead of pushing the form past the inspector edge.
+    typeTitle_ = heading(QStringLiteral("Выберите элемент"), summary, true); objectText->addWidget(typeTitle_);
+    objectSubtitle_ = caption(QString(), summary); objectSubtitle_->setWordWrap(true); objectText->addWidget(objectSubtitle_);
     summaryRow->addWidget(objectSymbol_); summaryRow->addLayout(objectText, 1); summaryLayout->addLayout(summaryRow); propertiesLayout->addWidget(summary);
     propertyUnits_ = new QComboBox(properties);
     propertyUnits_->setObjectName(QStringLiteral("propertyUnits"));
@@ -79,8 +80,8 @@ PropertiesPanel::PropertiesPanel(DocumentSession* session, PreviewCoordinator* p
     eacStyle_->addItem(QStringLiteral("Белый без фона"), static_cast<int>(EacStyle::WhiteTransparent));
     contentLayout->insertWidget(1, propertyField(QStringLiteral("Оформление"), eacStyle_, contentSection));
     connect(eacStyle_, &QComboBox::currentIndexChanged, this, &PropertiesPanel::editProperties);
-    x_ = dotSpin(QStringLiteral("elementX"), -4096, 4096, properties); geometryGrid->addWidget(propertyField(QStringLiteral("X"), x_, geometry), 0, 0);
-    y_ = dotSpin(QStringLiteral("elementY"), -4096, 4096, properties); geometryGrid->addWidget(propertyField(QStringLiteral("Y"), y_, geometry), 0, 1);
+    x_ = dotSpin(QStringLiteral("elementX"), -4096, 4096, properties); geometryGrid->addWidget(propertyField(QStringLiteral("X, dots"), x_, geometry), 0, 0);
+    y_ = dotSpin(QStringLiteral("elementY"), -4096, 4096, properties); geometryGrid->addWidget(propertyField(QStringLiteral("Y, dots"), y_, geometry), 0, 1);
     width_ = dotSpin(QStringLiteral("elementWidth"), 1, 4096, properties); geometryGrid->addWidget(propertyField(QStringLiteral("Ширина"), width_, geometry), 1, 0);
     height_ = dotSpin(QStringLiteral("elementHeight"), 1, 4096, properties); geometryGrid->addWidget(propertyField(QStringLiteral("Высота"), height_, geometry), 1, 1);
     geometryAspect_ = new QCheckBox(QStringLiteral("Сохранять пропорции"), geometry);
@@ -262,9 +263,11 @@ void PropertiesPanel::refresh() {
     selectionProperties_->setVisible(multi && session_->document().visualEditable);
     selectionProperties_->setEnabled(!selectionLocked() && !session_->hasPendingSource());
     if (multi) selectionProperties_->setSelection(session_->document(), selectedIndices());
-    typeTitle_->setText(multi ? QStringLiteral("Выбрано элементов: %1\nМеню «Компоновка» — выравнивание").arg(selectedIndices().size())
+    typeTitle_->setText(multi ? QStringLiteral("Выбрано элементов: %1").arg(selectedIndices().size())
         : valid ? (session_->document().elements[selected_].name.isEmpty() ? elementTypeName(session_->document().elements[selected_].type) : session_->document().elements[selected_].name) : QStringLiteral("Выберите элемент"));
-    objectSubtitle_->setText(valid ? QStringLiteral("%1 · %2 из %3").arg(elementTypeName(session_->document().elements[selected_].type)).arg(session_->document().elements.size() - selected_).arg(session_->document().elements.size()) : QString());
+    typeTitle_->setToolTip(typeTitle_->text());
+    objectSubtitle_->setText(multi ? QStringLiteral("Выравнивание — в меню «Компоновка»")
+        : valid ? QStringLiteral("%1 · %2 из %3").arg(elementTypeName(session_->document().elements[selected_].type)).arg(session_->document().elements.size() - selected_).arg(session_->document().elements.size()) : QString());
     objectSymbol_->setText(valid ? elementSymbol(session_->document().elements[selected_].type) : QStringLiteral("↖"));
     if (valid) {
         const auto& e = session_->document().elements[selected_];
@@ -432,8 +435,11 @@ void PropertiesPanel::refreshUnits() {
     const QSignalBlocker blocker(propertyUnits_);
     propertyUnits_->setCurrentIndex(propertyUnits_->findData(static_cast<int>(unit)));
     for (auto* control : elementForm_->findChildren<DotSpinBox*>()) {
-        const bool contentDots = control == fontHeight_ || control == module_ || control == thickness_;
-        control->setDisplayUnits(contentDots ? CanvasUnit::Dots : unit, dpi);
+        // X/Y are the ^FO/^FT numbers, so they stay in printer dots like the
+        // dots-labelled content controls; only sizes follow the selected units.
+        const bool fixedDots = control == x_ || control == y_
+            || control == fontHeight_ || control == module_ || control == thickness_;
+        control->setDisplayUnits(fixedDots ? CanvasUnit::Dots : unit, dpi);
     }
     selectionProperties_->setDisplayUnits(unit, dpi);
 }

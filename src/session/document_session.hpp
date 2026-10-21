@@ -7,6 +7,7 @@
 
 #include <QObject>
 #include <QDateTime>
+#include <QThreadPool>
 #include <QTimer>
 #include <QUndoStack>
 
@@ -53,7 +54,9 @@ public:
     // Explicit close/discard removes this window's snapshot only. Destruction
     // alone retains unsaved recovery, so abnormal application shutdown is safe.
     void discardRecovery();
+    // Reserved before its first background write completes.
     [[nodiscard]] QString recoveryFilePath() const;
+    // Writes synchronously after any background write; edits schedule those.
     [[nodiscard]] std::expected<void, QString> flushRecovery();
     void setPendingSource(QString source);
     void clearPendingSource();
@@ -108,6 +111,8 @@ private:
                     std::optional<QString> pending = {}, bool recovered = false);
     void setFilePath(QString path);
     void scheduleRecovery();
+    void writeRecoveryInBackground();
+    [[nodiscard]] std::expected<void, QString> reserveRecoveryFile();
     void markSaved();
 
     DesignDocument document_;
@@ -126,6 +131,10 @@ private:
     QTimer recoveryDeadline_;
     QString recoveryPath_;
     std::unique_ptr<QLockFile> recoveryLock_;
+    // Debounced recovery snapshots are encoded and written here.
+    QThreadPool recoveryWriter_;
+    bool recoveryWriting_ = false;
+    bool recoveryRequeued_ = false;
 };
 
 } // namespace Designer

@@ -39,6 +39,7 @@ private slots:
     void gs1DataMatrixRoundTrip();
     void editorPreviewKeepsOtherElementsAroundInvalidGs1();
     void editorPreviewMarksUnresolvedDataMatrix();
+    void repeatedPreviewsKeepExactFieldMeasurements();
     void editorPreviewDoesNotBypassSafetyOrSourceMode();
     void gs1UnsupportedImportPreservesSource();
     void valueTemplateSyntaxAndResolution();
@@ -1418,6 +1419,47 @@ void DocumentTest::resizeLimitsAndUniformAxes()
     const auto fallback = resizedElement(text, {200, 80}, {});
     QVERIFY(fallback.fontHeight >= 1 && fallback.fontHeight <= 512);
     QVERIFY(fallback.fontWidth >= 0 && fallback.fontWidth <= 512);
+}
+
+void DocumentTest::repeatedPreviewsKeepExactFieldMeasurements()
+{
+    // A canvas drag refreshes the preview after every drop. Field measurements
+    // reused from earlier refreshes must match a fresh render exactly.
+    DesignDocument document;
+    document.width = 420; document.height = 260;
+    auto title = makeElement(ElementType::Text, {30, 24});
+    title.text = u"PART 42"_s; title.fontHeight = 28;
+    auto code = makeElement(ElementType::Code128, {30, 80});
+    code.text = u"ABC123"_s; code.height = 50;
+    auto invalid = makeElement(ElementType::DataMatrix, {300, 32});
+    invalid.text = u"NL-00001"_s;
+    invalid.width = invalid.height = 96;
+    document.elements = {title, code, invalid};
+
+    const auto first = renderEditorPreview(document);
+    QVERIFY2(first.has_value(), first ? "" : qPrintable(first.error()));
+    QCOMPARE(first->elementErrors.keys(), QList<int>{2});
+    const auto again = renderEditorPreview(document);
+    QVERIFY(again);
+    QCOMPARE(again->image, first->image);
+    QCOMPARE(again->bounds, first->bounds);
+    QCOMPARE(again->elementErrors, first->elementErrors);
+    QCOMPARE(again->diagnostics, first->diagnostics);
+
+    // Moving one field moves only its measured ink; the others are unchanged.
+    auto moved = document;
+    moved.elements[0].x += 7; moved.elements[0].y += 5;
+    const auto shifted = renderEditorPreview(moved);
+    QVERIFY(shifted);
+    QCOMPARE(shifted->bounds[0], first->bounds[0].translated(7, 5));
+    QCOMPARE(shifted->bounds[1], first->bounds[1]);
+    QCOMPARE(shifted->elementErrors, first->elementErrors);
+    QVERIFY(shifted->image != first->image);
+    // Undoing the move returns the original measurements and raster.
+    const auto restored = renderEditorPreview(document);
+    QVERIFY(restored);
+    QCOMPARE(restored->image, first->image);
+    QCOMPARE(restored->bounds, first->bounds);
 }
 
 QTEST_MAIN(DocumentTest)

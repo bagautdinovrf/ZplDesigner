@@ -252,6 +252,30 @@ std::expected<RecoveryState, QString> readRecovery(const QString& path)
     return RecoveryState{std::move(*project), object.value(QStringLiteral("originalPath")).toString(), timestamp};
 }
 
+// Everything a recovery file records, copied on the GUI thread. The copy only
+// shares implicitly shared Qt data; a writer thread reads it without locks.
+struct RecoverySnapshot {
+    ProjectState project;
+    QString originalPath;
+    QDateTime modifiedAt;
+    QString path;
+};
+
+// Encoding a project with large images takes long enough to stall gestures,
+// so this runs on any thread and touches nothing but its snapshot.
+std::expected<void, QString> writeRecoveryFile(const RecoverySnapshot& snapshot)
+{
+    const auto project = encodeProject(snapshot.project);
+    if (!project) return std::unexpected(DocumentSession::tr("Автовосстановление: %1").arg(project.error()));
+    const QJsonObject root{{QStringLiteral("format"), QStringLiteral("QtZplDesignerRecovery")},
+        {QStringLiteral("version"), 1}, {QStringLiteral("originalPath"), snapshot.originalPath},
+        {QStringLiteral("modifiedAt"), snapshot.modifiedAt.toString(Qt::ISODateWithMs)},
+        {QStringLiteral("project"), QJsonDocument::fromJson(*project).object()}};
+    const auto written = writeAtomic(snapshot.path, QJsonDocument(root).toJson(QJsonDocument::Compact));
+    if (!written) return std::unexpected(DocumentSession::tr("Автовосстановление: %1").arg(written.error()));
+    return {};
+}
+
 QList<int> validIndices(const DesignDocument& document, const QList<int>& indices, bool allowLocked = false)
 {
     if (!document.visualEditable) return {};
@@ -377,12 +401,10 @@ DocumentSession::DocumentSession(QObject* parent)
     recoveryDebounce_.setInterval(1500);
     recoveryDeadline_.setSingleShot(true);
     recoveryDeadline_.setInterval(10000);
-    const auto writeRecovery = [this] {
-        const auto result = flushRecovery();
-        if (!result) emit recoveryWarning(result.error());
-    };
-    connect(&recoveryDebounce_, &QTimer::timeout, this, writeRecovery);
-    connect(&recoveryDeadline_, &QTimer::timeout, this, writeRecovery);
+    // Snapshots are written in order, one at a time, never on the GUI thread.
+    recoveryWriter_.setMaxThreadCount(1);
+    connect(&recoveryDebounce_, &QTimer::timeout, this, &DocumentSession::writeRecoveryInBackground);
+    connect(&recoveryDeadline_, &QTimer::timeout, this, &DocumentSession::writeRecoveryInBackground);
     connect(this, &DocumentSession::documentChanged, this, &DocumentSession::scheduleRecovery);
     connect(this, &DocumentSession::layoutSettingsChanged, this, &DocumentSession::scheduleRecovery);
     connect(&undo_, &QUndoStack::indexChanged, this, [this] {
@@ -407,6 +429,8 @@ DocumentSession::~DocumentSession()
     disconnect(this, nullptr, this, nullptr);
     recoveryDebounce_.stop();
     recoveryDeadline_.stop();
+    // Its completion is queued to this object and is dropped with it.
+    recoveryWriter_.waitForDone();
     if (!modified()) discardRecovery();
 }
 
@@ -492,6 +516,9 @@ void DocumentSession::discardRecovery()
 {
     recoveryDebounce_.stop();
     recoveryDeadline_.stop();
+    // A write in flight would recreate the file after it is removed.
+    recoveryWriter_.waitForDone();
+    recoveryRequeued_ = false;
     if (!recoveryPath_.isEmpty() && recoveryLock_) QFile::remove(recoveryPath_);
     recoveryLock_.reset();
     recoveryPath_.clear();
@@ -516,12 +543,51 @@ std::expected<void, QString> DocumentSession::flushRecovery()
 {
     recoveryDebounce_.stop();
     recoveryDeadline_.stop();
+    // An older background snapshot must not land after this newer one.
+    recoveryWriter_.waitForDone();
+    recoveryRequeued_ = false;
     if (!modified()) {
         discardRecovery();
         return {};
     }
-    const auto project = encodeProject({document_, layoutSettings_, pendingSource_});
-    if (!project) return std::unexpected(tr("Автовосстановление: %1").arg(project.error()));
+    if (const auto reserved = reserveRecoveryFile(); !reserved) return reserved;
+    return writeRecoveryFile({{document_, layoutSettings_, pendingSource_}, filePath_,
+                              QDateTime::currentDateTimeUtc(), recoveryPath_});
+}
+
+void DocumentSession::writeRecoveryInBackground()
+{
+    recoveryDebounce_.stop();
+    recoveryDeadline_.stop();
+    if (!modified()) {
+        discardRecovery();
+        return;
+    }
+    // Edits made while a snapshot is being written follow it immediately.
+    if (recoveryWriting_) {
+        recoveryRequeued_ = true;
+        return;
+    }
+    if (const auto reserved = reserveRecoveryFile(); !reserved) {
+        emit recoveryWarning(reserved.error());
+        return;
+    }
+    recoveryWriting_ = true;
+    RecoverySnapshot snapshot{{document_, layoutSettings_, pendingSource_}, filePath_,
+                              QDateTime::currentDateTimeUtc(), recoveryPath_};
+    recoveryWriter_.start([this, snapshot = std::move(snapshot)] {
+        const auto result = writeRecoveryFile(snapshot);
+        QMetaObject::invokeMethod(this, [this, result] {
+            recoveryWriting_ = false;
+            if (!result) emit recoveryWarning(result.error());
+            if (std::exchange(recoveryRequeued_, false)) writeRecoveryInBackground();
+        }, Qt::QueuedConnection);
+    });
+}
+
+// The path and its lock are created on the GUI thread before any write.
+std::expected<void, QString> DocumentSession::reserveRecoveryFile()
+{
     if (recoveryPath_.isEmpty()) {
         const auto directory = recoveryStorageDirectory();
         if (directory.isEmpty() || !QDir().mkpath(directory))
@@ -533,12 +599,6 @@ std::expected<void, QString> DocumentSession::flushRecovery()
         recoveryPath_ = std::move(path);
         recoveryLock_ = std::move(lock);
     }
-    const QJsonObject root{{QStringLiteral("format"), QStringLiteral("QtZplDesignerRecovery")},
-        {QStringLiteral("version"), 1}, {QStringLiteral("originalPath"), filePath_},
-        {QStringLiteral("modifiedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
-        {QStringLiteral("project"), QJsonDocument::fromJson(*project).object()}};
-    const auto written = writeAtomic(recoveryPath_, QJsonDocument(root).toJson(QJsonDocument::Compact));
-    if (!written) return std::unexpected(tr("Автовосстановление: %1").arg(written.error()));
     return {};
 }
 

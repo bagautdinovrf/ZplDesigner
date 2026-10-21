@@ -6,6 +6,8 @@
 #include <QGraphicsScene>
 #include <QGraphicsView>
 #include <QMargins>
+#include <QPixmap>
+#include <QTransform>
 #include <optional>
 
 class QLabel;
@@ -30,6 +32,11 @@ public:
     void setGridVisible(bool visible);
     void setSnapEnabled(bool enabled);
     void setLayoutSettings(const CanvasLayoutSettings& settings);
+    // Application preference: selection sizes and ZPL origin coordinates.
+    void setGeometryLabelsVisible(bool sizes, bool coordinates);
+    // The ^FO/^FT origin named by the coordinate label, in printer dots. A
+    // move in progress reports where it would commit; rendered ink never does.
+    [[nodiscard]] QPoint geometryOrigin(int index) const;
     [[nodiscard]] const CanvasLayoutSettings& layoutSettings() const;
     void zoomIn();
     void zoomOut();
@@ -79,6 +86,7 @@ protected:
     void dragLeaveEvent(QDragLeaveEvent* event) override;
     void dropEvent(QDropEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
+    bool viewportEvent(QEvent* event) override;
     void scrollContentsBy(int dx, int dy) override;
 
 private:
@@ -104,6 +112,11 @@ private:
     [[nodiscard]] std::optional<qreal> nearbyObjectOffset(const QRectF& bounds, bool horizontal,
                                                         bool resize) const;
     void paintSmartGuides(QPainter* painter, const QRectF& bounds) const;
+    void paintPaperLayer(QPainter* painter) const;
+    void paintGeometryLabels(QPainter* painter, const QColor& accent) const;
+    void paintGeometryLabel(QPainter* painter, const QColor& accent, const QRectF& bounds, bool sizes,
+                            QPoint origin) const;
+    void setHoveredIndex(int index);
     [[nodiscard]] QPoint boundedSelectionDelta(QPoint delta) const;
     [[nodiscard]] QPoint dragPosition(QPointF delta, bool bypass) const;
     [[nodiscard]] QSize resizedDimensions(QPointF delta, bool bypass) const;
@@ -122,11 +135,39 @@ private:
     void updateGuide(QPoint viewportPosition);
     void finishGuide(QPoint viewportPosition);
 
+    // Everything below the editor annotations: workspace texture, paper,
+    // QtZpl raster and grid. Gestures repaint every frame but change none of it.
+    struct PaperLayerKey {
+        QSize size;
+        qreal ratio = 0;
+        QTransform transform;
+        qint64 image = 0;
+        int width = 0;
+        int height = 0;
+        bool document = false;
+        bool grid = false;
+        int gridStep = 0;
+        QRgb canvas = 0;
+        QRgb dots = 0;
+        QRgb ink = 0;
+        bool operator==(const PaperLayerKey&) const = default;
+    };
+
     QGraphicsScene m_scene;
+    QPixmap m_paperLayer;
+    PaperLayerKey m_paperLayerKey;
+    // The screen-fixed workspace texture survives panning and zooming; its key
+    // uses only the size, ratio, grid flag and colours.
+    QPixmap m_backdrop;
+    PaperLayerKey m_backdropKey;
     DesignDocument m_document;
     Preview m_preview;
     int m_selectedIndex = -1;
     QList<int> m_selectedIndices;
+    // Element under the idle pointer; it borrows the geometry labels.
+    int m_hoverIndex = -1;
+    bool m_geometrySizes = true;
+    bool m_geometryCoordinates = true;
     CanvasLayoutSettings m_layout;
     QWidget* m_horizontalRuler = nullptr;
     QWidget* m_verticalRuler = nullptr;

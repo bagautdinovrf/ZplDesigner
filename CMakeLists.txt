@@ -87,6 +87,7 @@ add_library(designer_core STATIC
     src/core/preview_pages.hpp
     src/core/design_document.cpp
     src/core/design_document.hpp
+    src/core/canvas_layout.cpp
     src/core/canvas_layout.hpp
     src/core/design_internal.hpp
     src/core/gs1_data.cpp
@@ -266,6 +267,12 @@ if(DESIGNER_BUILD_TESTS)
     designer_target_settings(designer_tests)
     add_test(NAME designer_document COMMAND designer_tests -o ${CMAKE_CURRENT_BINARY_DIR}/document-results.txt,txt)
     set_tests_properties(designer_document PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    qt_add_executable(designer_canvas_units_tests tests/test_canvas_units.cpp)
+    target_link_libraries(designer_canvas_units_tests PRIVATE Qt6::Test designer_core)
+    designer_target_settings(designer_canvas_units_tests)
+    add_test(NAME designer_canvas_units COMMAND designer_canvas_units_tests -o ${CMAKE_CURRENT_BINARY_DIR}/canvas-units-results.txt,txt)
+    set_tests_properties(designer_canvas_units PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 
     qt_add_executable(designer_source_map_tests tests/test_source_map.cpp)
     target_link_libraries(designer_source_map_tests PRIVATE Qt6::Test designer_core)

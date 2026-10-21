@@ -83,6 +83,9 @@ private slots:
     void baselineAndRightAnchorsResizeAwayFromOrigin();
     void flippedPendingBoundsStaySelectable();
     void maxiCodeCannotResize();
+    void hoverBorrowsGeometryLabels();
+    void coordinateLabelsNameZplOrigins_data() { transformData(); }
+    void coordinateLabelsNameZplOrigins();
 };
 
 void CanvasTransformTests::hitKeyboardAndPendingGeometry()
@@ -250,6 +253,122 @@ void CanvasTransformTests::maxiCodeCannotResize()
     const auto corner = mapDocumentPoint(doc, {element.x + element.width, element.y + element.height});
     drag(canvas, corner, corner + QPoint(20, 10));
     QCOMPARE(resized.size(), 0);
+}
+
+void CanvasTransformTests::hoverBorrowsGeometryLabels()
+{
+    auto doc = document(false, false);
+    auto other = makeElement(ElementType::Box, {250, 160});
+    other.width = 60; other.height = 30;
+    doc.elements.append(other);
+    LabelCanvas canvas; setup(canvas, doc);
+    const QImage idle = canvas.viewport()->grab().toImage();
+    // Geometry labels belong to the element under the idle pointer...
+    QTest::mouseMove(canvas.viewport(), canvas.mapFromScene(QPointF(280, 175)));
+    QApplication::processEvents();
+    const QImage hovered = canvas.viewport()->grab().toImage();
+    QVERIFY(hovered != idle);
+    // ...and disappear with it, leaving only editor state that existed before.
+    QEvent leave(QEvent::Leave);
+    QApplication::sendEvent(canvas.viewport(), &leave);
+    QApplication::processEvents();
+    QCOMPARE(canvas.viewport()->grab().toImage(), idle);
+
+    // A unit change repaints only the labels: without a selection nothing moves.
+    auto layout = canvas.layoutSettings();
+    const auto initialUnit = layout.unit;
+    const auto otherUnit = initialUnit == CanvasUnit::Dots ? CanvasUnit::Millimeters : CanvasUnit::Dots;
+    layout.unit = otherUnit;
+    canvas.setLayoutSettings(layout);
+    QApplication::processEvents();
+    QCOMPARE(canvas.viewport()->grab().toImage(), idle);
+    layout.unit = initialUnit;
+    canvas.setLayoutSettings(layout);
+    canvas.setSelectedIndex(0);
+    QApplication::processEvents();
+    const QImage selected = canvas.viewport()->grab().toImage();
+    layout.unit = otherUnit;
+    canvas.setLayoutSettings(layout);
+    QApplication::processEvents();
+    QVERIFY(canvas.viewport()->grab().toImage() != selected);
+
+    // Each label kind can be switched off; with both off hover paints nothing.
+    canvas.setGeometryLabelsVisible(false, true);
+    QApplication::processEvents();
+    const QImage coordinatesOnly = canvas.viewport()->grab().toImage();
+    canvas.setGeometryLabelsVisible(false, false);
+    QApplication::processEvents();
+    const QImage bare = canvas.viewport()->grab().toImage();
+    QVERIFY(coordinatesOnly != bare);
+    canvas.setSelectedIndex(-1);
+    QApplication::processEvents();
+    QCOMPARE(canvas.viewport()->grab().toImage(), idle);
+    QTest::mouseMove(canvas.viewport(), canvas.mapFromScene(QPointF(282, 176)));
+    QApplication::processEvents();
+    QCOMPARE(canvas.viewport()->grab().toImage(), idle);
+}
+
+void CanvasTransformTests::coordinateLabelsNameZplOrigins()
+{
+    QFETCH(bool, mirror); QFETCH(bool, inverted);
+    auto doc = document(mirror, inverted);
+    doc.elements.append(makeElement(ElementType::Text, {120, 150}));
+    // Rendered text ink starts after its ^FO: glyph bearings and leading.
+    auto shown = preview(doc);
+    shown.bounds[1] = mapDocumentRect(doc, {126, 158, 90, 24});
+    LabelCanvas canvas; setup(canvas, doc);
+    canvas.setDocument(doc, shown);
+    const QRectF ink = shown.bounds[1];
+    QTest::mouseClick(canvas.viewport(), Qt::LeftButton, Qt::NoModifier, canvas.mapFromScene(ink.center()));
+    QCOMPARE(canvas.selectedIndex(), 1);
+    QVERIFY(elementZpl(doc.elements[1]).startsWith(QStringLiteral("^FO120,150")));
+    QCOMPARE(canvas.geometryOrigin(1), QPoint(120, 150));
+    QCOMPARE(canvas.geometryOrigin(0), QPoint(50, 60));
+
+    // A drag names the origin it will commit; other fields keep theirs.
+    QSignalSpy moved(&canvas, &LabelCanvas::elementMoved);
+    const auto from = canvas.mapFromScene(ink.center());
+    const auto to = canvas.mapFromScene(ink.center() + QPointF(17, 11));
+    QTest::mousePress(canvas.viewport(), Qt::LeftButton, Qt::AltModifier, from);
+    QTest::mouseMove(canvas.viewport(), to);
+    const QPoint landing = QPoint(120, 150) + mapDocumentDelta(doc, {17, 11});
+    QCOMPARE(canvas.geometryOrigin(1), landing);
+    QCOMPARE(canvas.geometryOrigin(0), QPoint(50, 60));
+    QTest::mouseRelease(canvas.viewport(), Qt::LeftButton, Qt::AltModifier, to);
+    QCOMPARE(moved.size(), 1);
+    QCOMPARE(moved.front().at(1).toPoint(), landing);
+    QCOMPARE(canvas.geometryOrigin(1), QPoint(120, 150));
+
+    // A group move shifts every selected origin by the committed delta.
+    canvas.setDocument(doc, shown);
+    canvas.setSelectedIndices({0, 1});
+    QSignalSpy groupMoved(&canvas, &LabelCanvas::elementsMoved);
+    QTest::mousePress(canvas.viewport(), Qt::LeftButton, Qt::AltModifier, from);
+    QTest::mouseMove(canvas.viewport(), to);
+    const QPoint delta = mapDocumentDelta(doc, {17, 11});
+    QCOMPARE(canvas.geometryOrigin(0), QPoint(50, 60) + delta);
+    QCOMPARE(canvas.geometryOrigin(1), QPoint(120, 150) + delta);
+    QTest::mouseRelease(canvas.viewport(), Qt::LeftButton, Qt::AltModifier, to);
+    QCOMPARE(groupMoved.size(), 1);
+    QCOMPARE(groupMoved.front().at(1).toPoint(), delta);
+
+    // The painted coordinates follow the model origin, not the rendered frame.
+    canvas.setGeometryLabelsVisible(false, true);
+    canvas.setSelectedIndex(1);
+    QApplication::processEvents();
+    const QImage before = canvas.viewport()->grab().toImage();
+    auto shifted = doc;
+    shifted.elements[1].y -= 3;
+    canvas.setDocument(shifted, shown);
+    QApplication::processEvents();
+    QCOMPARE(canvas.geometryOrigin(1), QPoint(120, 147));
+    QVERIFY(canvas.viewport()->grab().toImage() != before);
+    canvas.setGeometryLabelsVisible(false, false);
+    QApplication::processEvents();
+    const QImage bare = canvas.viewport()->grab().toImage();
+    canvas.setDocument(doc, shown);
+    QApplication::processEvents();
+    QCOMPARE(canvas.viewport()->grab().toImage(), bare);
 }
 
 QTEST_MAIN(CanvasTransformTests)

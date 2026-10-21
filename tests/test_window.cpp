@@ -107,6 +107,7 @@ private slots:
     void layoutDialogUnitsAndCancelPreserveCoordinates();
     void importedBlockAndCode128PropertiesAreEditable();
     void propertyUnitsReachGeometryAndAdvancedTextFields();
+    void labelFormatFollowsPropertyUnits();
     void printActionOpensBothModesAndConnectionsWithoutSubmitting();
     void printDialogModesFollowConnection();
     void printDialogRestoresPngPreferences();
@@ -1058,16 +1059,21 @@ void WindowTests::propertyUnitsReachGeometryAndAdvancedTextFields()
     QVERIFY(units); QVERIFY(advanced); QVERIFY(session);
     advanced->setChecked(true);
     QList<Designer::DotSpinBox*> fields;
-    for (const auto* name : {"elementX", "elementY", "elementWidth", "elementHeight",
+    for (const auto* name : {"elementWidth", "elementHeight",
                              "fontWidth", "blockWidth", "blockLineSpacing", "blockHangingIndent"}) {
         auto* field = window_->findChild<Designer::DotSpinBox*>(QString::fromLatin1(name));
         QVERIFY2(field, name);
         field->setLocale(QLocale::c());
         fields.append(field);
     }
-    auto* fontHeight = window_->findChild<Designer::DotSpinBox*>(QStringLiteral("fontHeight"));
-    QVERIFY(fontHeight);
-    fontHeight->setLocale(QLocale::c());
+    // These are the printer-dot numbers written to ZPL whatever units sizes use.
+    QList<Designer::DotSpinBox*> dotFields;
+    for (const auto* name : {"elementX", "elementY", "fontHeight"}) {
+        auto* field = window_->findChild<Designer::DotSpinBox*>(QString::fromLatin1(name));
+        QVERIFY2(field, name);
+        field->setLocale(QLocale::c());
+        dotFields.append(field);
+    }
     const QString original = Designer::toZpl(window_->document());
     QSignalSpy documentChanges(session, &Designer::DocumentSession::documentChanged);
     // Fields now live in several sections. Units must reach both the two-column
@@ -1079,8 +1085,11 @@ void WindowTests::propertyUnitsReachGeometryAndAdvancedTextFields()
         units->setCurrentIndex(units->findData(static_cast<int>(Designer::CanvasUnit::Millimeters)));
         for (auto* field : fields)
             QCOMPARE(field->cleanText(), QString::number(field->value() * 25.4 / document.dpi, 'f', 3));
-        // The primary control explicitly says dots and keeps those units.
-        QCOMPARE(fontHeight->cleanText(), QString::number(text.fontHeight));
+        // Coordinates and the font height explicitly say dots and keep those units.
+        for (auto* field : dotFields)
+            QCOMPARE(field->cleanText(), QString::number(field->value()));
+        QCOMPARE(dotFields[0]->value(), text.x);
+        QCOMPARE(dotFields[1]->value(), text.y);
         QCOMPARE(Designer::toZpl(window_->document()), original);
     }
     QCOMPARE(documentChanges.count(), 0);
@@ -1096,6 +1105,62 @@ void WindowTests::propertyUnitsReachGeometryAndAdvancedTextFields()
     QVERIFY(Designer::toZpl(window_->document()) != original);
     undo_->trigger();
     QCOMPARE(window_->document().elements.first().fontWidth, text.fontWidth);
+    QCOMPARE(Designer::toZpl(window_->document()), original);
+
+    // Still in millimetres: a typed coordinate is taken as printer dots.
+    auto* xEditor = dotFields[0]->findChild<QLineEdit*>();
+    QVERIFY(xEditor);
+    xEditor->selectAll();
+    QTest::keyClicks(xEditor, "56");
+    QTest::keyClick(xEditor, Qt::Key_Return);
+    QCOMPARE(window_->document().elements.first().x, 56);
+    undo_->trigger();
+    QCOMPARE(Designer::toZpl(window_->document()), original);
+}
+
+void WindowTests::labelFormatFollowsPropertyUnits()
+{
+    auto* units = window_->findChild<QComboBox*>(QStringLiteral("propertyUnits"));
+    auto* inspector = window_->findChild<QTabWidget*>(QStringLiteral("inspectorTabs"));
+    auto* width = window_->findChild<Designer::DotSpinBox*>(QStringLiteral("labelWidth"));
+    auto* height = window_->findChild<Designer::DotSpinBox*>(QStringLiteral("labelHeight"));
+    auto* dpi = window_->findChild<QComboBox*>(QStringLiteral("dpi"));
+    QVERIFY(units); QVERIFY(inspector); QVERIFY(width); QVERIFY(height); QVERIFY(dpi);
+    width->setLocale(QLocale::c());
+    height->setLocale(QLocale::c());
+    const QString original = Designer::toZpl(window_->document());
+    const auto millimetres = [](int dots, int resolution) { return QString::number(dots * 25.4 / resolution, 'f', 3); };
+
+    units->setCurrentIndex(units->findData(static_cast<int>(Designer::CanvasUnit::Dots)));
+    QCOMPARE(width->cleanText(), QString::number(initial_.width));
+    QCOMPARE(height->cleanText(), QString::number(initial_.height));
+    // The Label page has no unit selector of its own, so the suffix stays visible.
+    QVERIFY(width->text().endsWith(QStringLiteral(" dots")));
+    units->setCurrentIndex(units->findData(static_cast<int>(Designer::CanvasUnit::Millimeters)));
+    QCOMPARE(width->cleanText(), millimetres(initial_.width, initial_.dpi));
+    QCOMPARE(height->cleanText(), millimetres(initial_.height, initial_.dpi));
+    QVERIFY(width->text().endsWith(QStringLiteral(" мм")));
+    QCOMPARE(Designer::toZpl(window_->document()), original);
+
+    // Millimetres typed for the label are stored as whole printer dots.
+    inspector->setCurrentIndex(1);
+    auto* editor = width->findChild<QLineEdit*>();
+    QVERIFY(editor);
+    editor->selectAll();
+    QTest::keyClicks(editor, "50.8");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QCOMPARE(window_->document().width, qRound(50.8 * initial_.dpi / 25.4));
+    undo_->trigger();
+    QCOMPARE(window_->document().width, initial_.width);
+
+    // A new resolution keeps the dots and recalculates the millimetre text.
+    dpi->setCurrentIndex(dpi->findData(300));
+    QCOMPARE(window_->document().dpi, 300);
+    QCOMPARE(width->value(), initial_.width);
+    QCOMPARE(width->cleanText(), millimetres(initial_.width, 300));
+    undo_->trigger();
+    QCOMPARE(window_->document().dpi, initial_.dpi);
+    QCOMPARE(width->cleanText(), millimetres(initial_.width, initial_.dpi));
     QCOMPARE(Designer::toZpl(window_->document()), original);
 }
 

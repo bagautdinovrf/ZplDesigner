@@ -2,10 +2,12 @@
 #include "design_internal.hpp"
 
 #include <QBuffer>
+#include <QCache>
 #include <QImageReader>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMutex>
 #include <cmath>
 
 namespace Designer {
@@ -52,6 +54,26 @@ constexpr BooleanField barcodeBooleans[] = {
     {"pdf417Truncated", &Element::pdf417Truncated}, {"dataMatrixRectangular", &Element::dataMatrixRectangular},
     {"barcodeCheckDigit", &Element::barcodeCheckDigit}, {"aztecReaderInit", &Element::aztecReaderInit}
 };
+
+// Base64 PNG text, or empty when the image cannot be saved. Recovery snapshots
+// re-encode the whole project after every edit; copies of an unchanged QImage
+// keep its cache key, so they reuse the same compressed text.
+QString encodedImage(const QImage& image)
+{
+    static QMutex mutex;
+    static QCache<qint64, QString> cache(maximumClipboard);
+    {
+        const QMutexLocker lock(&mutex);
+        if (const auto* cached = cache.object(image.cacheKey())) return *cached;
+    }
+    QByteArray png;
+    QBuffer buffer(&png); buffer.open(QIODevice::WriteOnly);
+    if (!image.save(&buffer, "PNG")) return {};
+    const QString text = QString::fromLatin1(png.toBase64());
+    const QMutexLocker lock(&mutex);
+    cache.insert(image.cacheKey(), new QString(text), text.size());
+    return text;
+}
 }
 QByteArray encodeElements(const QList<Element>& elements)
 {
@@ -89,10 +111,9 @@ QByteArray encodeElements(const QList<Element>& elements)
         if (element.type == ElementType::Image) {
             pixels += qint64(element.image.width()) * element.image.height();
             if (pixels > 32 * 1024 * 1024) return {};
-            QByteArray png;
-            QBuffer buffer(&png); buffer.open(QIODevice::WriteOnly);
-            if (!element.image.save(&buffer, "PNG")) return {};
-            object[u"image"_s] = QString::fromLatin1(png.toBase64());
+            const QString png = encodedImage(element.image);
+            if (png.isEmpty()) return {};
+            object[u"image"_s] = png;
         }
         array.append(object);
     }

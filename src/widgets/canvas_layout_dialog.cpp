@@ -48,6 +48,19 @@ CanvasLayoutDialog::CanvasLayoutDialog(CanvasLayoutSettings settings, QSize page
     check(u"Линейки"_s, u"layoutShowRulers"_s, &CanvasLayoutSettings::rulersVisible);
     check(u"Направляющие"_s, u"layoutShowGuides"_s, &CanvasLayoutSettings::guidesVisible);
     form->addRow(visibility);
+    auto* selection = new QHBoxLayout;
+    const auto selectionCheck = [this, selection](const QString& text, const QString& name) {
+        auto* control = new QCheckBox(text, this);
+        control->setObjectName(name);
+        control->setChecked(true);
+        control->setToolTip(u"Общая настройка редактора для всех этикеток; в файл этикетки не сохраняется."_s);
+        selection->addWidget(control);
+        return control;
+    };
+    geometrySizes_ = selectionCheck(u"Размеры"_s, u"layoutShowGeometrySizes"_s);
+    geometryCoordinates_ = selectionCheck(u"Координаты"_s, u"layoutShowGeometryCoordinates"_s);
+    selection->addStretch();
+    form->addRow(u"Подписи выделения"_s, selection);
     auto* snap = new QCheckBox(u"Привязка к сетке и видимым ориентирам (Alt — временно отключить)"_s, this);
     snap->setObjectName(u"layoutSnap"_s);
     snap->setChecked(settings_.snapEnabled);
@@ -152,6 +165,16 @@ CanvasLayoutDialog::CanvasLayoutDialog(CanvasLayoutSettings settings, QSize page
 
 CanvasLayoutSettings CanvasLayoutDialog::settings() const { return settings_; }
 
+void CanvasLayoutDialog::setGeometryLabelsVisible(bool sizes, bool coordinates)
+{
+    geometrySizes_->setChecked(sizes);
+    geometryCoordinates_->setChecked(coordinates);
+}
+
+bool CanvasLayoutDialog::geometrySizesVisible() const { return geometrySizes_->isChecked(); }
+
+bool CanvasLayoutDialog::geometryCoordinatesVisible() const { return geometryCoordinates_->isChecked(); }
+
 double CanvasLayoutDialog::unitsPerDot() const
 {
     return settings_.unit == CanvasUnit::Dots ? 1.0 : 25.4 / dpi_;
@@ -197,7 +220,7 @@ void CanvasLayoutDialog::updateHint()
     if (!hint_ || !apply_) return;
     const bool valid = !settings_.marginsVisible || settings_.margin * 2 < std::min(page_.width(), page_.height());
     apply_->setEnabled(valid);
-    hint_->setText(valid ? u"Фактически: сетка %1 dots (%2 мм), отступ %3 dots (%4 мм). Настройки сохраняются рядом с ZPL при сохранении этикетки."_s
+    hint_->setText(valid ? u"Фактически: сетка %1 dots (%2 мм), отступ %3 dots (%4 мм). Настройки холста сохраняются рядом с ZPL при сохранении этикетки; подписи выделения — общая настройка редактора."_s
         .arg(settings_.gridStep).arg(settings_.gridStep * 25.4 / dpi_, 0, 'f', 3)
         .arg(settings_.margin).arg(settings_.margin * 25.4 / dpi_, 0, 'f', 3)
         : u"Отступ должен быть меньше половины ширины и высоты этикетки."_s);

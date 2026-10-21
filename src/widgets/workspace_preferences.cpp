@@ -94,6 +94,8 @@ WorkspacePreferences loadWorkspacePreferences()
     preferences.editorLayout = normalizedEditorLayout(settings.value(u"editor/layout"_s, 0).toString().toInt());
     preferences.codeOnLeft = readCodeOnLeft(settings);
     preferences.selectionSync = settings.value(u"editor/selectionSync"_s, true).toBool();
+    preferences.geometrySizes = settings.value(u"canvas/geometrySizes"_s, true).toBool();
+    preferences.geometryCoordinates = settings.value(u"canvas/geometryCoordinates"_s, true).toBool();
     preferences.editorSizes = readSizes(settings, u"editor/sizes"_s, {500, 500});
     preferences.canvasZoomPercent = readCanvasZoomPercent(settings);
     preferences.hiddenToolbarCommands = settings.value(u"toolbar/hiddenCommands"_s).toStringList();
@@ -126,6 +128,8 @@ bool saveWorkspacePreferences(const WorkspacePreferences& preferences)
     settings.setValue(u"editor/selectionSync"_s, preferences.selectionSync);
     settings.setValue(u"editor/sizes"_s, encodedSizes(preferences.editorSizes, {500, 500}));
     settings.setValue(u"canvas/zoomPercent"_s, normalizedCanvasZoomPercent(preferences.canvasZoomPercent));
+    settings.setValue(u"canvas/geometrySizes"_s, preferences.geometrySizes);
+    settings.setValue(u"canvas/geometryCoordinates"_s, preferences.geometryCoordinates);
     settings.setValue(u"toolbar/hiddenCommands"_s, preferences.hiddenToolbarCommands);
     settings.sync();
     return settings.status() == QSettings::NoError;

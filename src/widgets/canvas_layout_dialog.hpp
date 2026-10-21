@@ -5,6 +5,7 @@
 #include <QDialog>
 #include <QSize>
 
+class QCheckBox;
 class QDoubleSpinBox;
 class QLabel;
 class QListWidget;
@@ -17,6 +18,10 @@ class CanvasLayoutDialog final : public QDialog {
 public:
     CanvasLayoutDialog(CanvasLayoutSettings settings, QSize page, int dpi, QWidget* parent = nullptr);
     [[nodiscard]] CanvasLayoutSettings settings() const;
+    // Selection annotations are editor-wide workspace preferences, not label layout.
+    void setGeometryLabelsVisible(bool sizes, bool coordinates);
+    [[nodiscard]] bool geometrySizesVisible() const;
+    [[nodiscard]] bool geometryCoordinatesVisible() const;
 
 private:
     void refreshUnits();
@@ -27,6 +32,8 @@ private:
     CanvasLayoutSettings settings_;
     QSize page_;
     int dpi_;
+    QCheckBox* geometrySizes_ = nullptr;
+    QCheckBox* geometryCoordinates_ = nullptr;
     QDoubleSpinBox* step_ = nullptr;
     QDoubleSpinBox* margin_ = nullptr;
     QDoubleSpinBox* position_[2]{};

@@ -53,6 +53,7 @@ private slots:
     void recoveryPreservesDraftAndIsExclusive();
     void corruptRecoveryDoesNotReplaceCurrentDocument();
     void pendingSourceTriggersDebouncedRecovery();
+    void backgroundRecoveryFollowsLatestEdit();
     void lockedGroupMutationsAreAtomic();
 };
 
@@ -337,11 +338,66 @@ void ProjectTests::pendingSourceTriggersDebouncedRecovery()
     DocumentSession session;
     session.reset(editableDocument());
     session.setPendingSource(u"unfinished"_s);
-    QTRY_VERIFY_WITH_TIMEOUT(!session.recoveryFilePath().isEmpty(), 4000);
+    // The path is reserved first; a background thread then writes the file.
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(session.recoveryFilePath()), 4000);
     const auto path = session.recoveryFilePath();
-    QVERIFY(QFileInfo::exists(path));
     session.clearPendingSource();
     QVERIFY(!session.modified());
+    QVERIFY(!QFileInfo::exists(path));
+}
+
+void ProjectTests::backgroundRecoveryFollowsLatestEdit()
+{
+    auto document = editableDocument();
+    auto picture = makeElement(ElementType::Image, {120, 40});
+    picture.image = QImage(64, 48, QImage::Format_Grayscale8);
+    picture.image.fill(Qt::white);
+    picture.width = 64; picture.height = 48;
+    document.elements.append(picture);
+    // Unchanged images reuse their PNG text; a changed copy must not.
+    const auto first = encodeProject({document, {}, {}});
+    QVERIFY(first);
+    QCOMPARE(encodeProject({document, {}, {}}).value_or(QByteArray{}), *first);
+    auto edited = document;
+    edited.elements[1].image.setPixel(3, 4, 0);
+    const auto changed = decodeProject(encodeProject({edited, {}, {}}).value_or(QByteArray{}));
+    QVERIFY(changed);
+    QCOMPARE(qGray(changed->document.elements[1].image.pixel(3, 4)), 0);
+    QCOMPARE(qGray(document.elements[1].image.pixel(3, 4)), 255);
+
+    DocumentSession session;
+    QSignalSpy warnings(&session, &DocumentSession::recoveryWarning);
+    session.reset(document);
+    // Wait with stat only: an open reader on Windows blocks the atomic replace.
+    const auto writtenAt = [&session] {
+        const QFileInfo file(session.recoveryFilePath());
+        return file.exists() ? file.lastModified() : QDateTime{};
+    };
+    const auto recordedX = [&session] {
+        QFile file(session.recoveryFilePath());
+        if (!file.open(QIODevice::ReadOnly)) return -1;
+        const auto root = QJsonDocument::fromJson(file.readAll()).object();
+        const auto project = decodeProject(QJsonDocument(root.value(u"project"_s).toObject()).toJson());
+        return project ? project->document.elements[0].x : -1;
+    };
+    QVERIFY(session.moveElements({0}, {5, 0}));
+    QTRY_VERIFY_WITH_TIMEOUT(writtenAt().isValid(), 4000);
+    QCOMPARE(recordedX(), 37);
+    // Rapid edits end in one snapshot of the latest state.
+    const auto firstWrite = writtenAt();
+    QVERIFY(session.moveElements({0}, {5, 0}));
+    QVERIFY(session.moveElements({0}, {5, 0}));
+    QTRY_VERIFY_WITH_TIMEOUT(writtenAt() != firstWrite, 4000);
+    QCOMPARE(recordedX(), 47);
+    QVERIFY2(warnings.isEmpty(), qPrintable(warnings.isEmpty() ? QString{} : warnings.first().first().toString()));
+    const auto path = session.recoveryFilePath();
+    // Discard as the debounced write starts: it waits for that write, and
+    // neither the write nor its queued completion recreates the file.
+    QVERIFY(session.moveElements({0}, {5, 0}));
+    QTest::qWait(1505);
+    session.discardRecovery();
+    QVERIFY(!QFileInfo::exists(path));
+    QTest::qWait(200);
     QVERIFY(!QFileInfo::exists(path));
 }
 

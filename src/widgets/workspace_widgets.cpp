@@ -6,6 +6,7 @@
 #include <QFormLayout>
 #include <QPainter>
 #include <QSpinBox>
+#include <QStyle>
 #include <QVBoxLayout>
 
 namespace Designer {
@@ -34,6 +35,20 @@ void ObjectBadge::paintEvent(QPaintEvent* event)
     p.setBrush(designerColor(outline ? DesignerColor::PanelAlternate : DesignerColor::Tint));
     p.drawRoundedRect(QRectF(rect()).adjusted(.5, .5, -.5, -.5), outline ? 3 : 5, outline ? 3 : 5); p.end();
     QLabel::paintEvent(event);
+}
+
+QSize ElidedLabel::minimumSizeHint() const
+{
+    return {fontMetrics().horizontalAdvance(QStringLiteral("W…")), QLabel::minimumSizeHint().height()};
+}
+
+void ElidedLabel::paintEvent(QPaintEvent*)
+{
+    QStringList lines = text().split(u'\n');
+    for (auto& line : lines) line = fontMetrics().elidedText(line, Qt::ElideRight, contentsRect().width());
+    QPainter p(this);
+    style()->drawItemText(&p, contentsRect(), QStyle::visualAlignment(layoutDirection(), alignment()),
+                          palette(), isEnabled(), lines.join(u'\n'), foregroundRole());
 }
 
 QLabel* caption(const QString& text, QWidget* parent, int size) {
@@ -69,8 +84,8 @@ void setPropertyRowVisible(QFormLayout* form, QWidget* control, bool visible) {
 
 
 
-QLabel* heading(const QString& text, QWidget* parent) {
-    auto* label = new QLabel(text, parent);
+QLabel* heading(const QString& text, QWidget* parent, bool elide) {
+    auto* label = elide ? new ElidedLabel(text, parent) : new QLabel(text, parent);
     auto font = label->font(); font.setWeight(QFont::DemiBold); font.setPixelSize(12);
     label->setFont(font);
     return label;

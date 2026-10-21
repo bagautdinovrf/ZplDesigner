@@ -3,6 +3,9 @@
 #include "data_matrix_values.hpp"
 #include "preview_pages.hpp"
 
+#include <QCache>
+#include <QMutex>
+
 #include <algorithm>
 #include <type_traits>
 #include <utility>
@@ -57,6 +60,43 @@ QRect inkBounds(const QImage& image)
             }
     }
     return right >= left ? QRect(QPoint(left, top), QPoint(right, bottom)) : QRect{};
+}
+
+// One field rendered alone on an otherwise empty label: its ink, and the first
+// error a printer preview would reject it for.
+struct IsolatedField {
+    QRect ink;
+    QString error;
+};
+
+// Every preview refresh measures each text, barcode and image field alone. A
+// canvas drag changes one origin, so the other fields' isolated sources are
+// unchanged; the same source and dpi always render the same, so their results
+// are reused instead of repeating one full-label render per field.
+IsolatedField renderIsolatedField(const QString& source, int dpi)
+{
+    static QMutex mutex;
+    // Cost is key length: bounded memory even for embedded graphics.
+    static QCache<QString, IsolatedField> cache(maximumSource);
+    const QString key = QString::number(dpi) + u'\n' + source;
+    {
+        const QMutexLocker lock(&mutex);
+        if (const auto* cached = cache.object(key)) return *cached;
+    }
+    IsolatedField field;
+    const auto rendered = checkedRender(source, dpi);
+    if (!rendered) field.error = rendered.error();
+    else {
+        for (const auto& diagnostic : rendered->diagnostics)
+            if (diagnostic.severity == QtZpl::Severity::Error) {
+                field.error = diagnosticText(diagnostic);
+                break;
+            }
+        if (!rendered->labels.isEmpty()) field.ink = inkBounds(rendered->labels.first());
+    }
+    const QMutexLocker lock(&mutex);
+    cache.insert(key, new IsolatedField(field), key.size());
+    return field;
 }
 
 std::expected<Preview, QString> renderPreviewImpl(const DesignDocument& templateDocument, bool editor, int pageIndex = 0)
@@ -141,9 +181,7 @@ std::expected<Preview, QString> renderPreviewImpl(const DesignDocument& template
         single.defaultOrientation = document.defaultOrientation;
         single.defaultJustification = document.defaultJustification;
         single.elements.append(visible);
-        const auto individual = checkedRender(printerZpl(single, false), single.dpi);
-        QRect bounds;
-        if (individual && !individual->labels.isEmpty()) bounds = inkBounds(individual->labels.first());
+        QRect bounds = renderIsolatedField(printerZpl(single, false), single.dpi).ink;
         if (bounds.isEmpty()) bounds = QRect(element.x, element.y, std::max(8, element.width), std::max(8, element.height));
         preview.bounds.append(mapDocumentRect(document, bounds));
     }
@@ -275,15 +313,7 @@ std::expected<Preview, QString> renderEditorPreview(const DesignDocument& docume
             if (!resolved) error = resolved.error();
             else {
                 error = validateElement(resolved->elements.first(), false);
-                if (error.isEmpty()) {
-                    const auto rendered = checkedRender(printerZpl(*resolved, false), document.dpi);
-                    if (!rendered) error = rendered.error();
-                    else for (const auto& diagnostic : rendered->diagnostics)
-                        if (diagnostic.severity == QtZpl::Severity::Error) {
-                            error = diagnosticText(diagnostic);
-                            break;
-                        }
-                }
+                if (error.isEmpty()) error = renderIsolatedField(printerZpl(*resolved, false), document.dpi).error;
             }
         }
         if (!error.isEmpty()) {

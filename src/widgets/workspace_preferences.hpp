@@ -25,6 +25,8 @@ struct WorkspacePreferences {
     bool selectionSync = true;
     QList<int> editorSizes{500, 500};
     int canvasZoomPercent = 0; // 0 keeps the label fitted to the canvas.
+    bool geometrySizes = true;       // Selection dimension lines on the canvas.
+    bool geometryCoordinates = true; // Selection ZPL origin coordinates on the canvas.
     QStringList hiddenToolbarCommands;
 };
 
