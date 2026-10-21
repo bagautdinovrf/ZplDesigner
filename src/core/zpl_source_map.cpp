@@ -1,9 +1,18 @@
 #include "zpl_source_map.hpp"
+#include "design_internal.hpp"
 #include "eac_mark.hpp"
 
 #include <QtZpl/qtzpl.hpp>
 
 namespace Designer {
+
+qsizetype Internal::commandEnd(const QtZpl::Document& document, const QtZpl::Command& command)
+{
+    const auto text = document.sourceText(command.sourceSpan);
+    qsizetype length = text.size();
+    while (length > 0 && text[length - 1].isSpace()) --length;
+    return command.sourceSpan.start + length;
+}
 
 qsizetype elementFieldCount(const Element& element)
 {
@@ -35,10 +44,10 @@ QList<SourceElementRange> sourceElementRanges(const DesignDocument& document,
         if (std::holds_alternative<QtZpl::FieldOrigin>(command.payload)
             || std::holds_alternative<QtZpl::FieldTypeset>(command.payload)) {
             if (fieldStart >= 0) return {};
-            fieldStart = command.offset;
+            fieldStart = command.sourceSpan.start;
         } else if (std::holds_alternative<QtZpl::FieldSeparator>(command.payload) && fieldStart >= 0) {
             if (ranges.size() >= fieldOwners.size()) return {};
-            ranges.append({fieldStart, command.offset + 3 - fieldStart, fieldOwners[ranges.size()]});
+            ranges.append({fieldStart, Internal::commandEnd(*parsed, command) - fieldStart, fieldOwners[ranges.size()]});
             fieldStart = -1;
         } else if (std::holds_alternative<QtZpl::Comment>(command.payload) && fieldStart >= 0) {
             // Editable documents never contain comments inside a field. Avoid

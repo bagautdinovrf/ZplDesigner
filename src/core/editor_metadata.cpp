@@ -1,6 +1,7 @@
 #include "editor_metadata.hpp"
 #include "element_clipboard.hpp"
 #include "zpl_source_map.hpp"
+#include "design_internal.hpp"
 #include <QtZpl/qtzpl.hpp>
 #include <QCryptographicHash>
 #include <QJsonArray>
@@ -14,6 +15,16 @@ namespace {
 constexpr QStringView prefix = u"QTZPL_EDITOR_V1:";
 constexpr QStringView modernPrefix = u"QTZPL_EDITOR_V2:";
 
+// A metadata comment is written as ^FX...^FS directly after ^XA. Remove
+// exactly that text and keep the line break that followed the original ^XA.
+qsizetype metadataEnd(const QtZpl::Document& parsed, qsizetype index)
+{
+    const auto& commands = parsed.labels().first().commands();
+    const bool separator = index + 1 < commands.size()
+        && std::holds_alternative<QtZpl::FieldSeparator>(commands[index + 1].payload);
+    return Internal::commandEnd(parsed, commands[separator ? index + 1 : index]);
+}
+
 QString withoutMetadata(QString source)
 {
     const auto parsed = QtZpl::parse(source);
@@ -22,10 +33,7 @@ QString withoutMetadata(QString source)
     for (qsizetype i = commands.size() - 1; i >= 0; --i) {
         const auto* comment = std::get_if<QtZpl::Comment>(&commands[i].payload);
         if (!comment || (!comment->text.startsWith(prefix) && !comment->text.startsWith(modernPrefix))) continue;
-        const qsizetype end = i + 1 < commands.size()
-            && std::holds_alternative<QtZpl::FieldSeparator>(commands[i + 1].payload)
-            ? commands[i + 1].offset + 3 : commands[i].offset + commands[i].source.size();
-        source.remove(commands[i].offset, end - commands[i].offset);
+        source.remove(commands[i].sourceSpan.start, metadataEnd(*parsed, i) - commands[i].sourceSpan.start);
     }
     return source;
 }
@@ -66,7 +74,7 @@ QString writeEditorMetadata(const DesignDocument& document, QString source)
         const auto encoded = QJsonDocument(metadata).toJson(QJsonDocument::Compact).toBase64();
         const auto parsed = QtZpl::parse(source);
         if (!parsed || parsed->labels().size() != 1) return source;
-        source.insert(parsed->labels().first().commands().first().offset + 3,
+        source.insert(Internal::commandEnd(*parsed, parsed->labels().first().commands().first()),
             u"^FX"_s + modernPrefix.toString() + QString::fromLatin1(encoded) + u"^FS"_s);
         return source;
     }
@@ -80,10 +88,7 @@ QString writeEditorMetadata(const DesignDocument& document, QString source)
     for (qsizetype i = commands.size() - 1; i >= 0; --i) {
         const auto* comment = std::get_if<QtZpl::Comment>(&commands[i].payload);
         if (!comment || !comment->text.startsWith(prefix)) continue;
-        const qsizetype end = i + 1 < commands.size()
-            && std::holds_alternative<QtZpl::FieldSeparator>(commands[i + 1].payload)
-            ? commands[i + 1].offset + 3 : commands[i].offset + commands[i].source.size();
-        source.remove(commands[i].offset, end - commands[i].offset);
+        source.remove(commands[i].sourceSpan.start, metadataEnd(*parsed, i) - commands[i].sourceSpan.start);
     }
     QJsonObject groups;
     QJsonArray freeImages;
@@ -95,7 +100,7 @@ QString writeEditorMetadata(const DesignDocument& document, QString source)
     if (groups.isEmpty() && freeImages.isEmpty()) return source;
     const QJsonObject metadata{{u"count"_s, int(document.elements.size())}, {u"groups"_s, groups}, {u"freeImages"_s, freeImages}};
     const auto encoded = QJsonDocument(metadata).toJson(QJsonDocument::Compact).toBase64();
-    source.insert(commands.first().offset + 3,
+    source.insert(Internal::commandEnd(*parsed, commands.first()),
         u"^FX"_s + prefix.toString() + QString::fromLatin1(encoded) + u"^FS"_s);
     return source;
 }

@@ -53,6 +53,9 @@ private slots:
     void textBlockResizePreservesIndependentAxes();
     void barcodeResizeKeepsCaptionAndModules();
     void resizeLimitsAndUniformAxes();
+    void sourceSpansKeepLineBreaksAndLabelBounds();
+    void metadataWithoutSeparatorIsRemovedExactly();
+    void graphicImportDecodesPayloadDirectly();
 };
 
 void DocumentTest::sampleRoundTrip()
@@ -1460,6 +1463,107 @@ void DocumentTest::repeatedPreviewsKeepExactFieldMeasurements()
     QVERIFY(restored);
     QCOMPARE(restored->image, first->image);
     QCOMPARE(restored->bounds, first->bounds);
+}
+
+void DocumentTest::sourceSpansKeepLineBreaksAndLabelBounds()
+{
+    // ^PW parameters continue across a line break; the patch replaces the whole
+    // command and keeps the CRLF separating it from the next command.
+    const QString source = u"^XA\r\n^PW6\r\n00\r\n^LL300\r\n^FWN\r\n"
+        "^FO10,10^GB50,50,2^FS\r\n^XZ\r\n"_s;
+    auto imported = fromZpl(source);
+    QVERIFY(imported.has_value());
+    QVERIFY2(imported->visualEditable, qPrintable(imported->importNotes.join(u'\n')));
+    QCOMPARE(imported->width, 600);
+    imported->originalZpl.clear();
+    imported->width = 640;
+    imported->height = 320;
+    auto edited = toZpl(*imported);
+    QCOMPARE(edited, u"^XA\r\n^PW640\r\n^LL320\r\n^FWN\r\n^FO10,10^GB50,50,2^FS\r\n^XZ\r\n"_s);
+
+    imported->printMirror = true;
+    edited = toZpl(*imported);
+    // Changed label settings regenerate ^FW in place and insert the full set
+    // after ^XA; every original separator survives both rewrites.
+    QVERIFY2(edited.startsWith(u"^XA^FWN,0^PMY^PON^LRN\r\n^PW640\r\n^LL320\r\n^FWN,0\r\n^CI28^FO10,10"_s), qPrintable(edited));
+    auto reopened = fromZpl(edited);
+    QVERIFY(reopened.has_value());
+    QVERIFY2(reopened->visualEditable, qPrintable(reopened->importNotes.join(u'\n')));
+    QVERIFY(reopened->printMirror);
+    QCOMPARE(reopened->width, 640);
+
+    // Label::sourceSpan ends right after ^XZ. Text the printer ignores after it
+    // is outside the label, exactly like text before ^XA, and stays verbatim.
+    const QString trailing = u"^XA^FO10,10^GB50,50,2^FS^XZ ignored by the printer\r\n"_s;
+    const auto outside = fromZpl(trailing);
+    QVERIFY(outside.has_value());
+    QVERIFY(!outside->visualEditable);
+    QVERIFY(outside->importNotes.contains(u"Команды вне этикетки сохранены в исходном ZPL."_s));
+    QCOMPARE(toZpl(*outside), trailing);
+}
+
+void DocumentTest::metadataWithoutSeparatorIsRemovedExactly()
+{
+    DesignDocument document;
+    auto box = makeElement(ElementType::Box, {10, 10});
+    box.locked = true;
+    document.elements = {box};
+    QString source = toZpl(document);
+    const auto metadata = source.indexOf(u"^FXQTZPL_EDITOR_V2:");
+    QVERIFY(metadata > 0);
+    // Drop the comment's ^FS and wrap its payload. The comment then reaches
+    // the next command, and its normalized text no longer has the source length.
+    source.remove(source.indexOf(u"^FS", metadata), 3);
+    source.insert(metadata + 40, u"\r\n"_s);
+    const auto reopened = fromZpl(source);
+    QVERIFY(reopened.has_value());
+    QVERIFY2(reopened->visualEditable, qPrintable(reopened->importNotes.join(u'\n')));
+    QCOMPARE(reopened->elements.size(), 1);
+    QVERIFY(reopened->elements.first().locked);
+}
+
+void DocumentTest::graphicImportDecodesPayloadDirectly()
+{
+    const auto black = [](const QImage& image, int x, int y) { return qGray(image.pixel(x, y)) < 128; };
+    const auto rowBits = [&](const QImage& image, int y) {
+        QString bits;
+        for (int x = 0; x < image.width(); ++x) bits += black(image, x, y) ? u'1' : u'0';
+        return bits;
+    };
+
+    // Binary data may contain LF and the command prefix as ordinary bytes.
+    const QString binary = u"^XA^PW40^LL20^FO4,2^GFB,4,4,2,"_s
+        + QChar(0x0a) + QChar(0x5e) + QChar(0x80) + QChar(0x01) + u"^FS^XZ"_s;
+    auto imported = fromZpl(binary);
+    QVERIFY(imported.has_value());
+    QVERIFY2(imported->visualEditable, qPrintable(imported->importNotes.join(u'\n')));
+    QCOMPARE(imported->elements.size(), 1);
+    auto image = imported->elements.first();
+    QCOMPARE(image.type, ElementType::Image);
+    QCOMPARE(QPoint(image.x, image.y), QPoint(4, 2));
+    QCOMPARE(QSize(image.width, image.height), QSize(16, 2));
+    QCOMPARE(image.image.size(), QSize(16, 2));
+    QCOMPARE(rowBits(image.image, 0), u"0000101001011110"_s);
+    QCOMPARE(rowBits(image.image, 1), u"1000000000000001"_s);
+
+    // ASCII compression: ',' fills the row with zeroes, ':' repeats it and an
+    // omitted complete final row stays blank.
+    imported = fromZpl(u"^XA^PW40^LL20^FO0,0^GFA,6,6,2,F0,:^FS^XZ"_s);
+    QVERIFY(imported.has_value());
+    QVERIFY2(imported->visualEditable, qPrintable(imported->importNotes.join(u'\n')));
+    image = imported->elements.first();
+    QCOMPARE(image.image.size(), QSize(16, 3));
+    QCOMPARE(rowBits(image.image, 0), u"1111000000000000"_s);
+    QCOMPARE(rowBits(image.image, 1), u"1111000000000000"_s);
+    QCOMPARE(rowBits(image.image, 2), u"0000000000000000"_s);
+
+    // Decoder errors keep the library's machine-readable code in the note.
+    const QString unsupported = u"^XA^PW40^LL20^FO0,0^GFC,2,2,1,ab^FS^XZ"_s;
+    const auto source = fromZpl(unsupported);
+    QVERIFY(source.has_value());
+    QVERIFY(!source->visualEditable);
+    QVERIFY2(source->importNotes.join(u'\n').contains(u"graphic-field-compression"), qPrintable(source->importNotes.join(u'\n')));
+    QCOMPARE(toZpl(*source), unsupported);
 }
 
 QTEST_MAIN(DocumentTest)

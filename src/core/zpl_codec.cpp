@@ -176,18 +176,16 @@ QString replaceLabelSettings(QString source, const DesignDocument& document)
             || std::holds_alternative<QtZpl::PrintMirror>(command.payload)
             || std::holds_alternative<QtZpl::PrintOrientation>(command.payload)
             || std::holds_alternative<QtZpl::LabelReverse>(command.payload)) {
-            // Command::source removes CR/LF while offsets refer to the actual
-            // input. Keep original trailing whitespace and consume any line
-            // breaks inside parameters without leaving their final character.
-            qsizetype end = index + 1 < commands.size() ? commands[index + 1].offset : source.size();
-            while (end > command.offset + 3 && source[end - 1].isSpace()) --end;
-            replacements.append({command.offset, end - command.offset,
+            // Replace the exact spelling, including line breaks inside its
+            // parameters, and keep the whitespace before the next command.
+            const qsizetype start = command.sourceSpan.start;
+            replacements.append({start, commandEnd(*parsed, command) - start,
                 std::holds_alternative<QtZpl::FieldDirection>(command.payload)
                     ? u"^FW%1,%2"_s.arg(document.defaultOrientation).arg(document.defaultJustification) : QString{}});
         }
     }
     for (auto it = replacements.crbegin(); it != replacements.crend(); ++it) source.replace(it->offset, it->length, it->text);
-    source.insert(parsed->labels().first().commands().first().offset + 3, labelSettings(document, true));
+    source.insert(commandEnd(*parsed, commands.first()), labelSettings(document, true));
     return source;
 }
 } // namespace
@@ -437,17 +435,15 @@ QString Internal::printerZpl(const DesignDocument& document, bool preservePlaceh
                     } else if (std::holds_alternative<QtZpl::LabelLength>(it->payload)) {
                         hasHeight = true; replacement = u"^LL%1"_s.arg(document.height);
                     }
-                    if (!replacement.isEmpty()) {
-                        qsizetype end = it->offset + 3;
-                        while (end < source.size() && source[end] != u'^' && source[end] != u'~') ++end;
-                        while (end > it->offset + 3 && source[end - 1].isSpace()) --end;
-                        source.replace(it->offset, end - it->offset, replacement);
-                    }
+                    // Spans follow the active ^CC/^CT prefixes; never search
+                    // for a literal caret or tilde to find the command's end.
+                    if (!replacement.isEmpty())
+                        source.replace(it->sourceSpan.start, commandEnd(*parsed, *it) - it->sourceSpan.start, replacement);
                 }
                 QString missing;
                 if (!hasWidth) missing += u"^PW%1"_s.arg(document.width);
                 if (!hasHeight) missing += u"^LL%1"_s.arg(document.height);
-                source.insert(commands.first().offset + 3, missing);
+                source.insert(commandEnd(*parsed, commands.first()), missing);
             }
         }
         return settingsChanged ? replaceLabelSettings(std::move(source), document) : source;
@@ -489,8 +485,11 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
             && (command.source.contains(u"{{") || command.source.contains(u"[["));
     });
     for (const auto& diagnostic : parsed->diagnostics()) raw(diagnosticText(diagnostic));
-    if (!source.left(label.commands().first().offset).trimmed().isEmpty()
-        || !source.mid(label.commands().last().offset + label.commands().last().source.size()).trimmed().isEmpty())
+    // Label::sourceSpan ends right after ^XZ; its normalized source may still
+    // carry ignored trailing text, which is outside the label.
+    const auto labelSpan = label.sourceSpan();
+    if (!source.first(labelSpan.start).trimmed().isEmpty()
+        || !source.sliced(labelSpan.start + labelSpan.length).trimmed().isEmpty())
         raw(u"Команды вне этикетки сохранены в исходном ZPL."_s);
     Element current = makeElement(ElementType::Text, {0, 0});
     QChar currentFont = u'A';
@@ -568,7 +567,7 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                 if (decoded && templateStage == TemplateStage::None && !haveOrigin && !fieldProduced && !barcode) {
                     templateText = *decoded;
                     templateStage = TemplateStage::Separator;
-                    fieldStart = command.offset;
+                    fieldStart = command.sourceSpan.start;
                 } else if (haveOrigin || fieldProduced || value.text.startsWith(templateMetadataPrefix))
                     raw(u"Комментарий внутри поля или некорректные метаданные сохранены в исходном ZPL."_s);
             }
@@ -579,9 +578,9 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                 if (value.x || value.y) raw(u"Смещение ^LH сохранено в режиме ZPL."_s);
             } else if constexpr (std::is_same_v<T, QtZpl::FieldOrigin> || std::is_same_v<T, QtZpl::FieldTypeset>) {
                 if (haveOrigin) raw(u"Несколько начал ^FO в одном поле сохранены в режиме ZPL."_s);
-                if (source.sliced(previousFieldEnd, command.offset - previousFieldEnd).contains(u"^FH", Qt::CaseInsensitive))
+                if (source.sliced(previousFieldEnd, command.sourceSpan.start - previousFieldEnd).contains(u"^FH", Qt::CaseInsensitive))
                     raw(u"Экранирование ^FH перед началом поля сохранено в режиме ZPL."_s);
-                if (fieldStart < 0) fieldStart = command.offset;
+                if (fieldStart < 0) fieldStart = command.sourceSpan.start;
                 const auto directionState = u"^FW%1,%2"_s.arg(activeDirection).arg(activeJustification);
                 fieldSourceState = directionState + u"^CI%1^A0%2,%3,%4^BY%5,%6,%7"_s.arg(charset).arg(current.orientation)
                     .arg(current.fontHeight).arg(current.fontWidth).arg(module).arg(barcodeRatio, 0, 'g', 8).arg(barcodeHeight);
@@ -607,7 +606,7 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                     const auto prefix = source.sliced(previousFieldEnd, fieldStart - previousFieldEnd);
                     if (previousFieldEnd == 0) result.sourcePreamble = prefix;
                     else element.sourcePrefix = prefix;
-                    previousFieldEnd = command.offset + 3;
+                    previousFieldEnd = commandEnd(*parsed, command);
                     element.sourceZpl = source.sliced(fieldStart, previousFieldEnd - fieldStart);
                     if ((element.type == ElementType::Image || element.type == ElementType::Box
                          || element.type == ElementType::Line || element.type == ElementType::Ellipse
@@ -912,19 +911,27 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
             } else if constexpr (std::is_same_v<T, QtZpl::GraphicField>) {
                 Element element = current;
                 element.type = ElementType::Image;
-                element.width = value.bytesPerRow * 8;
-                element.height = value.totalBytes / value.bytesPerRow;
-                // QtZpl owns graphic decoding (ASCII repeats, Z64 and binary).
-                // Render the isolated field through that same library, then
-                // retain the original token spelling until the image changes.
-                const auto graphic = checkedRender(header(element.width, element.height)
-                    + u"^FO0,0"_s + command.source + u"^FS^XZ"_s, result.dpi);
-                if (!graphic || graphic->labels.isEmpty()) {
-                    raw(graphic ? u"QtZpl не вернул декодированное изображение."_s : graphic.error()); return;
+                // QtZpl owns graphic decoding (ASCII repeats, Z64 and binary),
+                // shared with its renderer. Decode the parsed payload directly
+                // and retain the original token spelling until the image changes.
+                QtZpl::GraphicDecodeOptions options;
+                options.maxDecodedBytes = maximumPixels / 8;
+                const auto decoded = QtZpl::decodeGraphic(value, options);
+                if (!decoded) {
+                    raw(u"%1: %2"_s.arg(decoded.error().code, decoded.error().message)); return;
                 }
-                for (const auto& diagnostic : graphic->diagnostics)
-                    if (diagnostic.severity == QtZpl::Severity::Error) { raw(diagnosticText(diagnostic)); return; }
-                element.image = graphic->labels.first().convertToFormat(QImage::Format_Grayscale8);
+                QImage image(decoded->size, QImage::Format_Grayscale8);
+                image.fill(255);
+                const auto* bits = reinterpret_cast<const uchar*>(decoded->bytes.constData());
+                for (int y = 0; y < image.height(); ++y) {
+                    const uchar* row = bits + qsizetype(y) * decoded->bytesPerRow;
+                    uchar* pixels = image.scanLine(y);
+                    for (int x = 0; x < image.width(); ++x)
+                        if (row[x / 8] & (0x80U >> (x % 8))) pixels[x] = 0;
+                }
+                element.width = image.width();
+                element.height = image.height();
+                element.image = std::move(image);
                 element.threshold = 128; element.dither = false;
                 if (reverse) raw(u"Инверсия ^GF сохранена в режиме ZPL."_s);
                 append(element);
@@ -938,8 +945,9 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
     if (previousFieldEnd > 0) {
         result.sourceEpilogue = source.sliced(previousFieldEnd);
     } else if (result.elements.isEmpty()) {
-        result.sourcePreamble = source.first(label.commands().last().offset);
-        result.sourceEpilogue = source.sliced(label.commands().last().offset);
+        const qsizetype end = label.commands().last().sourceSpan.start;
+        result.sourcePreamble = source.first(end);
+        result.sourceEpilogue = source.sliced(end);
     }
     result.sourceWidth = result.width;
     result.sourceHeight = result.height;

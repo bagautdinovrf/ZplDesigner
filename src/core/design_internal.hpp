@@ -18,6 +18,10 @@ QString diagnosticText(const QtZpl::Diagnostic& value);
 QString validateElement(const Element& element, bool preservePlaceholders = true, int dpi = 0);
 QString validateParsed(const QtZpl::Document& parsed, qsizetype* errorOffset = nullptr);
 std::expected<QtZpl::RenderResult, QString> checkedRender(const QString& source, int dpi);
+// QtZpl command spans reach the next command prefix, separating whitespace
+// included. This is the end of the command's own text in document.source(),
+// so a removed, replaced or followed command keeps the surrounding line breaks.
+qsizetype commandEnd(const QtZpl::Document& document, const QtZpl::Command& command);
 // Avoid serializing editor snapshots for each canvas/isolated-field render.
 QString printerZpl(const DesignDocument& document, bool preservePlaceholders);
 } // namespace Designer::Internal

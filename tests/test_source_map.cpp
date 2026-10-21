@@ -14,6 +14,7 @@ private slots:
     void dataMatrixMetadataIsNotAnObject();
     void regeneratedImportedFieldsKeepTheirOwners();
     void ambiguousSourcesHaveNoMapping();
+    void fieldRangesStopAtTheirSeparator();
 };
 
 void SourceMapTest::generatedFieldsUseUtf16Offsets()
@@ -177,6 +178,24 @@ void SourceMapTest::ambiguousSourcesHaveNoMapping()
     QVERIFY(sourceElementRanges(document, u"^XA^FO0,0^FDx^XZ"_s).isEmpty());
     document.elements.append(makeElement(ElementType::Text));
     QVERIFY(sourceElementRanges(document, source).isEmpty());
+}
+
+void SourceMapTest::fieldRangesStopAtTheirSeparator()
+{
+    // A QtZpl ^FS span reaches the next command. The field range ends with its
+    // own ^FS and leaves the following spaces and line break to the next field.
+    const auto first = u"^FO10,10^GB50,50,2^FS"_s;
+    const auto second = u"^FO10,80^GB20,20,2^FS"_s;
+    const auto source = u"^XA\r\n^PW300^LL180\r\n"_s + first + u"  \r\n"_s + second + u"\r\n^XZ\r\n"_s;
+    const auto imported = fromZpl(source);
+    QVERIFY2(imported.has_value(), qPrintable(imported ? QString{} : imported.error()));
+    QVERIFY2(imported->visualEditable, qPrintable(imported->importNotes.join(u'\n')));
+    QCOMPARE(imported->elements[1].sourcePrefix, u"  \r\n"_s);
+
+    const auto ranges = sourceElementRanges(*imported, source);
+    QCOMPARE(ranges.size(), 2);
+    QCOMPARE(source.sliced(ranges[0].start, ranges[0].length), first);
+    QCOMPARE(source.sliced(ranges[1].start, ranges[1].length), second);
 }
 
 QTEST_MAIN(SourceMapTest)
