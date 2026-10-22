@@ -1,5 +1,6 @@
 #include "label_printing.hpp"
 #include "data_matrix_values.hpp"
+#include "preview_pages.hpp"
 
 #include <QBuffer>
 #include <QDeadlineTimer>
@@ -12,7 +13,6 @@
 #include <QTcpSocket>
 #include <QThread>
 #include <QMap>
-#include <QtZpl/qtzpl.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -306,23 +306,15 @@ std::expected<PreparedLabelPrint, QString> prepareLabelPrint(const DesignDocumen
     const auto valid = validateForExport(*resolved, !resolved->visualEditable);
     if (!valid) return std::unexpected(valid.error());
     const QString source = toZpl(*resolved, false);
-    const auto parsed = QtZpl::parse(source);
-    if (!parsed || parsed->labels().isEmpty())
+    const auto labels = sourceLabels(source);
+    if (!labels || labels->labels == 0)
         return std::unexpected(u"В задании нет этикетки ^XA…^XZ."_s);
-    job.labelsPerRepeat = 0;
-    for (const auto& label : parsed->labels()) {
-        int quantity = 1;
-        for (const auto& command : label.commands()) {
-            if (const auto* print = std::get_if<QtZpl::PrintQuantity>(&command.payload)) quantity = print->quantity;
-            if (!resolved->visualEditable && std::holds_alternative<QtZpl::FieldData>(command.payload)
-                && (command.source.contains(u"{{") || command.source.contains(u"[[")))
-                return std::unexpected(u"Исходный ZPL содержит переменные, которые нельзя безопасно подставить. "
-                    u"Заполните их во вкладке ZPL перед печатью."_s);
-        }
-        job.labelsPerRepeat += std::max(1, quantity);
-    }
+    if (!resolved->visualEditable && labels->placeholderFields)
+        return std::unexpected(u"Исходный ZPL содержит переменные, которые нельзя безопасно подставить. "
+            u"Заполните их во вкладке ZPL перед печатью."_s);
+    job.labelsPerRepeat = labels->labelsPerRepeat;
     if (mode != LabelPrintMode::Zpl) {
-        if (parsed->labels().size() != 1)
+        if (labels->labels != 1)
             return std::unexpected(u"Печать изображением доступна для одной этикетки. "
                 u"Для файла с несколькими этикетками выберите ZPL."_s);
         const auto preview = renderPreview(*resolved);

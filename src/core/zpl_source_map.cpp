@@ -4,6 +4,8 @@
 
 #include <QtZpl/qtzpl.hpp>
 
+#include <algorithm>
+
 namespace Designer {
 
 qsizetype Internal::commandEnd(const QtZpl::Document& document, const QtZpl::Command& command)
@@ -24,6 +26,14 @@ QList<SourceElementRange> sourceElementRanges(const DesignDocument& document,
                                             const QString& source)
 {
     if (!document.visualEditable || document.elements.isEmpty()) return {};
+    const auto parsed = Internal::parseZpl(source);
+    return parsed ? Internal::elementFieldRanges(document, *parsed) : QList<SourceElementRange>{};
+}
+
+QList<SourceElementRange> Internal::elementFieldRanges(const DesignDocument& document,
+                                                      const QtZpl::Document& parsed)
+{
+    if (!document.visualEditable || document.elements.isEmpty() || parsed.labels().size() != 1) return {};
 
     QList<int> fieldOwners;
     for (qsizetype index = 0; index < document.elements.size(); ++index) {
@@ -34,20 +44,17 @@ QList<SourceElementRange> sourceElementRanges(const DesignDocument& document,
     }
     if (fieldOwners.isEmpty()) return {};
 
-    const auto parsed = QtZpl::parse(source);
-    if (!parsed || parsed->labels().size() != 1) return {};
-
     QList<SourceElementRange> ranges;
     ranges.reserve(fieldOwners.size());
     qsizetype fieldStart = -1;
-    for (const auto& command : parsed->labels().first().commands()) {
+    for (const auto& command : parsed.labels().first().commands()) {
         if (std::holds_alternative<QtZpl::FieldOrigin>(command.payload)
             || std::holds_alternative<QtZpl::FieldTypeset>(command.payload)) {
             if (fieldStart >= 0) return {};
             fieldStart = command.sourceSpan.start;
         } else if (std::holds_alternative<QtZpl::FieldSeparator>(command.payload) && fieldStart >= 0) {
             if (ranges.size() >= fieldOwners.size()) return {};
-            ranges.append({fieldStart, Internal::commandEnd(*parsed, command) - fieldStart, fieldOwners[ranges.size()]});
+            ranges.append({fieldStart, commandEnd(parsed, command) - fieldStart, fieldOwners[ranges.size()]});
             fieldStart = -1;
         } else if (std::holds_alternative<QtZpl::Comment>(command.payload) && fieldStart >= 0) {
             // Editable documents never contain comments inside a field. Avoid
@@ -57,6 +64,15 @@ QList<SourceElementRange> sourceElementRanges(const DesignDocument& document,
     }
     if (fieldStart >= 0 || ranges.size() != fieldOwners.size()) return {};
     return ranges;
+}
+
+int Internal::rangeOwner(const QList<SourceElementRange>& ranges, qsizetype offset)
+{
+    // Ranges are disjoint and ordered by their position in the source.
+    const auto range = std::ranges::upper_bound(ranges, offset, {}, &SourceElementRange::start);
+    if (range == ranges.cbegin()) return -1;
+    const auto& candidate = *std::prev(range);
+    return offset < candidate.start + candidate.length ? candidate.elementIndex : -1;
 }
 
 } // namespace Designer

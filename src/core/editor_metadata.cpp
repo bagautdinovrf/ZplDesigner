@@ -27,7 +27,7 @@ qsizetype metadataEnd(const QtZpl::Document& parsed, qsizetype index)
 
 QString withoutMetadata(QString source)
 {
-    const auto parsed = QtZpl::parse(source);
+    const auto parsed = Internal::parseZpl(source);
     if (!parsed || parsed->labels().size() != 1) return source;
     const auto& commands = parsed->labels().first().commands();
     for (qsizetype i = commands.size() - 1; i >= 0; --i) {
@@ -72,7 +72,7 @@ QString writeEditorMetadata(const DesignDocument& document, QString source)
         if (std::ranges::any_of(document.elements, [](const Element& element) { return element.type == ElementType::Eac; }))
             metadata[u"dpi"_s] = document.dpi;
         const auto encoded = QJsonDocument(metadata).toJson(QJsonDocument::Compact).toBase64();
-        const auto parsed = QtZpl::parse(source);
+        const auto parsed = Internal::parseZpl(source);
         if (!parsed || parsed->labels().size() != 1) return source;
         source.insert(Internal::commandEnd(*parsed, parsed->labels().first().commands().first()),
             u"^FX"_s + modernPrefix.toString() + QString::fromLatin1(encoded) + u"^FS"_s);
@@ -82,7 +82,7 @@ QString writeEditorMetadata(const DesignDocument& document, QString source)
     for (const auto& element : document.elements)
         needsMetadata |= !element.groupId.isNull() || (element.type == ElementType::Image && !element.imageKeepAspectRatio);
     if (!needsMetadata && !source.contains(prefix)) return source;
-    const auto parsed = QtZpl::parse(source);
+    const auto parsed = Internal::parseZpl(source);
     if (!parsed || parsed->labels().size() != 1) return source;
     const auto& commands = parsed->labels().first().commands();
     for (qsizetype i = commands.size() - 1; i >= 0; --i) {
@@ -107,7 +107,7 @@ QString writeEditorMetadata(const DesignDocument& document, QString source)
 
 bool restoreEditorMetadata(DesignDocument& document, const QString& source)
 {
-    const auto parsed = QtZpl::parse(source);
+    const auto parsed = Internal::parseZpl(source);
     if (!parsed || parsed->labels().size() != 1) return true;
     bool found = false;
     bool fieldSeen = false;

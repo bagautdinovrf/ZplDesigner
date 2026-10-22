@@ -38,6 +38,7 @@ private slots:
     void selectsSourcePagesAndInvalidatesOldPageRequests();
     void diagnosesDraftWithoutReplacingAppliedPreview();
     void retainsDiagnosticIdentityInOriginalSource();
+    void newerSnapshotReplacesBackgroundRender();
 };
 
 void PreviewCoordinatorTests::coalescesRequestsAndKeepsSnapshotGeometry()
@@ -217,6 +218,28 @@ void PreviewCoordinatorTests::retainsDiagnosticIdentityInOriginalSource()
             QVERIFY(diagnostics[i].detail.code != diagnostics[j].detail.code
                 || diagnostics[i].detail.offset != diagnostics[j].detail.offset
                 || diagnostics[i].detail.message != diagnostics[j].detail.message);
+}
+
+void PreviewCoordinatorTests::newerSnapshotReplacesBackgroundRender()
+{
+    PreviewCoordinator coordinator;
+    QSignalSpy changed(&coordinator, &PreviewCoordinator::previewsChanged);
+    auto document = boxDocument();
+    auto stamp = revision();
+    coordinator.setSnapshot(document, stamp);
+    // Let the debounce hand the first snapshot to the worker thread.
+    QTest::qWait(150);
+    document.elements[0].x = 60;
+    ++stamp.document;
+    coordinator.setSnapshot(document, stamp);
+    QVERIFY(coordinator.pending());
+    QTRY_VERIFY(!coordinator.pending());
+    QCOMPARE(coordinator.editorPreview().bounds.first(), QRect(60, 18, 24, 16));
+    QCOMPARE(coordinator.editorPreview().image.pixelColor(60, 18), QColor(Qt::black));
+    QVERIFY(changed.count() <= 2);
+    // Nothing from the replaced render arrives afterwards.
+    QTest::qWait(150);
+    QCOMPARE(coordinator.editorPreview().bounds.first(), QRect(60, 18, 24, 16));
 }
 
 QTEST_MAIN(PreviewCoordinatorTests)

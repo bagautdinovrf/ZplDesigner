@@ -228,12 +228,9 @@ QString validateParsed(const QtZpl::Document& parsed, qsizetype* errorOffset)
                         && value.bytesPerRow > 0 && value.bytesPerRow <= maximumSide / 8
                         && value.totalBytes % value.bytesPerRow == 0
                         && value.totalBytes / value.bytesPerRow <= maximumSide;
-                    // QtZpl currently uses qUncompress(), whose size header is a
-                    // hint, not an output cap. Bound compressed input too: even
-                    // DEFLATE's maximum expansion stays within a small raster
-                    // budget. Larger graphics can be imported as ordinary GFA.
-                    if (value.data.startsWith(":Z64:"))
-                        safe = safe && value.data.size() <= 16 * 1024;
+                    // Z64 needs no separate input cap: QtZpl inflates into a buffer
+                    // of the declared size checked above, and every render applies
+                    // the maximumGraphicBytes budget to all decoded graphics.
                 } else if constexpr (std::is_same_v<T, QtZpl::Barcode>) {
                     pendingBarcode = true;
                     // Parameters have symbology-specific meanings. Bound every numeric
@@ -280,13 +277,16 @@ QString validateParsed(const QtZpl::Document& parsed, qsizetype* errorOffset)
     return {};
 }
 
-} // namespace Designer::Internal
-
-namespace Designer {
-std::expected<void, QString> validateForExport(const DesignDocument& document, bool preservePlaceholders)
+const QString& TemplateSource::text() const
 {
-    using namespace Qt::StringLiterals;
-    using namespace Internal;
+    if (!text_) text_ = toZpl(document_, preservePlaceholders_);
+    return *text_;
+}
+
+std::expected<void, QString> validateTemplate(const TemplateSource& templateSource)
+{
+    const auto& document = templateSource.document();
+    const bool preservePlaceholders = templateSource.preservePlaceholders();
     if (!QStringView{u"NRIB"}.contains(document.defaultOrientation)
         || document.defaultJustification < 0 || document.defaultJustification > 2)
         return std::unexpected(u"Недопустимые общие параметры направления или выравнивания полей."_s);
@@ -308,12 +308,13 @@ std::expected<void, QString> validateForExport(const DesignDocument& document, b
             }
         }
     }
-    const QString source = toZpl(document, preservePlaceholders);
+    // Serialized only after the element checks bound raster conversion.
+    const QString& source = templateSource.text();
     if (source.isEmpty())
         return std::unexpected(u"Не удалось сохранить метаданные объектов: исходные изображения или данные проекта слишком велики."_s);
     if (source.size() > maximumSource || source.toUtf8().size() > maximumSource)
         return std::unexpected(u"ZPL превышает предел 8 МиБ в UTF-8."_s);
-    const auto parsed = QtZpl::parse(source);
+    const auto parsed = parseZpl(source);
     if (!parsed) return std::unexpected(parsed.error().message);
     const QString error = validateParsed(*parsed);
     if (!error.isEmpty()) return std::unexpected(error);
@@ -325,5 +326,19 @@ std::expected<void, QString> validateForExport(const DesignDocument& document, b
                 return std::unexpected(diagnosticText(diagnostic));
     }
     return {};
+}
+} // namespace Designer::Internal
+
+namespace Designer {
+std::expected<void, QString> validateForExport(const DesignDocument& document, bool preservePlaceholders)
+{
+    return Internal::validateTemplate(Internal::TemplateSource(document, preservePlaceholders));
+}
+
+std::expected<QString, QString> exportableZpl(const DesignDocument& document)
+{
+    const Internal::TemplateSource source(document);
+    if (const auto valid = Internal::validateTemplate(source); !valid) return std::unexpected(valid.error());
+    return source.text();
 }
 } // namespace Designer

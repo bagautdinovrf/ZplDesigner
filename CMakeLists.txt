@@ -102,6 +102,7 @@ add_library(designer_core STATIC
     src/core/zpl_source_map.hpp
     src/core/image_converter.cpp
     src/core/preview_renderer.cpp
+    src/core/qtzpl_adapter.cpp
     src/core/preset_catalog.cpp
     src/core/preset_catalog.hpp
 )

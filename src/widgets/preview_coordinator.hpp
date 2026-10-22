@@ -5,8 +5,10 @@
 #include "preview_pages.hpp"
 
 #include <QObject>
+#include <QThreadPool>
 #include <QTimer>
 
+#include <memory>
 #include <optional>
 
 namespace Designer {
@@ -22,14 +24,18 @@ struct PreviewRequestIdentity {
     friend bool operator==(const PreviewRequestIdentity&, const PreviewRequestIdentity&) = default;
 };
 
-// Owns the synchronous preview lifecycle, not QtZpl's rendering implementation.
-// Raster, element bounds, errors and diagnostics are published together from
-// one copied document. Views must not retain bounds across document revisions.
+// Owns the preview lifecycle, not QtZpl's rendering implementation. Raster,
+// element bounds, errors and diagnostics are published together from one
+// copied document. A debounced refresh renders on a worker thread and is
+// cancelled by a newer snapshot; refresh() publishes synchronously and reuses a
+// matching render already in progress. Views must not retain bounds across
+// document revisions.
 class PreviewCoordinator final : public QObject {
     Q_OBJECT
 
 public:
     explicit PreviewCoordinator(QObject* parent = nullptr);
+    ~PreviewCoordinator() override;
 
     void setSnapshot(DesignDocument document, DocumentRevision revision);
     void refresh();
@@ -59,20 +65,18 @@ private:
         DesignDocument document;
         DocumentRevision revision;
     };
-    struct Results {
-        Preview editor;
-        Preview print;
-        Preview page;
-        QString printError;
-        QString pageError;
-        QList<SourceDiagnostic> diagnostics;
-    };
+    struct Job;
 
-    void renderPage(const Snapshot& snapshot, Results& result, int page) const;
+    void startBackground();
+    void cancelBackground();
+    void finishBackground(const std::shared_ptr<Job>& job);
+    void publish(const PreviewRequestIdentity& request, int requestedPage, PreviewSet set);
 
     QTimer debounce_;
+    QThreadPool workers_;
+    std::shared_ptr<Job> job_;
     std::optional<Snapshot> snapshot_;
-    Results results_;
+    PreviewSet results_;
     int page_ = 0;
     int pageCount_ = 1;
     bool ready_ = false;

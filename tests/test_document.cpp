@@ -1,8 +1,12 @@
 #include "design_document.hpp"
 #include "gs1_data.hpp"
+#include "preview_pages.hpp"
 #include "value_placeholders.hpp"
 
 #include <algorithm>
+#include <future>
+#include <stop_token>
+#include <vector>
 #include <QtZpl/qtzpl.hpp>
 #include <QFile>
 #include <QTemporaryDir>
@@ -56,6 +60,11 @@ private slots:
     void sourceSpansKeepLineBreaksAndLabelBounds();
     void metadataWithoutSeparatorIsRemovedExactly();
     void graphicImportDecodesPayloadDirectly();
+    void largeZ64GraphicImports();
+    void barcodeAfterQrInheritsItsMagnification();
+    void editorPreviewAttributesEncodingErrorsInOneRender();
+    void previewSetsBuildConcurrentlyAndStop();
+    void sourceLabelsCountRepeatsAndPlaceholders();
 };
 
 void DocumentTest::sampleRoundTrip()
@@ -265,8 +274,12 @@ void DocumentTest::malformedAndUnsafeInputs()
     };
     for (const auto& source : sources) QVERIFY2(!fromZpl(source), qPrintable(source.left(100)));
     QVERIFY(!fromZpl(QString(8 * 1024 * 1024 + 1, u'A')));
-    QVERIFY(!fromZpl(u"^XA^FO0,0^GFA,1,1,1,:Z64:"_s
-        + QString(17000, u'A') + u":0000^FS^XZ"_s));
+    // An invalid Z64 payload of any size stays in source mode with QtZpl's code.
+    const auto invalidZ64 = fromZpl(u"^XA^FO0,0^GFA,1,1,1,:Z64:"_s
+        + QString(17000, u'A') + u":0000^FS^XZ"_s);
+    QVERIFY(invalidZ64.has_value());
+    QVERIFY(!invalidZ64->visualEditable);
+    QVERIFY2(invalidZ64->importNotes.join(u'\n').contains(u"graphic-field-z64"), qPrintable(invalidZ64->importNotes.join(u'\n')));
     auto document = sampleDocument();
     document.width = 100000;
     QVERIFY(!renderPreview(document));
@@ -1564,6 +1577,125 @@ void DocumentTest::graphicImportDecodesPayloadDirectly()
     QVERIFY(!source->visualEditable);
     QVERIFY2(source->importNotes.join(u'\n').contains(u"graphic-field-compression"), qPrintable(source->importNotes.join(u'\n')));
     QCOMPARE(toZpl(*source), unsupported);
+}
+
+void DocumentTest::largeZ64GraphicImports()
+{
+    // QtZpl inflates Z64 into the declared size, so a payload larger than the
+    // former 16 KiB input cap imports like any other graphic.
+    constexpr int bytesPerRow = 100;
+    constexpr int rows = 130;
+    QByteArray bits(bytesPerRow * rows, Qt::Uninitialized);
+    quint32 state = 12345;
+    for (auto& byte : bits) {
+        state = state * 1103515245U + 12345U;
+        byte = char(state >> 24);
+    }
+    // qCompress prefixes the zlib stream with a four-byte length.
+    const QByteArray encoded = qCompress(bits).mid(4).toBase64();
+    QVERIFY(encoded.size() > 16 * 1024);
+    quint16 crc = 0;
+    for (const char byte : encoded) {
+        crc ^= quint16(quint8(byte)) << 8;
+        for (int bit = 0; bit < 8; ++bit) crc = crc & 0x8000U ? quint16((crc << 1) ^ 0x1021U) : quint16(crc << 1);
+    }
+    const QString source = u"^XA^PW800^LL200^FO0,0^GFA,%1,%1,%2,:Z64:%3:%4^FS^XZ"_s.arg(bits.size()).arg(bytesPerRow)
+        .arg(QString::fromLatin1(encoded)).arg(crc, 4, 16, QLatin1Char('0'));
+    const auto imported = fromZpl(source);
+    QVERIFY(imported.has_value());
+    QVERIFY2(imported->visualEditable, qPrintable(imported->importNotes.join(u'\n')));
+    const auto& image = imported->elements.first().image;
+    QCOMPARE(image.size(), QSize(bytesPerRow * 8, rows));
+    for (int y = 0; y < rows; ++y)
+        for (int x = 0; x < image.width(); ++x) {
+            const bool ink = uchar(bits[y * bytesPerRow + x / 8]) & (0x80U >> (x % 8));
+            if ((qGray(image.pixel(x, y)) < 128) != ink) QFAIL(qPrintable(u"pixel %1,%2"_s.arg(x).arg(y)));
+        }
+}
+
+void DocumentTest::barcodeAfterQrInheritsItsMagnification()
+{
+    // QtZpl applies a ^BQ magnification to the module width of later symbols
+    // until the next ^BY. The import reads that width from QtZpl's analysis
+    // and regenerates an equivalent explicit ^BY.
+    const QString source = u"^XA^PW400^LL300^BY2,3,0"
+        "^FO10,10^BQN,2,4^FDLA,QR^FS"
+        "^FO10,150^BCN,60,N,N,N,N^FD12345678^FS^XZ"_s;
+    const auto imported = fromZpl(source);
+    QVERIFY(imported.has_value());
+    QVERIFY2(imported->visualEditable, qPrintable(imported->importNotes.join(u'\n')));
+    QCOMPARE(imported->elements.size(), 2);
+    QCOMPARE(imported->elements[0].type, ElementType::QrCode);
+    QCOMPARE(imported->elements[0].moduleWidth, 4);
+    QCOMPARE(imported->elements[1].type, ElementType::Code128);
+    QCOMPARE(imported->elements[1].moduleWidth, 4);
+    QCOMPARE(imported->elements[1].height, 60);
+}
+
+void DocumentTest::editorPreviewAttributesEncodingErrorsInOneRender()
+{
+    DesignDocument document;
+    document.width = 400;
+    document.height = 240;
+    auto text = makeElement(ElementType::Text, {10, 10});
+    text.text = u"Valid"_s;
+    auto code = makeElement(ElementType::Code128, {10, 80});
+    code.text = u"Кириллица"_s;
+    auto box = makeElement(ElementType::Box, {300, 10});
+    box.width = 40;
+    box.height = 30;
+    document.elements = {text, code, box};
+    const auto editor = renderEditorPreview(document);
+    QVERIFY2(editor.has_value(), qPrintable(editor ? QString{} : editor.error()));
+    QCOMPARE(editor->elementErrors.keys(), QList<int>{1});
+    QVERIFY2(editor->elementErrors.value(1).startsWith(u"code128-encode"), qPrintable(editor->elementErrors.value(1)));
+    QVERIFY(!editor->bounds[1].isEmpty());
+
+    // QtZpl draws nothing for the failing code, so the shared render equals
+    // the canvas of the same document without it.
+    auto without = document;
+    without.elements.removeAt(1);
+    const auto reference = renderEditorPreview(without);
+    QVERIFY(reference.has_value());
+    QCOMPARE(editor->image, reference->image);
+    QCOMPARE(editor->bounds[0], reference->bounds[0]);
+    QCOMPARE(editor->bounds[2], reference->bounds[1]);
+}
+
+void DocumentTest::previewSetsBuildConcurrentlyAndStop()
+{
+    const auto document = sampleDocument();
+    const auto expected = buildPreviewSet(document, 0);
+    QVERIFY(expected.has_value());
+    QVERIFY(!expected->editor.image.isNull());
+    std::vector<std::future<std::optional<PreviewSet>>> builds;
+    for (int index = 0; index < 4; ++index)
+        builds.push_back(std::async(std::launch::async, [&document] { return buildPreviewSet(document, 0); }));
+    for (auto& build : builds) {
+        const auto set = build.get();
+        QVERIFY(set.has_value());
+        QCOMPARE(set->editor.image, expected->editor.image);
+        QCOMPARE(set->editor.bounds, expected->editor.bounds);
+        QCOMPARE(set->print.image, expected->print.image);
+        QCOMPARE(set->printError, expected->printError);
+    }
+    std::stop_source stop;
+    stop.request_stop();
+    QVERIFY(!buildPreviewSet(document, 0, stop.get_token()).has_value());
+}
+
+void DocumentTest::sourceLabelsCountRepeatsAndPlaceholders()
+{
+    const auto labels = sourceLabels(u"^XA^PQ3^FO0,0^FDA^FS^XZ\n^XA^FO0,0^FD{{name}}^FS^XZ"_s);
+    QVERIFY(labels.has_value());
+    QCOMPARE(labels->labels, 2);
+    QCOMPARE(labels->labelsPerRepeat, 4);
+    QVERIFY(labels->placeholderFields);
+    const auto plain = sourceLabels(u"^XA^FO0,0^FDA^FS^XZ"_s);
+    QVERIFY(plain.has_value());
+    QCOMPARE(plain->labels, 1);
+    QCOMPARE(plain->labelsPerRepeat, 1);
+    QVERIFY(!plain->placeholderFields);
 }
 
 QTEST_MAIN(DocumentTest)

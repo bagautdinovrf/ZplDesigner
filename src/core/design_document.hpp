@@ -141,6 +141,8 @@ QString elementZpl(const Element& element, bool preservePlaceholders = true,
                    QChar defaultOrientation = u'N', int defaultJustification = 0);
 QString toZpl(const DesignDocument& document, bool preservePlaceholders = true);
 std::expected<void, QString> validateForExport(const DesignDocument& document, bool preservePlaceholders = true);
+// toZpl() after validateForExport(), serialized once for both.
+std::expected<QString, QString> exportableZpl(const DesignDocument& document);
 std::expected<DesignDocument, QString> fromZpl(const QString& source);
 std::expected<Preview, QString> renderPreview(const DesignDocument& document);
 // Canvas recovery only. Export and the clean printer preview use renderPreview.

@@ -1,5 +1,6 @@
 #include "print_dialog.hpp"
 #include "label_printing.hpp"
+#include "preview_pages.hpp"
 
 #include <QApplication>
 #include <QComboBox>
@@ -21,7 +22,6 @@
 #include <QStandardPaths>
 #include <QThread>
 #include <QVBoxLayout>
-#include <QtZpl/qtzpl.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -58,16 +58,8 @@ PrintDialog::PrintDialog(const DesignDocument& document, QWidget* parent)
     setModal(true);
     setMinimumWidth(480);
     resize(620, 440);
-    const auto parsed = QtZpl::parse(toZpl(document_));
-    if (parsed && !parsed->labels().isEmpty()) {
-        rawLabelsPerRepeat_ = 0;
-        for (const auto& label : parsed->labels()) {
-            int quantity = 1;
-            for (const auto& command : label.commands())
-                if (const auto* print = std::get_if<QtZpl::PrintQuantity>(&command.payload)) quantity = print->quantity;
-            rawLabelsPerRepeat_ += std::max(1, quantity);
-        }
-    }
+    if (const auto labels = sourceLabels(toZpl(document_)); labels && labels->labels > 0)
+        rawLabelsPerRepeat_ = labels->labelsPerRepeat;
 
     auto* outer = new QVBoxLayout(this);
     dimensions_ = new QLabel(this);

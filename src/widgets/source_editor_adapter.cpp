@@ -51,11 +51,12 @@ void SourceEditorAdapter::syncDocument()
     mappedDocumentRevision_ = session_.revision().document;
     // Do not expose incomplete generated ZPL for an intermediate invalid model.
     // The complete visual document remains available while its data is repaired.
-    const auto valid = document.visualEditable ? validateForExport(document) : std::expected<void, QString>{};
-    editor_.setReadOnly(!valid && !session_.hasPendingSource());
-    editor_.setPlaceholderText(valid ? QString{} : QStringLiteral(
-        "ZPL пока недоступен: %1\nИсправьте данные во вкладке «Дизайн». Все элементы сохранены в макете.").arg(valid.error()));
-    mappedSource_ = valid ? editorSource(toZpl(document)) : QString{};
+    const auto exported = document.visualEditable ? exportableZpl(document)
+                                                  : std::expected<QString, QString>(toZpl(document));
+    editor_.setReadOnly(!exported && !session_.hasPendingSource());
+    editor_.setPlaceholderText(exported ? QString{} : QStringLiteral(
+        "ZPL пока недоступен: %1\nИсправьте данные во вкладке «Дизайн». Все элементы сохранены в макете.").arg(exported.error()));
+    mappedSource_ = exported ? editorSource(*exported) : QString{};
     const auto source = session_.hasPendingSource() ? editorSource(session_.pendingSource()) : mappedSource_;
     if (editor_.toPlainText() != source) {
         // A visual edit may move field ranges. Preserve the selected objects,

@@ -4,9 +4,6 @@
 #include "preview_pages.hpp"
 #include "zpl_source_map.hpp"
 
-#include <QCache>
-#include <QMutex>
-
 #include <algorithm>
 #include <type_traits>
 #include <utility>
@@ -15,100 +12,70 @@ namespace Designer {
 using namespace Qt::StringLiterals;
 using namespace Internal;
 namespace Internal {
-std::expected<QtZpl::Document, QString> checkedParse(const QString& source)
+std::expected<QtZpl::Document, QString> checkedParse(const QString& source, std::stop_token stop = {})
 {
     if (source.size() > maximumSource || source.toUtf8().size() > maximumSource)
         return std::unexpected(u"ZPL превышает предел 8 МиБ в UTF-8."_s);
-    const auto parsed = QtZpl::parse(source);
+    const auto parsed = parseZpl(source, std::move(stop));
     if (!parsed) return std::unexpected(parsed.error().message);
     const QString error = validateParsed(*parsed);
     if (!error.isEmpty()) return std::unexpected(error);
     return *parsed;
 }
+} // namespace Internal
+namespace {
+std::expected<QtZpl::LabelRenderResult, QString> checkedRenderPage(const QtZpl::Document& parsed, int dpi,
+                                                                  int pageIndex, bool fieldGeometry,
+                                                                  std::stop_token stop)
+{
+    if (pageIndex < 0 || pageIndex >= parsed.labels().size())
+        return std::unexpected(u"Номер этикетки вне диапазона."_s);
+    // Render the exact parsed snapshot. Slicing normalized command text used
+    // to lose spelling/CRLF information and require guessed offset rebasing.
+    auto result = QtZpl::renderLabel(parsed, pageIndex, renderOptions(dpi, fieldGeometry, std::move(stop)));
+    if (!result) return std::unexpected(result.error().message);
+    return std::move(*result);
+}
+} // namespace
 
-std::expected<QtZpl::RenderResult, QString> checkedRenderPage(const QString& source, int dpi, int pageIndex,
-                                                             bool fieldGeometry = false)
+std::expected<QtZpl::RenderResult, QString> Internal::checkedRender(const QString& source, int dpi)
 {
     const auto parsed = checkedParse(source);
     if (!parsed) return std::unexpected(parsed.error());
-    if (pageIndex < 0 || pageIndex >= parsed->labels().size())
-        return std::unexpected(u"Номер этикетки вне диапазона."_s);
-    QtZpl::RenderOptions options;
-    options.dpi = dpi;
-    options.collectFieldGeometry = fieldGeometry;
-    // Render the exact parsed snapshot. Slicing normalized command text used
-    // to lose spelling/CRLF information and require guessed offset rebasing.
-    auto result = QtZpl::renderLabel(*parsed, pageIndex, options);
-    if (!result) return std::unexpected(result.error().message);
+    auto result = checkedRenderPage(*parsed, dpi, 0, false, {});
+    if (!result) return std::unexpected(result.error());
     return QtZpl::RenderResult{{std::move(result->image)}, std::move(result->diagnostics),
                                std::move(result->fields)};
 }
 
-std::expected<QtZpl::RenderResult, QString> checkedRender(const QString& source, int dpi)
-{
-    return checkedRenderPage(source, dpi, 0);
-}
-
-} // namespace Internal
 namespace {
-// The first error a printer preview would reject one barcode for, rendered
-// alone on an otherwise empty label; the editor canvas then hides only that
-// code. The same source and dpi always give the same answer, so unchanged codes
-// are not rendered again while another field is dragged or edited.
-QString isolatedFieldError(const QString& source, int dpi)
-{
-    static QMutex mutex;
-    // Cost is key length: bounded memory even for embedded graphics.
-    static QCache<QString, QString> cache(maximumSource);
-    const QString key = QString::number(dpi) + u'\n' + source;
-    {
-        const QMutexLocker lock(&mutex);
-        if (const auto* cached = cache.object(key)) return *cached;
-    }
-    QString error;
-    const auto rendered = checkedRender(source, dpi);
-    if (!rendered) error = rendered.error();
-    else {
-        for (const auto& diagnostic : rendered->diagnostics)
-            if (diagnostic.severity == QtZpl::Severity::Error) {
-                error = diagnosticText(diagnostic);
-                break;
-            }
-    }
-    const QMutexLocker lock(&mutex);
-    cache.insert(key, new QString(error), key.size());
-    return error;
-}
-
 // Painted bounds of each element, taken from the render pass that produced the
-// raster, in its final coordinates and before clipping to the label. QtZpl
-// reports every drawing command with the ^FO...^FS segment containing it, and
-// printable elements own their segments in source order. Returns no bounds
-// when the segments do not match the model; callers then use model geometry.
-QList<QRect> paintedElementBounds(const DesignDocument& document, const QList<QtZpl::FieldGeometry>& fields)
+// raster, in its final coordinates and before clipping to the label. Every
+// drawing command belongs to the element whose ^FO...^FS range contains it.
+// Returns no bounds when a field lies outside those ranges; callers then use
+// model geometry.
+QList<QRect> paintedElementBounds(qsizetype elementCount, const QList<SourceElementRange>& ranges,
+                                  const QList<QtZpl::FieldGeometry>& fields)
 {
-    QList<int> owners;
-    for (qsizetype index = 0; index < document.elements.size(); ++index)
-        if (document.elements[index].printable)
-            owners.insert(owners.size(), elementFieldCount(document.elements[index]), int(index));
-    QList<QRect> bounds(document.elements.size());
-    qsizetype segment = -1;
-    qsizetype segmentStart = -1;
+    if (ranges.isEmpty()) return {};
+    QList<QRect> bounds(elementCount);
     for (const auto& field : fields) {
-        if (field.field.sourceSpan.start != segmentStart) {
-            segmentStart = field.field.sourceSpan.start;
-            if (++segment >= owners.size()) return {};
-        }
-        bounds[owners[segment]] |= field.paintBounds;
+        const int owner = rangeOwner(ranges, field.field.payloadSpan.start);
+        if (owner < 0) return {};
+        bounds[owner] |= field.paintBounds;
     }
-    return segment + 1 == owners.size() ? bounds : QList<QRect>{};
+    return bounds;
 }
 
-std::expected<Preview, QString> renderPreviewImpl(const DesignDocument& templateDocument, bool editor, int pageIndex = 0)
+// Editor mode keeps a code whose own data fails to encode: QtZpl draws nothing
+// for it, the error is attributed to its element and the canvas shows a
+// placeholder. Every other render error fails the preview, as in print mode.
+std::expected<Preview, QString> renderPreviewImpl(const TemplateSource& source, bool editor, int pageIndex,
+                                                  std::stop_token stop)
 {
-    using namespace Qt::StringLiterals;
+    const auto& templateDocument = source.document();
     if (!templateDocument.visualEditable) {
-        const auto parsed = QtZpl::parse(toZpl(templateDocument));
+        const auto parsed = parseZpl(source.text(), stop);
         if (parsed && pageIndex >= 0 && pageIndex < parsed->labels().size()) {
             bool dataMatrix = false;
             for (const auto& command : parsed->labels()[pageIndex].commands()) {
@@ -135,12 +102,13 @@ std::expected<Preview, QString> renderPreviewImpl(const DesignDocument& template
             const auto error = validateElement(element, false, document.dpi);
             if (!error.isEmpty()) return std::unexpected(error);
         }
-    const auto rendered = checkedRenderPage(printerZpl(document, false), document.dpi, pageIndex,
-                                            document.visualEditable);
+    const auto parsed = checkedParse(printerZpl(document, false), stop);
+    if (!parsed) return std::unexpected(parsed.error());
+    const auto rendered = checkedRenderPage(*parsed, document.dpi, pageIndex, document.visualEditable, stop);
     if (!rendered) return std::unexpected(rendered.error());
-    if (rendered->labels.isEmpty()) return std::unexpected(u"QtZpl не вернул изображение этикетки."_s);
+    if (rendered->image.isNull()) return std::unexpected(u"QtZpl не вернул изображение этикетки."_s);
     Preview preview;
-    preview.image = rendered->labels.first();
+    preview.image = rendered->image;
     preview.diagnostics = document.importNotes;
     const auto names = dataMatrixParameters(templateDocument);
     if (names && !names->isEmpty()) {
@@ -151,10 +119,16 @@ std::expected<Preview, QString> renderPreviewImpl(const DesignDocument& template
             ? u"Превью использует значения плейсхолдеров текущей сессии: %1. Сохранение ZPL сохраняет шаблон."_s.arg(names->join(u", "_s))
             : u"В тексте показаны незаполненные переменные: %1. Заполните «Значения плейсхолдеров…» для печати и чистого превью."_s.arg(missing.join(u", "_s)));
     }
+    const auto ranges = elementFieldRanges(document, *parsed);
     for (const auto& diagnostic : rendered->diagnostics) {
-        if (diagnostic.severity == QtZpl::Severity::Error)
+        if (diagnostic.severity != QtZpl::Severity::Error) {
+            preview.diagnostics.append(diagnosticText(diagnostic));
+            continue;
+        }
+        const int owner = editor && diagnostic.fieldId ? rangeOwner(ranges, *diagnostic.fieldId) : -1;
+        if (owner < 0 || !isBarcodeType(document.elements[owner].type))
             return std::unexpected(diagnosticText(diagnostic));
-        preview.diagnostics.append(diagnosticText(diagnostic));
+        if (!preview.elementErrors.contains(owner)) preview.elementErrors.insert(owner, diagnosticText(diagnostic));
     }
     // Source-only labels have no editable element geometry. Their selected
     // page may differ entirely from the first label described by the model.
@@ -162,7 +136,7 @@ std::expected<Preview, QString> renderPreviewImpl(const DesignDocument& template
         preview.diagnostics.removeDuplicates();
         return preview;
     }
-    const auto painted = paintedElementBounds(document, rendered->fields);
+    const auto painted = paintedElementBounds(document.elements.size(), ranges, rendered->fields);
     for (qsizetype index = 0; index < document.elements.size(); ++index) {
         const auto& element = document.elements[index];
         if (!element.printable) {
@@ -189,28 +163,18 @@ std::expected<Preview, QString> renderPreviewImpl(const DesignDocument& template
     preview.diagnostics.removeDuplicates();
     return preview;
 }
-} // namespace
 
-std::expected<Preview, QString> renderPreview(const DesignDocument& document)
+std::expected<int, QString> pageCount(const TemplateSource& source, std::stop_token stop)
 {
-    return renderPreviewImpl(document, false);
-}
-
-std::expected<int, QString> previewPageCount(const DesignDocument& document)
-{
-    if (document.visualEditable) return 1;
-    const auto parsed = checkedParse(toZpl(document));
+    if (source.document().visualEditable) return 1;
+    const auto parsed = checkedParse(source.text(), std::move(stop));
     if (!parsed) return std::unexpected(parsed.error());
     return static_cast<int>(parsed->labels().size());
 }
 
-std::expected<Preview, QString> renderPreviewPage(const DesignDocument& document, int pageIndex)
+QList<SourceDiagnostic> sourceDiagnosticsImpl(const TemplateSource& source, int pageIndex, std::stop_token stop)
 {
-    return renderPreviewImpl(document, false, pageIndex);
-}
-
-QList<SourceDiagnostic> sourceDiagnostics(const DesignDocument& document, int pageIndex)
-{
+    const auto& document = source.document();
     const auto localDiagnostic = [](const QString& code, const QString& message, int offset = -1) {
         QtZpl::Diagnostic detail;
         detail.severity = QtZpl::Severity::Error;
@@ -220,13 +184,13 @@ QList<SourceDiagnostic> sourceDiagnostics(const DesignDocument& document, int pa
         return SourceDiagnostic{message, offset, std::move(detail)};
     };
     if (document.visualEditable) {
-        const auto valid = validateForExport(document);
+        const auto valid = validateTemplate(source);
         if (!valid) return {localDiagnostic(u"designer-export"_s, valid.error())};
     }
-    const QString source = toZpl(document);
-    if (source.size() > maximumSource || source.toUtf8().size() > maximumSource)
+    const QString& zpl = source.text();
+    if (zpl.size() > maximumSource || zpl.toUtf8().size() > maximumSource)
         return {localDiagnostic(u"designer-source-limit"_s, u"ZPL превышает предел 8 МиБ в UTF-8."_s)};
-    const auto parsed = QtZpl::parse(source);
+    const auto parsed = parseZpl(zpl, stop);
     if (!parsed) return {localDiagnostic(parsed.error().code, parsed.error().message,
                                         static_cast<int>(parsed.error().offset))};
     QList<SourceDiagnostic> diagnostics;
@@ -259,9 +223,7 @@ QList<SourceDiagnostic> sourceDiagnostics(const DesignDocument& document, int pa
     }
     // The diagnostic panel refers to the visible source, before placeholders
     // are expanded, so every offset still addresses the editor's exact text.
-    QtZpl::RenderOptions options;
-    options.dpi = document.dpi;
-    const auto rendered = QtZpl::renderLabel(*parsed, pageIndex, options);
+    const auto rendered = QtZpl::renderLabel(*parsed, pageIndex, renderOptions(document.dpi, false, std::move(stop)));
     if (rendered) {
         for (const auto& diagnostic : rendered->diagnostics) append(diagnostic);
     } else {
@@ -274,14 +236,23 @@ QList<SourceDiagnostic> sourceDiagnostics(const DesignDocument& document, int pa
     return diagnostics;
 }
 
-std::expected<Preview, QString> renderEditorPreview(const DesignDocument& document)
+std::expected<Preview, QString> renderEditorPreviewImpl(const TemplateSource& source, std::stop_token stop)
 {
-    if (!document.visualEditable) return renderPreview(document);
+    const auto& document = source.document();
+    if (!document.visualEditable) return renderPreviewImpl(source, false, 0, std::move(stop));
     if (!safeSize(document.width, document.height))
         return std::unexpected(u"Размер этикетки превышает 4096 × 4096 точек."_s);
     if (document.elements.size() > maximumElements)
         return std::unexpected(u"MVP поддерживает не более 200 элементов."_s);
 
+    // A code excluded from the canvas keeps its model footprint, so it stays
+    // selectable and movable while its data is repaired.
+    const auto errorBounds = [&document](const Element& element) {
+        QRect bounds(element.x, element.y, element.width, element.height);
+        if (element.orientation == u'R' || element.orientation == u'B')
+            bounds.setSize(QSize(element.height, element.width));
+        return mapDocumentRect(document, bounds);
+    };
     auto filtered = document;
     filtered.originalZpl.clear();
     filtered.elements.clear();
@@ -311,35 +282,119 @@ std::expected<Preview, QString> renderEditorPreview(const DesignDocument& docume
             isolated.elements.append(element);
             isolated.previewValues = document.previewValues;
             const auto resolved = resolveDataMatrixValues(isolated);
-            if (!resolved) error = resolved.error();
-            else {
-                error = validateElement(resolved->elements.first(), false);
-                if (error.isEmpty()) error = isolatedFieldError(printerZpl(*resolved, false), document.dpi);
-            }
+            error = resolved ? validateElement(resolved->elements.first(), false) : resolved.error();
         }
         if (!error.isEmpty()) {
             errors.insert(static_cast<int>(index), error);
-            bounds[index] = QRect(element.x, element.y, element.width, element.height);
-            if (element.orientation == u'R' || element.orientation == u'B')
-                bounds[index].setSize(QSize(element.height, element.width));
-            bounds[index] = mapDocumentRect(document, bounds[index]);
+            bounds[index] = errorBounds(element);
         } else {
             filtered.elements.append(element);
             retainedIndices.append(static_cast<int>(index));
         }
     }
-    // Preserve the strict result for failures outside recoverable DataMatrix
-    // input. Source mode and printer-preview callers never use a partial image.
-    auto rendered = renderPreviewImpl(filtered, true);
+    // Encoding errors come from this single render of all remaining fields;
+    // source mode and printer-preview callers never use a partial image.
+    auto rendered = renderPreviewImpl(TemplateSource(filtered), true, 0, std::move(stop));
     if (!rendered) return std::unexpected(rendered.error());
     for (qsizetype index = 0; index < retainedIndices.size(); ++index)
         bounds[retainedIndices[index]] = rendered->bounds[index];
+    for (auto it = rendered->elementErrors.cbegin(); it != rendered->elementErrors.cend(); ++it) {
+        const int original = retainedIndices[it.key()];
+        errors.insert(original, it.value());
+        bounds[original] = errorBounds(document.elements[original]);
+    }
     rendered->bounds = std::move(bounds);
     rendered->elementErrors = std::move(errors);
     for (auto it = rendered->elementErrors.cbegin(); it != rendered->elementErrors.cend(); ++it)
         rendered->diagnostics.append(u"%1, элемент %2: %3 Код не отображается на холсте."_s
             .arg(elementTypeName(document.elements[it.key()].type)).arg(it.key() + 1).arg(it.value()));
     return rendered;
+}
+
+void selectPage(const TemplateSource& source, PreviewSet& set, int page, std::stop_token stop)
+{
+    set.page = page;
+    set.selectedPage = set.print;
+    set.pageError = set.printError;
+    if (page > 0) {
+        auto rendered = renderPreviewImpl(source, false, page, stop);
+        set.selectedPage = rendered ? std::move(*rendered) : Preview{};
+        set.pageError = rendered ? QString{} : rendered.error();
+    }
+    if (!set.pageError.isEmpty() && !set.selectedPage.diagnostics.contains(set.pageError))
+        set.selectedPage.diagnostics.append(set.pageError);
+    set.diagnostics = sourceDiagnosticsImpl(source, page, std::move(stop));
+}
+} // namespace
+
+std::expected<Preview, QString> renderPreview(const DesignDocument& document)
+{
+    return renderPreviewImpl(TemplateSource(document), false, 0, {});
+}
+
+std::expected<int, QString> previewPageCount(const DesignDocument& document)
+{
+    return pageCount(TemplateSource(document), {});
+}
+
+std::expected<Preview, QString> renderPreviewPage(const DesignDocument& document, int pageIndex)
+{
+    return renderPreviewImpl(TemplateSource(document), false, pageIndex, {});
+}
+
+QList<SourceDiagnostic> sourceDiagnostics(const DesignDocument& document, int pageIndex)
+{
+    return sourceDiagnosticsImpl(TemplateSource(document), pageIndex, {});
+}
+
+std::expected<Preview, QString> renderEditorPreview(const DesignDocument& document)
+{
+    return renderEditorPreviewImpl(TemplateSource(document), {});
+}
+
+std::optional<PreviewSet> buildPreviewSet(const DesignDocument& document, int page, std::stop_token stop)
+{
+    const TemplateSource source(document);
+    PreviewSet set;
+    const auto count = pageCount(source, stop);
+    set.pageCount = count ? std::max(1, *count) : 1;
+    auto printed = renderPreviewImpl(source, false, 0, stop);
+    if (printed) set.print = *printed;
+    else set.printError = printed.error();
+    const bool differentVisibility = std::ranges::any_of(document.elements,
+        [](const Element& element) { return element.editorVisible != element.printable; });
+    if (!printed || differentVisibility) {
+        if (auto editor = renderEditorPreviewImpl(source, stop)) set.editor = std::move(*editor);
+        else set.editor.diagnostics.append(editor.error());
+        if (!set.printError.isEmpty()) set.editor.diagnostics.append(set.printError);
+        set.editor.diagnostics.removeDuplicates();
+    } else set.editor = std::move(*printed);
+    selectPage(source, set, std::clamp(page, 0, set.pageCount - 1), stop);
+    if (stop.stop_requested()) return std::nullopt;
+    return set;
+}
+
+void selectPreviewPage(const DesignDocument& document, PreviewSet& set, int page)
+{
+    selectPage(TemplateSource(document), set, page, {});
+}
+
+std::expected<SourceLabels, QString> sourceLabels(const QString& source)
+{
+    const auto parsed = parseZpl(source);
+    if (!parsed) return std::unexpected(parsed.error().message);
+    SourceLabels result;
+    for (const auto& label : parsed->labels()) {
+        int quantity = 1;
+        for (const auto& command : label.commands()) {
+            if (const auto* print = std::get_if<QtZpl::PrintQuantity>(&command.payload)) quantity = print->quantity;
+            else if (const auto* field = std::get_if<QtZpl::FieldData>(&command.payload))
+                result.placeholderFields |= field->rawData.contains(u"{{") || field->rawData.contains(u"[[");
+        }
+        ++result.labels;
+        result.labelsPerRepeat += std::max(1, quantity);
+    }
+    return result;
 }
 
 } // namespace Designer

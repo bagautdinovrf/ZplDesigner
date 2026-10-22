@@ -9,6 +9,7 @@
 #include <type_traits>
 #include <optional>
 #include <initializer_list>
+#include <QHash>
 #include <QStringDecoder>
 
 namespace Designer {
@@ -161,7 +162,7 @@ QString labelSettings(const DesignDocument& document, bool includeDefaults = fal
 
 QString replaceLabelSettings(QString source, const DesignDocument& document)
 {
-    const auto parsed = QtZpl::parse(source);
+    const auto parsed = parseZpl(source);
     if (!parsed || parsed->labels().size() != 1) return source;
     struct Replacement { qsizetype offset; qsizetype length; QString text; };
     QList<Replacement> replacements;
@@ -423,7 +424,7 @@ QString Internal::printerZpl(const DesignDocument& document, bool preservePlaceh
         if (restoreState || document.width != document.sourceWidth || document.height != document.sourceHeight) {
             // Patch only actual parsed dimension commands, never ^PW/^LL words
             // occurring inside a comment or field. Work backward to keep offsets.
-            const auto parsed = QtZpl::parse(source);
+            const auto parsed = parseZpl(source);
             bool hasWidth = false;
             bool hasHeight = false;
             if (parsed && parsed->labels().size() == 1) {
@@ -465,7 +466,7 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
     using namespace Qt::StringLiterals;
     if (source.size() > maximumSource || source.toUtf8().size() > maximumSource)
         return std::unexpected(u"ZPL превышает предел 8 МиБ в UTF-8."_s);
-    const auto parsed = QtZpl::parse(source);
+    const auto parsed = parseZpl(source);
     if (!parsed) return std::unexpected(parsed.error().message);
     const QString error = validateParsed(*parsed);
     if (!error.isEmpty()) return std::unexpected(error);
@@ -491,17 +492,15 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
     if (!source.first(labelSpan.start).trimmed().isEmpty()
         || !source.sliced(labelSpan.start + labelSpan.length).trimmed().isEmpty())
         raw(u"Команды вне этикетки сохранены в исходном ZPL."_s);
+    // Effective font, ^BY, ^FB, ^FP and ^CI state comes from QtZpl's own
+    // interpreter at each drawing command. This walk keeps only the structure
+    // and the rules that decide whether a field is visually editable.
+    const auto analysis = QtZpl::analyzeLabel(*parsed, 0, renderOptions(result.dpi));
+    QHash<qsizetype, const QtZpl::FieldSettings*> settingsAt;
+    if (analysis) {
+        for (const auto& field : analysis->fields) settingsAt.insert(field.commandIndex, &field.settings);
+    } else raw(u"QtZpl не проанализировал поля этикетки: %1"_s.arg(analysis.error().message));
     Element current = makeElement(ElementType::Text, {0, 0});
-    QChar currentFont = u'A';
-    QChar defaultFont = u'A';
-    int defaultFontHeight = 9;
-    int defaultFontWidth = 5;
-    current.fontHeight = defaultFontHeight;
-    current.fontWidth = defaultFontWidth;
-    int charset = 0;
-    int module = 2;
-    double barcodeRatio = 3.0;
-    int barcodeHeight = 10;
     bool haveOrigin = false;
     bool fieldProduced = false;
     bool reverse = false;
@@ -520,9 +519,8 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
     qsizetype fieldStart = -1;
     qsizetype fieldElementIndex = -1;
     qsizetype previousFieldEnd = 0;
-    QString fieldSourceState;
-    QString fieldBarcodeState;
-    auto append = [&](Element element) {
+    QString directionState;
+    auto append = [&](Element element, const QtZpl::FieldSettings& settings) {
         if (!haveOrigin || fieldProduced) raw(u"Поля с общим или неявным ^FO оставлены в режиме ZPL."_s);
         element.reverse = reverse;
         element.id = QUuid::createUuid();
@@ -536,11 +534,25 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
             }
         }
         fieldElementIndex = result.elements.size();
-        element.sourceState = isBarcodeType(element.type) ? fieldBarcodeState : fieldSourceState;
+        // Printer state restored before this field when fields are reordered:
+        // ^FW as of its ^FO, which sets the default justification, and the rest
+        // as QtZpl applied it here. In-field commands repeat after it.
+        const auto codeState = u"^BY%1,%2,%3"_s.arg(settings.barcodeDefaults.moduleWidth)
+            .arg(settings.barcodeDefaults.wideToNarrowRatio, 0, 'g', 8).arg(settings.barcodeDefaults.height);
+        const QChar fontOrientation = QLatin1Char(static_cast<char>(settings.font.orientation));
+        element.sourceState = directionState + u"^CI%1"_s.arg(settings.characterSet) + (isBarcodeType(element.type)
+            ? codeState : u"^A0%1,%2,%3"_s.arg(fontOrientation).arg(settings.font.height).arg(settings.font.width) + codeState);
         result.elements.append(std::move(element));
         fieldProduced = true;
     };
-    for (const auto& command : label.commands()) {
+    for (qsizetype commandIndex = 0; commandIndex < label.commands().size(); ++commandIndex) {
+        const auto& command = label.commands()[commandIndex];
+        const QtZpl::FieldSettings* settings = settingsAt.value(commandIndex);
+        const auto unanalyzed = [&] {
+            if (settings) return false;
+            raw(u"QtZpl не описал поле в позиции %1; сохранён исходный ZPL."_s.arg(command.sourceSpan.start));
+            return true;
+        };
         // Metadata belongs to exactly one immediately following field. In
         // particular, an unrelated ^FX must never become a generic permission
         // to discard comments or reinterpret another element's placeholders.
@@ -561,7 +573,7 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
             using T = std::decay_t<decltype(value)>;
             if constexpr (std::is_same_v<T, QtZpl::FormatStart> || std::is_same_v<T, QtZpl::FormatEnd>
                           || std::is_same_v<T, QtZpl::PrintWidth> || std::is_same_v<T, QtZpl::LabelLength>
-                          || std::is_same_v<T, QtZpl::FieldHex>) { }
+                          || std::is_same_v<T, QtZpl::FieldHex> || std::is_same_v<T, QtZpl::BarcodeDefault>) { }
             else if constexpr (std::is_same_v<T, QtZpl::Comment>) {
                 const auto decoded = decodeTemplateMetadata(value.text);
                 if (decoded && templateStage == TemplateStage::None && !haveOrigin && !fieldProduced && !barcode) {
@@ -572,8 +584,7 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                     raw(u"Комментарий внутри поля или некорректные метаданные сохранены в исходном ZPL."_s);
             }
             else if constexpr (std::is_same_v<T, QtZpl::CharacterSet>) {
-                charset = value.id;
-                if (charset != 0 && charset != 28) raw(u"Кодировка ^CI требует сохранения исходного ZPL."_s);
+                if (value.id != 0 && value.id != 28) raw(u"Кодировка ^CI требует сохранения исходного ZPL."_s);
             } else if constexpr (std::is_same_v<T, QtZpl::LabelHome>) {
                 if (value.x || value.y) raw(u"Смещение ^LH сохранено в режиме ZPL."_s);
             } else if constexpr (std::is_same_v<T, QtZpl::FieldOrigin> || std::is_same_v<T, QtZpl::FieldTypeset>) {
@@ -581,11 +592,7 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                 if (source.sliced(previousFieldEnd, command.sourceSpan.start - previousFieldEnd).contains(u"^FH", Qt::CaseInsensitive))
                     raw(u"Экранирование ^FH перед началом поля сохранено в режиме ZPL."_s);
                 if (fieldStart < 0) fieldStart = command.sourceSpan.start;
-                const auto directionState = u"^FW%1,%2"_s.arg(activeDirection).arg(activeJustification);
-                fieldSourceState = directionState + u"^CI%1^A0%2,%3,%4^BY%5,%6,%7"_s.arg(charset).arg(current.orientation)
-                    .arg(current.fontHeight).arg(current.fontWidth).arg(module).arg(barcodeRatio, 0, 'g', 8).arg(barcodeHeight);
-                fieldBarcodeState = directionState + u"^CI%1^BY%2,%3,%4"_s.arg(charset).arg(module)
-                    .arg(barcodeRatio, 0, 'g', 8).arg(barcodeHeight);
+                directionState = u"^FW%1,%2"_s.arg(activeDirection).arg(activeJustification);
                 current.x = value.x; current.y = value.y; haveOrigin = true;
                 current.baselineOrigin = std::is_same_v<T, QtZpl::FieldTypeset>;
                 if constexpr (std::is_same_v<T, QtZpl::FieldTypeset>)
@@ -618,33 +625,17 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                 } else if (haveOrigin)
                     raw(u"Пустое поле ^FO сохранено в исходном ZPL."_s);
                 haveOrigin = false; fieldProduced = false; reverse = false; fieldFontSet = false; barcode.reset();
-                currentFont = defaultFont;
-                current.fontHeight = defaultFontHeight;
-                current.fontWidth = defaultFontWidth;
                 current.orientation = u'N';
                 current.useDefaultOrientation = false;
-                current.blockWidth = 0;
-                current.blockMaxLines = 1;
-                current.blockLineSpacing = 0;
-                current.blockHangingIndent = 0;
-                current.blockJustification = u'L';
-                current.textDirection = u'H'; current.characterSpacing = 0;
                 fieldStart = -1; fieldElementIndex = -1;
             } else if constexpr (std::is_same_v<T, QtZpl::FieldReverse>) {
                 if (!haveOrigin) raw(u"Инверсия ^FR перед началом поля сохранена в режиме ZPL."_s);
                 reverse = true;
             } else if constexpr (std::is_same_v<T, QtZpl::FieldBlock>) {
                 if (!haveOrigin) raw(u"Блок ^FB перед началом поля сохранён в режиме ZPL."_s);
-                current.blockWidth = value.width;
-                current.blockMaxLines = value.maxLines;
-                current.blockLineSpacing = value.lineSpacing;
-                current.blockHangingIndent = value.hangingIndent;
-                current.blockJustification = QLatin1Char(static_cast<char>(value.justification));
                 if (value.width <= 0) raw(u"Нулевой блок ^FB сохранён в режиме ZPL."_s);
             } else if constexpr (std::is_same_v<T, QtZpl::ScalableFont>) {
                 fieldFontSet = true;
-                currentFont = value.font;
-                current.fontHeight = value.height; current.fontWidth = value.width;
                 current.orientation = QLatin1Char(static_cast<char>(value.orientation));
                 current.useDefaultOrientation = command.source.size() > 3 && command.source[3] == u',';
                 if (value.font != u'0' || command.source.startsWith(u"^A@"))
@@ -652,15 +643,9 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                 if (command.source.startsWith(u"^A@"))
                     raw(u"external-font-preview: QtZpl заменяет внешний шрифт ^A@ встроенным Font 0; исходная команда сохранена."_s);
             } else if constexpr (std::is_same_v<T, QtZpl::ChangeFont>) {
-                currentFont = defaultFont = value.font;
-                current.fontHeight = defaultFontHeight = value.height;
-                current.fontWidth = defaultFontWidth = value.width;
                 current.orientation = u'N';
                 current.useDefaultOrientation = false;
                 if (value.font != u'0') raw(u"Визуальный MVP редактирует текст только встроенным Font 0."_s);
-            } else if constexpr (std::is_same_v<T, QtZpl::BarcodeDefault>) {
-                module = value.moduleWidth; barcodeHeight = value.height;
-                barcodeRatio = value.wideToNarrowRatio;
             } else if constexpr (std::is_same_v<T, QtZpl::PrintOrientation>) {
                 if (value.orientation != QtZpl::Orientation::Normal && value.orientation != QtZpl::Orientation::Inverted)
                     raw(u"Поворот ^PO поддерживает 0 или 180 градусов; исходный ZPL сохранён."_s);
@@ -681,8 +666,6 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                 }
             } else if constexpr (std::is_same_v<T, QtZpl::FieldParameter>) {
                 if (fieldProduced) raw(u"Команда ^FP после данных поля сохранена в режиме ZPL."_s);
-                current.textDirection = value.direction;
-                current.characterSpacing = value.spacing;
             } else if constexpr (std::is_same_v<T, QtZpl::PrintQuantity>) {
                 if (value.quantity != 1 || value.pauseAndCut != 0 || value.replicates > 1 || value.overridePauseCount)
                     raw(u"Особые параметры количества печати ^PQ сохранены в режиме ZPL."_s);
@@ -707,23 +690,38 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                 else numeric({1});
                 barcode = value;
             } else if constexpr (std::is_same_v<T, QtZpl::FieldData>) {
+                if (unanalyzed()) return;
                 Element element = current;
                 element.type = ElementType::Text;
                 element.text = value.data;
-                if (!barcode && currentFont != u'0')
+                element.fontHeight = settings->font.height;
+                element.fontWidth = settings->font.width;
+                if (const auto& block = settings->block) {
+                    element.blockWidth = block->width;
+                    element.blockMaxLines = block->maxLines;
+                    element.blockLineSpacing = block->lineSpacing;
+                    element.blockHangingIndent = block->hangingIndent;
+                    element.blockJustification = QLatin1Char(static_cast<char>(block->justification));
+                }
+                element.textDirection = settings->parameter.direction;
+                element.characterSpacing = settings->parameter.spacing;
+                const auto& codeDefaults = settings->barcodeDefaults;
+                if (!barcode && settings->font.font != u'0')
                     raw(u"Визуальный редактор поддерживает текст только встроенным Font 0; текущий шрифт сохранён в исходном ZPL."_s);
-                if (charset != 28 && std::ranges::any_of(value.data, [](QChar ch) { return ch.unicode() > 127; }))
+                if (settings->characterSet != 28 && std::ranges::any_of(value.data, [](QChar ch) { return ch.unicode() > 127; }))
                     raw(u"Не-ASCII текст без ^CI28 сохранён в исходной кодировке."_s);
                 if (barcode) {
                     const auto& code = *barcode;
                     element.orientation = QLatin1Char(static_cast<char>(code.orientation));
                     if (element.orientation == u'N') element.orientation = activeDirection;
                     element.useDefaultOrientation = false;
-                    element.moduleWidth = module;
-                    element.barcodeRatio = barcodeRatio;
+                    // QtZpl's ^BY state, including the module width that a
+                    // preceding ^BQ magnification sets for later symbols.
+                    element.moduleWidth = codeDefaults.moduleWidth;
+                    element.barcodeRatio = codeDefaults.wideToNarrowRatio;
                     if (code.symbology == u"BC") {
                         element.type = ElementType::Code128;
-                        element.height = parameter(code, 1, QString::number(barcodeHeight)).toInt();
+                        element.height = parameter(code, 1, QString::number(codeDefaults.height)).toInt();
                         element.humanReadable = parameter(code, 2, u"Y"_s) != u"N";
                         if (fieldFontSet)
                             raw(u"Явный шрифт подписи Code 128 сохранён в режиме ZPL."_s);
@@ -738,7 +736,7 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                         element.moduleWidth = parameter(code, 2, u"2"_s).toInt();
                         if (parameter(code, 1, u"2"_s) != u"2" || element.text.size() < 3
                             || !QStringView{u"LMQH"}.contains(element.text.front()) || element.text.sliced(1, 2) != u"A,"
-                            || barcodeHeight != 0 || code.parameters.size() > 3)
+                            || codeDefaults.height != 0 || code.parameters.size() > 3)
                             raw(u"Параметры QR-кода сохранены в режиме ZPL."_s);
                         else { element.qrErrorCorrection = element.text.front(); element.text.remove(0, 3); }
                     } else if (code.symbology == u"BE" || code.symbology == u"B8" || code.symbology == u"BU"
@@ -750,7 +748,7 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                             : code.symbology == u"BA" ? ElementType::Code93 : code.symbology == u"B2" ? ElementType::Interleaved2of5
                             : code.symbology == u"BI" ? ElementType::Industrial2of5 : ElementType::Pdf417;
                         if (element.type == ElementType::Pdf417) {
-                            element.pdf417RowHeight = parameter(code, 1, QString::number(module * 3)).toInt();
+                            element.pdf417RowHeight = parameter(code, 1, QString::number(codeDefaults.moduleWidth * 3)).toInt();
                             element.pdf417Security = parameter(code, 2, u"0"_s).toInt();
                             element.pdf417Columns = parameter(code, 3, u"0"_s).toInt();
                             element.pdf417Rows = parameter(code, 4, u"0"_s).toInt();
@@ -760,7 +758,7 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                                 raw(u"Особые параметры PDF417 сохранены в исходном ZPL."_s);
                         } else {
                             const bool extra = element.type == ElementType::Code39 || element.type == ElementType::Codabar;
-                            element.height = parameter(code, extra ? 2 : 1, QString::number(barcodeHeight)).toInt();
+                            element.height = parameter(code, extra ? 2 : 1, QString::number(codeDefaults.height)).toInt();
                             element.humanReadable = parameter(code, extra ? 3 : 2, u"Y"_s) != u"N";
                             element.interpretationAbove = parameter(code, extra ? 4 : 3, u"N"_s) == u"Y";
                             const bool check = element.type == ElementType::Code93 || element.type == ElementType::Interleaved2of5;
@@ -881,8 +879,9 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                         }
                     }
                 }
-                append(element);
+                append(element, *settings);
             } else if constexpr (std::is_same_v<T, QtZpl::GraphicBox> || std::is_same_v<T, QtZpl::GraphicEllipse>) {
+                if (unanalyzed()) return;
                 Element element = current;
                 element.type = std::is_same_v<T, QtZpl::GraphicBox> ? ElementType::Box : ElementType::Ellipse;
                 element.width = std::max(value.width, value.thickness);
@@ -893,22 +892,25 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                     if (value.cornerRounding != 0) raw(u"Скругление прямоугольника сохранено в режиме ZPL."_s);
                 }
                 element.graphicWhite = value.color == QtZpl::LineColor::White;
-                append(element);
+                append(element, *settings);
             } else if constexpr (std::is_same_v<T, QtZpl::GraphicCircle>) {
+                if (unanalyzed()) return;
                 Element element = current;
                 element.type = ElementType::Circle; element.width = element.height = value.diameter;
                 element.thickness = value.thickness;
                 element.graphicWhite = value.color == QtZpl::LineColor::White;
-                append(element);
+                append(element, *settings);
             } else if constexpr (std::is_same_v<T, QtZpl::GraphicDiagonal>) {
+                if (unanalyzed()) return;
                 Element element = current;
                 element.type = ElementType::Diagonal;
                 element.width = value.width; element.height = value.height;
                 element.thickness = value.thickness;
                 element.graphicWhite = value.color == QtZpl::LineColor::White;
                 element.diagonalDirection = value.orientation;
-                append(element);
+                append(element, *settings);
             } else if constexpr (std::is_same_v<T, QtZpl::GraphicField>) {
+                if (unanalyzed()) return;
                 Element element = current;
                 element.type = ElementType::Image;
                 // QtZpl owns graphic decoding (ASCII repeats, Z64 and binary),
@@ -934,7 +936,7 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                 element.image = std::move(image);
                 element.threshold = 128; element.dither = false;
                 if (reverse) raw(u"Инверсия ^GF сохранена в режиме ZPL."_s);
-                append(element);
+                append(element, *settings);
             } else raw(u"Команда %1 сохранена в исходном ZPL; визуальное редактирование отключено."_s.arg(command.source.left(3)));
         }, command.payload);
     }

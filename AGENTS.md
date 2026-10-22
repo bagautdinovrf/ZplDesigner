@@ -50,8 +50,12 @@ Native Qt Widgets editor. Read this file and README.md before modifying it.
 
 - `src/core/`: values, typed `EditOperation` transforms, codecs, validation and the QtZpl adapter.
 - `src/session/`: applied document, source draft/status/revisions, snapshot history and file lifecycle.
-- `src/widgets/`: views, UUID selection, source editor adapter and synchronous preview coordinator.
+- `src/widgets/`: views, UUID selection, source editor adapter and preview coordinator. Debounced
+  previews render on a worker thread; `refresh()` stays synchronous for callers that read bounds.
 - `src/printing/`: print jobs, profiles and transport. `src/main.cpp` bootstraps the app.
 - Widgets submit typed operations to `DocumentSession::execute`; do not reintroduce a copied-document commit path in MainWindow.
 - Preview geometry is valid only with its `DocumentRevision`; delayed source applies also check source revision.
+- Call QtZpl only through `src/core/qtzpl_adapter.cpp` (`parseZpl`, `parseOptions`, `renderOptions`), which
+  applies Designer budgets and parses identical text once. Locate commands with `Command::sourceSpan` and
+  `Internal::commandEnd`, fields with `FieldInfo`/`elementFieldRanges`; never use `Command::source` lengths.
 - Keep inactive element options compatible with legacy project/clipboard encoding; R6 migration is tracked separately in the plan.
