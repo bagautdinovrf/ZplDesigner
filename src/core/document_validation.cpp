@@ -123,19 +123,14 @@ QString validateElement(const Element& element, bool preservePlaceholders, int d
     if (isLinearBarcodeType(element.type)
         && qint64(element.text.size() + 8) * 11 * element.moduleWidth * (element.height + 160) > maximumPixels)
         return u"Штрихкод слишком велик для безопасного рендеринга."_s;
-    // QtZpl PDF417 currently accepts Latin-1 bytes. Reject unmappable Unicode
-    // instead of silently substituting '?' in the printed payload.
-    if ((element.type == ElementType::Pdf417 || element.type == ElementType::MicroPdf417
-         || element.type == ElementType::Aztec || element.type == ElementType::MaxiCode)
-        && (!preservePlaceholders || element.literalText || (!element.text.contains(u"{{") && !element.text.contains(u"[[")))
-        && std::ranges::any_of(element.text, [](QChar ch) { return ch.unicode() > 255; }))
-        return u"Этот штрихкод поддерживает только символы Latin-1; данные Unicode нельзя сохранить без потерь."_s;
     if (element.type == ElementType::Code39
         && (!preservePlaceholders || element.literalText || (!element.text.contains(u"{{") && !element.text.contains(u"[[")))
         && (element.text.isEmpty() || std::ranges::any_of(element.text, [](QChar ch) {
             return !QStringView{u"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-. "}.contains(ch);
         })))
         return u"Code 39: доступные символы — цифры, A–Z, пробел, дефис и точка."_s;
+    // QtZpl reports barcode-interpretation-pending instead of drawing these
+    // captions (canary: code39CaptionStillPendingInQtZpl).
     if ((element.type == ElementType::Code39 || element.type == ElementType::Codabar)
         && (element.humanReadable || element.interpretationAbove))
         return u"Подпись Code 39/Codabar пока не поддерживается QtZpl; добавьте отдельный текст."_s;
@@ -167,7 +162,7 @@ QString validateParsed(const QtZpl::Document& parsed, qsizetype* errorOffset)
                     const auto* width = std::get_if<QtZpl::PrintWidth>(&command.payload);
                     const auto* height = std::get_if<QtZpl::LabelLength>(&command.payload);
                     if ((width && width->dots > maximumSide) || (height && height->dots > maximumSide)) {
-                        *errorOffset = command.offset;
+                        *errorOffset = command.sourceSpan.start;
                         break;
                     }
                 }
@@ -175,7 +170,7 @@ QString validateParsed(const QtZpl::Document& parsed, qsizetype* errorOffset)
             return u"Размер этикетки превышает 4096 × 4096 точек."_s;
         }
         if (label.commands().size() > 2400) {
-            if (errorOffset) *errorOffset = label.commands()[2400].offset;
+            if (errorOffset) *errorOffset = label.commands()[2400].sourceSpan.start;
             return u"Слишком много команд: предел MVP — 2400 на этикетку."_s;
         }
         int fontHeight = 30;
@@ -269,8 +264,9 @@ QString validateParsed(const QtZpl::Document& parsed, qsizetype* errorOffset)
                 }
             }, command.payload);
             if (!safe) {
-                if (errorOffset) *errorOffset = command.offset;
-                return u"Небезопасные параметры команды в позиции %1: %2"_s.arg(command.offset).arg(command.source.left(40));
+                if (errorOffset) *errorOffset = command.sourceSpan.start;
+                return u"Небезопасные параметры команды в позиции %1: %2"_s.arg(command.sourceSpan.start)
+                    .arg(parsed.sourceText(command.sourceSpan).trimmed().left(40));
             }
         }
     }

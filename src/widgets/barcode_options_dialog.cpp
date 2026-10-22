@@ -83,7 +83,7 @@ BarcodeOptionsDialog::BarcodeOptionsDialog(const Element& element, CanvasUnit un
             number(tr("Строки (0 — авто, иначе 3–90)"), QStringLiteral("barcodeRows"), &Element::pdf417Rows, 0, 90);
             flag(tr("Усечённый PDF417"), QStringLiteral("barcodeTruncated"), &Element::pdf417Truncated);
         } else number(tr("Режим размера (0–33)"), QStringLiteral("microPdf417Mode"), &Element::microPdf417Mode, 0, 33);
-        note(tr("Байтовые данные Latin-1. Ёмкость выбранного размера проверяется при построении превью."));
+        note(tr("Unicode записывается байтами UTF-8 (^CI28); сканер без поддержки ECI может прочитать их как Latin-1. Ёмкость выбранного размера проверяется при построении превью."));
     } else if (element.type == ElementType::Gs1DataBar) {
         auto* type = new QComboBox(this); type->setObjectName(QStringLiteral("dataBarType"));
         const QStringList names{tr("Omnidirectional"), tr("Truncated"), tr("Stacked"), tr("Stacked Omnidirectional"), tr("Limited"), tr("Expanded / Expanded Stacked")};

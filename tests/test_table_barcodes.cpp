@@ -264,9 +264,8 @@ void TableBarcodeTest::qrCorrectionLevels()
 void TableBarcodeTest::rejectedInputsRemainEditable()
 {
     for (const auto type : {ElementType::Ean13, ElementType::Ean8, ElementType::UpcA, ElementType::UpcE,
-                           ElementType::Code39, ElementType::Pdf417, ElementType::Codabar, ElementType::Code93,
-                           ElementType::Interleaved2of5, ElementType::Industrial2of5, ElementType::Gs1DataBar,
-                           ElementType::MicroPdf417, ElementType::Aztec, ElementType::MaxiCode}) {
+                           ElementType::Code39, ElementType::Codabar, ElementType::Code93,
+                           ElementType::Interleaved2of5, ElementType::Industrial2of5, ElementType::Gs1DataBar}) {
         DesignDocument document;
         auto code = makeElement(type); code.text = u"Нельзя"_s;
         document.elements = {code};
@@ -275,6 +274,24 @@ void TableBarcodeTest::rejectedInputsRemainEditable()
         QVERIFY2(editor.has_value(), qPrintable(editor ? QString{} : editor.error()));
         QCOMPARE(editor->elementErrors.size(), 1);
         QVERIFY(decodeElements(encodeElements({code})).has_value());
+    }
+    // Byte-mode symbols encode Unicode as UTF-8 under ^CI28 (product decision
+    // of 2026-10-22); scanners without ECI may read those bytes as Latin-1.
+    for (const auto type : {ElementType::Pdf417, ElementType::MicroPdf417, ElementType::Aztec, ElementType::MaxiCode}) {
+        DesignDocument document;
+        auto code = makeElement(type); code.text = u"Можно"_s;
+        if (type == ElementType::MicroPdf417) code.microPdf417Mode = 20; // Three columns fit ten bytes.
+        document.elements = {code};
+        const auto valid = validateForExport(document, false);
+        QVERIFY2(valid.has_value(), qPrintable(valid ? QString{} : valid.error()));
+        const auto editor = renderEditorPreview(document);
+        QVERIFY2(editor.has_value(), qPrintable(editor ? QString{} : editor.error()));
+        QVERIFY(editor->elementErrors.isEmpty());
+        const auto loaded = fromZpl(toZpl(document));
+        QVERIFY(loaded.has_value());
+        QVERIFY2(loaded->visualEditable, qPrintable(loaded->importNotes.join(u'\n')));
+        QCOMPARE(loaded->elements.first().type, type);
+        QCOMPARE(loaded->elements.first().text, code.text);
     }
 }
 

@@ -634,7 +634,7 @@ void DocumentTest::dataMatrixUtf8BytesRoundTrip()
             QCOMPARE(data->data.toUtf8(), expectedBytes);
             QVERIFY(data->bytes.has_value());
             QCOMPARE(*data->bytes, expectedBytes);
-            QCOMPARE(command.source, u"^FD_D0_9A_D0_BE_D0_B4_20_C3_A9_20_7C_7C_31_20_5E_46_53"_s);
+            QCOMPARE(parsed->sourceText(command.sourceSpan).toString(), u"^FD_D0_9A_D0_BE_D0_B4_20_C3_A9_20_7C_7C_31_20_5E_46_53"_s);
             found = true;
         }
     QVERIFY(found);
@@ -666,7 +666,7 @@ void DocumentTest::dataMatrixUtf8BytesRoundTrip()
             ++movedOrigins;
             QCOMPARE(origin->x, 48);
             QCOMPARE(origin->y, 40);
-            QCOMPARE(command.source, u"^FO48,40"_s);
+            QCOMPARE(movedParsed->sourceText(command.sourceSpan).trimmed().toString(), u"^FO48,40"_s);
         }
     }
     QCOMPARE(movedFields, 1);

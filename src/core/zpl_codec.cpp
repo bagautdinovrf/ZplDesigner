@@ -144,11 +144,6 @@ std::optional<QString> decodeTemplateMetadata(QStringView text)
     return decoded;
 }
 
-QString parameter(const QtZpl::Barcode& code, qsizetype index, QString fallback = {})
-{
-    return index < code.parameters.size() && !code.parameters[index].isEmpty() ? code.parameters[index] : fallback;
-}
-
 QString labelSettings(const DesignDocument& document, bool includeDefaults = false)
 {
     QString result;
@@ -199,11 +194,6 @@ static QString serializeElement(const Element& input, bool preservePlaceholders,
     if (element.useDefaultOrientation) element.orientation = defaultOrientation;
     QString result = u"^%1%2,%3"_s.arg(element.baselineOrigin ? u"FT"_s : u"FO"_s).arg(element.x).arg(element.y);
     if (element.originJustification >= 0) result += u',' + QString::number(element.originJustification);
-    // QtZpl treats normal ^A/^B orientation as inherited ^FW. A local reset
-    // gives an explicitly normal object predictable geometry under rotated FW.
-    const bool resetDirection = !element.useDefaultOrientation && element.orientation == u'N'
-        && defaultOrientation != u'N' && (element.type == ElementType::Text || isBarcodeType(element.type));
-    if (resetDirection) result += u"^FWN,%1"_s.arg(defaultJustification);
     if (element.reverse && element.type != ElementType::Image) result += u"^FR"_s;
     switch (element.type) {
     case ElementType::Eac: {
@@ -384,7 +374,6 @@ static QString serializeElement(const Element& input, bool preservePlaceholders,
     }
     }
     result += u"^FS\n"_s;
-    if (resetDirection) result += u"^FW%1,%2"_s.arg(defaultOrientation).arg(defaultJustification);
     return result;
 }
 
@@ -482,8 +471,8 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
     if (parsed->labels().size() != 1)
         raw(u"Файл содержит несколько этикеток. Выберите страницу во вкладке «Превью»; весь ZPL сохранён. Редактирование доступно во вкладке ZPL."_s);
     const bool sourceHasPlaceholders = std::ranges::any_of(label.commands(), [](const QtZpl::Command& command) {
-        return std::holds_alternative<QtZpl::FieldData>(command.payload)
-            && (command.source.contains(u"{{") || command.source.contains(u"[["));
+        const auto* field = std::get_if<QtZpl::FieldData>(&command.payload);
+        return field && (field->rawData.contains(u"{{") || field->rawData.contains(u"[["));
     });
     for (const auto& diagnostic : parsed->diagnostics()) raw(diagnosticText(diagnostic));
     // Label::sourceSpan ends right after ^XZ; its normalized source may still
@@ -525,13 +514,14 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
         element.reverse = reverse;
         element.id = QUuid::createUuid();
         element.name = elementTypeName(element.type);
-        if (element.type == ElementType::Text && element.orientation == u'N') {
-            if (activeDirection == result.defaultOrientation)
-                element.useDefaultOrientation |= activeDirection != u'N';
-            else {
-                element.orientation = activeDirection;
-                element.useDefaultOrientation = false;
-            }
+        // QtZpl reports whether ^FW supplies the text rotation: the parameter
+        // is omitted or a later ^FW replaced it. An explicit rotation wins.
+        if (element.type == ElementType::Text && settings.font.orientationOmitted) {
+            const QChar direction = QLatin1Char(static_cast<char>(settings.fieldDirection));
+            element.orientation = direction;
+            if (direction == result.defaultOrientation)
+                element.useDefaultOrientation |= direction != u'N';
+            else element.useDefaultOrientation = false;
         }
         fieldElementIndex = result.elements.size();
         // Printer state restored before this field when fields are reordered:
@@ -539,7 +529,8 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
         // as QtZpl applied it here. In-field commands repeat after it.
         const auto codeState = u"^BY%1,%2,%3"_s.arg(settings.barcodeDefaults.moduleWidth)
             .arg(settings.barcodeDefaults.wideToNarrowRatio, 0, 'g', 8).arg(settings.barcodeDefaults.height);
-        const QChar fontOrientation = QLatin1Char(static_cast<char>(settings.font.orientation));
+        const QString fontOrientation = settings.font.orientationOmitted
+            ? QString{} : QString(QLatin1Char(static_cast<char>(settings.font.orientation)));
         element.sourceState = directionState + u"^CI%1"_s.arg(settings.characterSet) + (isBarcodeType(element.type)
             ? codeState : u"^A0%1,%2,%3"_s.arg(fontOrientation).arg(settings.font.height).arg(settings.font.width) + codeState);
         result.elements.append(std::move(element));
@@ -637,10 +628,10 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
             } else if constexpr (std::is_same_v<T, QtZpl::ScalableFont>) {
                 fieldFontSet = true;
                 current.orientation = QLatin1Char(static_cast<char>(value.orientation));
-                current.useDefaultOrientation = command.source.size() > 3 && command.source[3] == u',';
-                if (value.font != u'0' || command.source.startsWith(u"^A@"))
+                current.useDefaultOrientation = value.orientationOmitted;
+                if (value.font != u'0' || value.external)
                     raw(u"Визуальный MVP редактирует текст только встроенным Font 0."_s);
-                if (command.source.startsWith(u"^A@"))
+                if (value.external)
                     raw(u"external-font-preview: QtZpl заменяет внешний шрифт ^A@ встроенным Font 0; исходная команда сохранена."_s);
             } else if constexpr (std::is_same_v<T, QtZpl::ChangeFont>) {
                 current.orientation = u'N';
@@ -712,152 +703,181 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                     raw(u"Не-ASCII текст без ^CI28 сохранён в исходной кодировке."_s);
                 if (barcode) {
                     const auto& code = *barcode;
-                    element.orientation = QLatin1Char(static_cast<char>(code.orientation));
-                    if (element.orientation == u'N') element.orientation = activeDirection;
-                    element.useDefaultOrientation = false;
-                    // QtZpl's ^BY state, including the module width that a
-                    // preceding ^BQ magnification sets for later symbols.
-                    element.moduleWidth = codeDefaults.moduleWidth;
-                    element.barcodeRatio = codeDefaults.wideToNarrowRatio;
-                    if (code.symbology == u"BC") {
-                        element.type = ElementType::Code128;
-                        element.height = parameter(code, 1, QString::number(codeDefaults.height)).toInt();
-                        element.humanReadable = parameter(code, 2, u"Y"_s) != u"N";
-                        if (fieldFontSet)
-                            raw(u"Явный шрифт подписи Code 128 сохранён в режиме ZPL."_s);
-                        element.interpretationAbove = parameter(code, 3, u"N"_s) == u"Y";
-                        element.code128CheckDigit = parameter(code, 4, u"N"_s) == u"Y";
-                        const auto mode = parameter(code, 5, u"N"_s);
-                        if (mode.size() != 1 || !QStringView(u"NABCDU").contains(mode.front()) || code.parameters.size() > 6)
-                            raw(u"Особый режим Code 128 сохранён в исходном ZPL."_s);
-                        else element.code128Mode = mode.front();
-                    } else if (code.symbology == u"BQ") {
-                        element.type = ElementType::QrCode;
-                        element.moduleWidth = parameter(code, 2, u"2"_s).toInt();
-                        if (parameter(code, 1, u"2"_s) != u"2" || element.text.size() < 3
-                            || !QStringView{u"LMQH"}.contains(element.text.front()) || element.text.sliced(1, 2) != u"A,"
-                            || codeDefaults.height != 0 || code.parameters.size() > 3)
-                            raw(u"Параметры QR-кода сохранены в режиме ZPL."_s);
-                        else { element.qrErrorCorrection = element.text.front(); element.text.remove(0, 3); }
-                    } else if (code.symbology == u"BE" || code.symbology == u"B8" || code.symbology == u"BU"
-                               || code.symbology == u"B9" || code.symbology == u"B3" || code.symbology == u"BK"
-                               || code.symbology == u"B7" || code.symbology == u"BA" || code.symbology == u"B2" || code.symbology == u"BI") {
-                        element.type = code.symbology == u"BE" ? ElementType::Ean13 : code.symbology == u"B8" ? ElementType::Ean8
-                            : code.symbology == u"BU" ? ElementType::UpcA : code.symbology == u"B9" ? ElementType::UpcE
-                            : code.symbology == u"B3" ? ElementType::Code39 : code.symbology == u"BK" ? ElementType::Codabar
-                            : code.symbology == u"BA" ? ElementType::Code93 : code.symbology == u"B2" ? ElementType::Interleaved2of5
-                            : code.symbology == u"BI" ? ElementType::Industrial2of5 : ElementType::Pdf417;
-                        if (element.type == ElementType::Pdf417) {
-                            element.pdf417RowHeight = parameter(code, 1, QString::number(codeDefaults.moduleWidth * 3)).toInt();
-                            element.pdf417Security = parameter(code, 2, u"0"_s).toInt();
-                            element.pdf417Columns = parameter(code, 3, u"0"_s).toInt();
-                            element.pdf417Rows = parameter(code, 4, u"0"_s).toInt();
-                            element.pdf417Truncated = parameter(code, 5, u"N"_s) == u"Y";
-                            element.humanReadable = false;
-                            if ((parameter(code, 5, u"N"_s) != u"N" && parameter(code, 5) != u"Y") || code.parameters.size() > 6)
-                                raw(u"Особые параметры PDF417 сохранены в исходном ZPL."_s);
-                        } else {
-                            const bool extra = element.type == ElementType::Code39 || element.type == ElementType::Codabar;
-                            element.height = parameter(code, extra ? 2 : 1, QString::number(codeDefaults.height)).toInt();
-                            element.humanReadable = parameter(code, extra ? 3 : 2, u"Y"_s) != u"N";
-                            element.interpretationAbove = parameter(code, extra ? 4 : 3, u"N"_s) == u"Y";
-                            const bool check = element.type == ElementType::Code93 || element.type == ElementType::Interleaved2of5;
-                            element.barcodeCheckDigit = check && parameter(code, 4, u"N"_s) == u"Y";
-                            if ((extra && parameter(code, 1, u"N"_s) != u"N") || code.parameters.size() > (extra || check ? 5 : 4)
-                                || fieldFontSet || ((element.type == ElementType::Codabar || element.type == ElementType::Code39)
-                                    && (element.humanReadable || element.interpretationAbove)))
-                                raw(u"Особые параметры штрихкода сохранены в исходном ZPL."_s);
+                    // QtZpl resolves every parameter, ^BY (with the module width a
+                    // preceding ^BQ sets) and ^FW once for its renderer and for us.
+                    // Designer only decides whether its model keeps the field
+                    // without loss; spelling rules use the raw parameters.
+                    const auto& resolved = settings->resolvedBarcode;
+                    if (!resolved) raw(u"QtZpl не принимает параметры ^%1; исходный ZPL сохранён."_s.arg(code.symbology));
+                    else {
+                        using Symbology = QtZpl::Symbology;
+                        element.orientation = QLatin1Char(static_cast<char>(resolved->orientation));
+                        element.useDefaultOrientation = false;
+                        // MaxiCode has fixed geometry; keep the ^BY width it is written with.
+                        element.moduleWidth = resolved->moduleWidth > 0 ? resolved->moduleWidth : codeDefaults.moduleWidth;
+                        element.barcodeRatio = resolved->wideToNarrowRatio;
+                        switch (resolved->symbology) {
+                        case Symbology::Code128: {
+                            const auto& options = std::get<QtZpl::Code128Options>(resolved->options);
+                            element.type = ElementType::Code128;
+                            element.height = resolved->height;
+                            element.humanReadable = resolved->interpretation;
+                            element.interpretationAbove = resolved->interpretationAbove;
+                            element.code128CheckDigit = options.uccCheckDigit;
+                            if (fieldFontSet)
+                                raw(u"Явный шрифт подписи Code 128 сохранён в режиме ZPL."_s);
+                            if (!QStringView(u"NABCDU").contains(options.mode) || code.parameters.value(5).size() > 1
+                                || code.parameters.size() > 6)
+                                raw(u"Особый режим Code 128 сохранён в исходном ZPL."_s);
+                            else element.code128Mode = options.mode;
+                            break;
                         }
-                    } else if (code.symbology == u"BR" || code.symbology == u"BF" || code.symbology == u"BO"
-                               || code.symbology == u"B0" || code.symbology == u"BD") {
-                        element.humanReadable = false;
-                        if (code.symbology == u"BR") {
+                        case Symbology::QrCode:
+                            element.type = ElementType::QrCode;
+                            // The serializer writes ^BY…,0, which QtZpl applies as a
+                            // one-dot ^FO margin, like Labelary.
+                            if (element.text.size() < 3 || !QStringView{u"LMQH"}.contains(element.text.front())
+                                || element.text.sliced(1, 2) != u"A," || codeDefaults.height != 1 || code.parameters.size() > 3)
+                                raw(u"Параметры QR-кода сохранены в режиме ZPL."_s);
+                            else { element.qrErrorCorrection = element.text.front(); element.text.remove(0, 3); }
+                            break;
+                        case Symbology::Ean13: case Symbology::Ean8: case Symbology::UpcA: case Symbology::UpcE:
+                        case Symbology::Code39: case Symbology::Codabar: case Symbology::Code93:
+                        case Symbology::Interleaved2of5: case Symbology::Industrial2of5: {
+                            const auto symbology = resolved->symbology;
+                            element.type = symbology == Symbology::Ean13 ? ElementType::Ean13
+                                : symbology == Symbology::Ean8 ? ElementType::Ean8 : symbology == Symbology::UpcA ? ElementType::UpcA
+                                : symbology == Symbology::UpcE ? ElementType::UpcE : symbology == Symbology::Code39 ? ElementType::Code39
+                                : symbology == Symbology::Codabar ? ElementType::Codabar : symbology == Symbology::Code93 ? ElementType::Code93
+                                : symbology == Symbology::Interleaved2of5 ? ElementType::Interleaved2of5 : ElementType::Industrial2of5;
+                            element.height = resolved->height;
+                            element.humanReadable = resolved->interpretation;
+                            element.interpretationAbove = resolved->interpretationAbove;
+                            const bool checkDigit = std::get<QtZpl::LinearOptions>(resolved->options).checkDigit;
+                            const bool extra = element.type == ElementType::Code39 || element.type == ElementType::Codabar;
+                            const bool check = element.type == ElementType::Code93 || element.type == ElementType::Interleaved2of5;
+                            element.barcodeCheckDigit = check && checkDigit;
+                            // The model has no Code 39/Codabar check digit, and the
+                            // serializer omits UPC's e. Captions QtZpl cannot draw
+                            // are rejected by validateElement below.
+                            if ((extra && checkDigit) || code.parameters.size() > (extra || check ? 5 : 4) || fieldFontSet)
+                                raw(u"Особые параметры штрихкода сохранены в исходном ZPL."_s);
+                            break;
+                        }
+                        case Symbology::Pdf417: {
+                            const auto& options = std::get<QtZpl::Pdf417Options>(resolved->options);
+                            element.type = ElementType::Pdf417;
+                            element.pdf417RowHeight = resolved->height;
+                            element.pdf417Security = options.security;
+                            element.pdf417Columns = options.columns;
+                            element.pdf417Rows = options.rows;
+                            element.pdf417Truncated = options.truncated;
+                            element.humanReadable = false;
+                            if (code.parameters.size() > 6) raw(u"Особые параметры PDF417 сохранены в исходном ZPL."_s);
+                            break;
+                        }
+                        case Symbology::DataBar: {
+                            const auto& options = std::get<QtZpl::DataBarOptions>(resolved->options);
                             element.type = ElementType::Gs1DataBar;
-                            element.dataBarType = parameter(code, 1, u"1"_s).toInt();
-                            element.moduleWidth = parameter(code, 2, u"2"_s).toInt();
-                            element.dataBarSeparator = parameter(code, 3, u"1"_s).toInt();
-                            element.height = parameter(code, 4, u"25"_s).toInt();
-                            element.dataBarSegments = parameter(code, 5, u"0"_s).toInt();
+                            element.humanReadable = false;
+                            element.dataBarType = options.type;
+                            element.dataBarSeparator = options.separatorHeight;
+                            element.height = resolved->height;
+                            element.dataBarSegments = options.segments;
                             if (code.parameters.size() > 6) raw(u"Неизвестные параметры GS1 DataBar сохранены в ZPL."_s);
-                        } else if (code.symbology == u"BF") {
+                            break;
+                        }
+                        case Symbology::MicroPdf417:
                             element.type = ElementType::MicroPdf417;
-                            element.pdf417RowHeight = parameter(code, 1, u"1"_s).toInt();
-                            element.microPdf417Mode = parameter(code, 2, u"0"_s).toInt();
+                            element.humanReadable = false;
+                            element.pdf417RowHeight = resolved->height;
+                            element.microPdf417Mode = std::get<QtZpl::MicroPdf417Options>(resolved->options).mode;
                             if (code.parameters.size() > 3) raw(u"Неизвестные параметры MicroPDF417 сохранены в ZPL."_s);
-                        } else if (code.symbology == u"BD") {
+                            break;
+                        case Symbology::MaxiCode: {
+                            const auto& options = std::get<QtZpl::MaxiCodeOptions>(resolved->options);
                             element.type = ElementType::MaxiCode;
-                            element.maxiCodeMode = parameter(code, 0, u"2"_s).toInt();
-                            element.maxiCodePosition = parameter(code, 1, u"1"_s).toInt();
-                            element.maxiCodeTotal = parameter(code, 2, u"1"_s).toInt();
+                            element.humanReadable = false;
+                            element.maxiCodeMode = options.mode;
+                            element.maxiCodePosition = options.position;
+                            element.maxiCodeTotal = options.total;
                             element.width = 201; element.height = 195;
                             if (code.parameters.size() > 3) raw(u"Неизвестные параметры MaxiCode сохранены в ZPL."_s);
-                        } else {
+                            break;
+                        }
+                        case Symbology::Aztec: {
+                            const auto& options = std::get<QtZpl::AztecOptions>(resolved->options);
                             element.type = ElementType::Aztec;
-                            element.moduleWidth = parameter(code, 1, u"2"_s).toInt();
-                            element.aztecSize = parameter(code, 3, u"23"_s).toInt();
-                            element.aztecReaderInit = parameter(code, 4, u"N"_s) == u"Y";
-                            if (parameter(code, 2, u"N"_s) != u"N" || parameter(code, 5, u"1"_s) != u"1" || code.parameters.size() > 6)
+                            element.humanReadable = false;
+                            element.aztecSize = options.size;
+                            element.aztecReaderInit = options.readerInitialization;
+                            if (options.eci || options.structuredAppend != 1 || code.parameters.size() > 6)
                                 raw(u"Aztec ECI/structured append не поддерживается; исходный ZPL сохранён."_s);
+                            break;
                         }
-                    } else if (code.symbology == u"BX") {
-                        element.type = ElementType::DataMatrix;
-                        element.moduleWidth = parameter(code, 1, u"3"_s).toInt();
-                        element.dataMatrixColumns = parameter(code, 3, u"0"_s).toInt();
-                        element.dataMatrixRows = parameter(code, 4, u"0"_s).toInt();
-                        element.dataMatrixRectangular = parameter(code, 7, u"1"_s) == u"2";
-                        if (parameter(code, 2, u"200"_s) != u"200"
-                            || parameter(code, 5, u"0"_s).toInt() < 0 || parameter(code, 5, u"0"_s).toInt() > 6
-                            || (parameter(code, 7, u"1"_s) != u"1" && parameter(code, 7) != u"2") || code.parameters.size() > 8)
-                            raw(u"Особый формат DataMatrix сохранён в режиме ZPL."_s);
-                        const QString marker = parameter(code, 6, u"~"_s);
-                        if (marker.size() != 1) raw(u"Параметры экранирования DataMatrix сохранены в режиме ZPL."_s);
-                        else {
-                            QString decoded;
-                            const bool leadingFnc1 = element.text.startsWith(marker + u'1');
-                            const bool libraryGs1 = parameter(code, 5, u"0"_s) == u"1";
-                            element.gs1 = leadingFnc1;
-                            if (leadingFnc1 != libraryGs1)
-                                raw(u"Режим GS1 DataMatrix отличается от поддерживаемого QtZpl; исходный ZPL сохранён."_s);
-                            // ^FH decoding can reinterpret an underscore plus
-                            // two hex letters inside a placeholder's name. For
-                            // our metadata-backed template, compare the raw
-                            // serialized field below instead of trusting that
-                            // unresolved parser payload as concrete code data.
-                            for (qsizetype i = 0; !templateText && i < element.text.size(); ++i) {
-                                if (element.text[i] == marker.front() && i + 1 < element.text.size()) {
-                                    if (element.text[i + 1] == marker.front()) { decoded += marker; ++i; }
-                                    else if (element.gs1 && element.text[i + 1] == u'1') {
-                                        if (i != 0) decoded += QChar(0x1d);
-                                        ++i;
-                                    }
-                                    else if (element.gs1 && QStringView(element.text).sliced(i + 1).startsWith(u"d029")) {
-                                        decoded += QChar(0x1d); i += 4;
-                                    }
-                                    else { raw(u"Специальные последовательности DataMatrix сохранены в режиме ZPL."_s); decoded += element.text[i]; }
-                                } else decoded += element.text[i];
-                            }
-                            if (templateText && templateStage == TemplateStage::Data) {
-                                element.text = *templateText;
-                                if (element.gs1) {
-                                    const auto gs1 = parseGs1Template(element.text);
-                                    const auto tokens = valuePlaceholders(element.text);
-                                    if (!gs1 || !tokens || tokens->isEmpty())
-                                        raw(u"Некорректные метаданные шаблона GS1 DataMatrix; сохранён исходный ZPL."_s);
-                                    else element.text = gs1->canonicalText;
+                        case Symbology::DataMatrix: {
+                            const auto& options = std::get<QtZpl::DataMatrixOptions>(resolved->options);
+                            element.type = ElementType::DataMatrix;
+                            element.dataMatrixColumns = options.columns;
+                            element.dataMatrixRows = options.rows;
+                            element.dataMatrixRectangular = options.rectangular;
+                            if (options.format < 0 || options.format > 6 || code.parameters.size() > 8)
+                                raw(u"Особый формат DataMatrix сохранён в режиме ZPL."_s);
+                            if (code.parameters.value(6).size() > 1) raw(u"Параметры экранирования DataMatrix сохранены в режиме ZPL."_s);
+                            else {
+                                const QChar marker = options.escape;
+                                QString decoded;
+                                const bool leadingFnc1 = element.text.startsWith(QString(marker) + u'1');
+                                element.gs1 = leadingFnc1;
+                                if (leadingFnc1 != options.gs1)
+                                    raw(u"Режим GS1 DataMatrix отличается от поддерживаемого QtZpl; исходный ZPL сохранён."_s);
+                                // ^FH decoding can reinterpret an underscore plus
+                                // two hex letters inside a placeholder's name. For
+                                // our metadata-backed template, compare the raw
+                                // serialized field below instead of trusting that
+                                // unresolved parser payload as concrete code data.
+                                for (qsizetype i = 0; !templateText && i < element.text.size(); ++i) {
+                                    if (element.text[i] == marker && i + 1 < element.text.size()) {
+                                        if (element.text[i + 1] == marker) { decoded += marker; ++i; }
+                                        else if (element.gs1 && element.text[i + 1] == u'1') {
+                                            if (i != 0) decoded += QChar(0x1d);
+                                            ++i;
+                                        }
+                                        else if (element.gs1 && QStringView(element.text).sliced(i + 1).startsWith(u"d029")) {
+                                            decoded += QChar(0x1d); i += 4;
+                                        }
+                                        else { raw(u"Специальные последовательности DataMatrix сохранены в режиме ZPL."_s); decoded += element.text[i]; }
+                                    } else decoded += element.text[i];
                                 }
-                                ++templateFields;
-                            } else if (element.gs1) {
-                                // QtZpl suppresses repeated leading |1 escapes,
-                                // but a printer can encode each FNC1. Do not let
-                                // renderer equality authorize that lossy import.
-                                if (decoded.startsWith(QChar(0x1d)))
-                                    raw(u"Повторный начальный FNC1/GS сохранён в исходном ZPL."_s);
-                                const auto gs1 = parseGs1(decoded, false);
-                                if (!gs1) raw(gs1.error());
-                                else element.text = gs1->canonicalText;
-                            } else element.text = decoded;
+                                if (templateText && templateStage == TemplateStage::Data) {
+                                    element.text = *templateText;
+                                    if (element.gs1) {
+                                        const auto gs1 = parseGs1Template(element.text);
+                                        const auto tokens = valuePlaceholders(element.text);
+                                        if (!gs1 || !tokens || tokens->isEmpty())
+                                            raw(u"Некорректные метаданные шаблона GS1 DataMatrix; сохранён исходный ZPL."_s);
+                                        else element.text = gs1->canonicalText;
+                                    }
+                                    ++templateFields;
+                                } else if (element.gs1) {
+                                    // QtZpl suppresses repeated leading |1 escapes,
+                                    // but a printer can encode each FNC1. Do not let
+                                    // renderer equality authorize that lossy import
+                                    // (canary: repeatedLeadingFnc1StillCollapses).
+                                    if (decoded.startsWith(QChar(0x1d)))
+                                        raw(u"Повторный начальный FNC1/GS сохранён в исходном ZPL."_s);
+                                    const auto gs1 = parseGs1(decoded, false);
+                                    if (!gs1) raw(gs1.error());
+                                    else element.text = gs1->canonicalText;
+                                } else element.text = decoded;
+                            }
+                            break;
                         }
-                    } else raw(u"Этот тип штрихкода пока доступен только в ZPL."_s);
+                        case Symbology::Unknown:
+                            raw(u"Этот тип штрихкода пока доступен только в ZPL."_s);
+                            break;
+                        }
+                    }
                     barcode.reset();
                 }
                 if (templateText) {
@@ -870,8 +890,8 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                     if (element.type == ElementType::DataMatrix)
                         raw(u"Неоднозначные переменные DataMatrix сохранены в режиме исходного ZPL."_s);
                     else {
-                        element.literalText = !command.source.contains(u"{{") && !command.source.contains(u"[[")
-                            && !command.source.contains(u"}}") && !command.source.contains(u"]]");
+                        element.literalText = !value.rawData.contains(u"{{") && !value.rawData.contains(u"[[")
+                            && !value.rawData.contains(u"}}") && !value.rawData.contains(u"]]");
                         if (!element.literalText) {
                             const auto tokens = valuePlaceholders(element.text);
                             if (!tokens) raw(tokens.error());
@@ -937,7 +957,8 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                 element.threshold = 128; element.dither = false;
                 if (reverse) raw(u"Инверсия ^GF сохранена в режиме ZPL."_s);
                 append(element, *settings);
-            } else raw(u"Команда %1 сохранена в исходном ZPL; визуальное редактирование отключено."_s.arg(command.source.left(3)));
+            } else raw(u"Команда %1 сохранена в исходном ZPL; визуальное редактирование отключено."_s
+                .arg(parsed->sourceText(command.sourceSpan).left(3)));
         }, command.payload);
     }
     if (templateStage != TemplateStage::None || templateText)

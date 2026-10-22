@@ -57,5 +57,9 @@ Native Qt Widgets editor. Read this file and README.md before modifying it.
 - Preview geometry is valid only with its `DocumentRevision`; delayed source applies also check source revision.
 - Call QtZpl only through `src/core/qtzpl_adapter.cpp` (`parseZpl`, `parseOptions`, `renderOptions`), which
   applies Designer budgets and parses identical text once. Locate commands with `Command::sourceSpan` and
-  `Internal::commandEnd`, fields with `FieldInfo`/`elementFieldRanges`; never use `Command::source` lengths.
+  `Internal::commandEnd`, fields with `FieldInfo`/`elementFieldRanges`; `Command::source`/`offset` are
+  deprecated (QtZpl 0.4.0) and must not be read.
+- Barcode values come from `FieldSettings::resolvedBarcode` (QtZpl owns parameter defaults, `^BY`, `^FW`).
+  Do not interpret `Barcode::parameters` by position; raw parameters only back lossless-spelling rules.
+  Limitations of QtZpl are its diagnostics; Designer rules that depend on them keep a canary test.
 - Keep inactive element options compatible with legacy project/clipboard encoding; R6 migration is tracked separately in the plan.

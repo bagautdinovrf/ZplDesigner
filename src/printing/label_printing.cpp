@@ -321,7 +321,8 @@ std::expected<PreparedLabelPrint, QString> prepareLabelPrint(const DesignDocumen
         if (!preview) return std::unexpected(preview.error());
         if (!preview->elementErrors.isEmpty()) return std::unexpected(u"Исправьте ошибочные элементы перед печатью."_s);
         for (const auto& diagnostic : preview->diagnostics)
-            if (diagnostic.startsWith(u"unsupported-command:") || diagnostic.startsWith(u"barcode-render-pending:"))
+            if (diagnostic.startsWith(u"unsupported-command:") || diagnostic.startsWith(u"barcode-render-pending:")
+                || diagnostic.startsWith(u"barcode-interpretation-pending:") || diagnostic.startsWith(u"external-font-substituted:"))
                 return std::unexpected(u"QtZpl не может полностью отрисовать эту этикетку: %1 "
                     u"Для принтера, который поддерживает исходные команды, выберите печать ZPL."_s.arg(diagnostic));
         job.image = preview->image.convertToFormat(QImage::Format_Grayscale8);
