@@ -19,6 +19,7 @@ class DocumentTest final : public QObject {
     Q_OBJECT
 private slots:
     void sampleRoundTrip();
+    void blankDocumentIs100MillimetresAt300Dpi();
     void allElementsRoundTrip();
     void fieldEscapingPreservesData();
     void imagePackingAlphaAndPadding();
@@ -90,6 +91,23 @@ void DocumentTest::sampleRoundTrip()
     QCOMPARE(before->image, after->image);
     QCOMPARE(before->bounds.size(), sample.elements.size());
     QVERIFY(before->diagnostics.isEmpty());
+}
+
+void DocumentTest::blankDocumentIs100MillimetresAt300Dpi()
+{
+    const auto blank = blankDocument();
+    QCOMPARE(blank.dpi, 300);
+    QCOMPARE(blank.width, 1181);
+    QCOMPARE(blank.height, 1181);
+    QVERIFY(blank.elements.isEmpty());
+    QVERIFY(blank.visualEditable);
+    QVERIFY(blank.originalZpl.isEmpty());
+    QVERIFY(toZpl(blank).contains(u"^PW1181\n^LL1181\n"_s));
+    const auto preview = renderPreview(blank);
+    QVERIFY2(preview.has_value(), qPrintable(preview ? QString{} : preview.error()));
+    QCOMPARE(preview->image.size(), QSize(1181, 1181));
+    // ZPL itself carries no resolution; only the new-label default changes.
+    QCOMPARE(DesignDocument{}.dpi, 203);
 }
 
 void DocumentTest::allElementsRoundTrip()

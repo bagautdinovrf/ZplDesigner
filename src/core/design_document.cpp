@@ -337,6 +337,14 @@ Element resizedElement(const Element& element, QSize requestedSize, QSize curren
     return resized;
 }
 
+DesignDocument blankDocument()
+{
+    DesignDocument document;
+    document.dpi = 300;
+    document.width = document.height = qRound(100.0 * document.dpi / 25.4);
+    return document;
+}
+
 DesignDocument sampleDocument()
 {
     static const auto sampleImages = [] {

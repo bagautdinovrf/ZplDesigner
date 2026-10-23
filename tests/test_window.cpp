@@ -97,6 +97,7 @@ private slots:
     void barcodeTypeRejectsIneligibleEdits();
     void barcodeTypePreservesImportedCommentsAndSavedRendering();
     void millimetreFormatIsUndoableAndKeepsElementGeometry();
+    void newDocumentIs100MillimetresAt300Dpi();
     void groupActionsPreserveSelectionAndHistory();
     void pendingSourceBlocksGroupActions();
     void layerNavigationTracksCanvasSelection();
@@ -929,6 +930,20 @@ void WindowTests::millimetreFormatIsUndoableAndKeepsElementGeometry()
     undo_->trigger();
     QCOMPARE(window_->document().width, initial_.width);
     QCOMPARE(window_->document().dpi, initial_.dpi);
+}
+
+void WindowTests::newDocumentIs100MillimetresAt300Dpi()
+{
+    auto* fresh = window_->findChild<QAction*>(QStringLiteral("newDocumentAction"));
+    QVERIFY(fresh);
+    fresh->trigger();
+    QCOMPARE(window_->document().dpi, 300);
+    QCOMPARE(window_->document().width, qRound(100.0 * 300 / 25.4));
+    QCOMPARE(window_->document().height, qRound(100.0 * 300 / 25.4));
+    QVERIFY(window_->document().elements.isEmpty());
+    auto* dpi = window_->findChild<QComboBox*>(QStringLiteral("dpi"));
+    QVERIFY(dpi);
+    QCOMPARE(dpi->currentData().toInt(), 300);
 }
 
 void WindowTests::groupActionsPreserveSelectionAndHistory()

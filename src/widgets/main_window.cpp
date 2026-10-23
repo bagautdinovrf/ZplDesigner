@@ -367,7 +367,8 @@ void MainWindow::buildUi() {
         persistWorkspace();
     });
     // Keep command actions shared by menus and the compact icon panels.
-    auto* fresh = new QAction(QStringLiteral("Новая"), this); fresh->setShortcut(QKeySequence::New); addAction(fresh);
+    auto* fresh = new QAction(QStringLiteral("Новая"), this); fresh->setObjectName(QStringLiteral("newDocumentAction"));
+    fresh->setShortcut(QKeySequence::New); addAction(fresh);
     connect(fresh, &QAction::triggered, this, [this] { newDocument(); });
     auto* open = new QAction(QStringLiteral("Открыть"), this); open->setShortcut(QKeySequence::Open); addAction(open);
     connect(open, &QAction::triggered, this, [this] { chooseOpen(); });
@@ -1959,7 +1960,7 @@ bool MainWindow::maybeSave() {
 
 void MainWindow::newDocument() {
     if (!maybeSave()) return;
-    setDocument(DesignDocument{}); restoreCanvasZoom();
+    setDocument(blankDocument()); restoreCanvasZoom();
 }
 void MainWindow::chooseOpen() {
     if (!maybeSave()) return;

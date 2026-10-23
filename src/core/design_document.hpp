@@ -140,6 +140,9 @@ Element makeElement(ElementType type, QPoint position = {40, 40});
 // Sizes are visible bounds in printer dots, after orientation. Text and barcode
 // parameters are adjusted; their raster previews are never stretched.
 Element resizedElement(const Element& element, QSize requestedSize, QSize currentRenderedSize);
+// Empty label of File → New: 100 × 100 mm for a 300 dpi printer. ZPL opened
+// without layout settings keeps DesignDocument's 203 dpi.
+DesignDocument blankDocument();
 DesignDocument sampleDocument();
 QString elementZpl(const Element& element, bool preservePlaceholders = true,
                    QChar defaultOrientation = u'N', int defaultJustification = 0);
