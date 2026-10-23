@@ -603,19 +603,25 @@ private:
         }
         const bool showIcon = !icon.isNull() && presentation != Qt::ToolButtonTextOnly;
         const bool showText = !text.isEmpty() && (presentation != Qt::ToolButtonIconOnly || !showIcon);
-        const QSize paintedIcon = iconSize.isValid() ? iconSize.boundedTo(content.size()) : QSize(16, 16);
+        // A lone icon has no caption to inset from: it may use the whole button.
+        const QRect iconArea = showIcon && !showText && !menu ? option->rect.adjusted(2, 2, -2, -2) : content;
+        const QSize paintedIcon = iconSize.isValid() ? iconSize.boundedTo(iconArea.size()) : QSize(16, 16);
+        // QRect::center() rounds down, which put icons a pixel above and left of
+        // the middle of even-sized buttons; centre by the free space instead.
+        const auto centredX = [](const QRect& area, int width) { return area.left() + (area.width() - width) / 2; };
+        const int iconY = iconArea.top() + (iconArea.height() - paintedIcon.height()) / 2;
         const auto mode = !enabled ? QIcon::Disabled : selected ? QIcon::Selected : QIcon::Normal;
         if (showIcon && !showText) {
-            const QRect iconRect(content.center().x() - paintedIcon.width() / 2, content.center().y() - paintedIcon.height() / 2, paintedIcon.width(), paintedIcon.height());
+            const QRect iconRect(centredX(iconArea, paintedIcon.width()), iconY, paintedIcon.width(), paintedIcon.height());
             icon.paint(painter, iconRect, Qt::AlignCenter, mode);
         } else if (showIcon && presentation == Qt::ToolButtonTextUnderIcon) {
-            const QRect iconRect(content.center().x() - paintedIcon.width() / 2, content.top(), paintedIcon.width(), paintedIcon.height());
+            const QRect iconRect(centredX(content, paintedIcon.width()), content.top(), paintedIcon.width(), paintedIcon.height());
             icon.paint(painter, iconRect, Qt::AlignCenter, mode);
             painter->drawText(content.adjusted(0, paintedIcon.height() + 3, 0, 0), Qt::AlignCenter | Qt::TextHideMnemonic, text);
         } else if (showIcon) {
             const int total = std::min(content.width(), paintedIcon.width() + 6 + painter->fontMetrics().horizontalAdvance(text));
-            const int start = content.center().x() - total / 2;
-            const QRect iconRect(start, content.center().y() - paintedIcon.height() / 2, paintedIcon.width(), paintedIcon.height());
+            const int start = centredX(content, total);
+            const QRect iconRect(start, iconY, paintedIcon.width(), paintedIcon.height());
             icon.paint(painter, iconRect, Qt::AlignCenter, mode);
             painter->drawText(QRect(start + paintedIcon.width() + 6, content.top(), std::max(0, total - paintedIcon.width() - 6), content.height()),
                 Qt::AlignVCenter | Qt::AlignLeft | Qt::TextHideMnemonic, text);

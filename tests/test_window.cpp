@@ -7,6 +7,7 @@
 #include "document_session.hpp"
 #include "dot_spin_box.hpp"
 #include "print_dialog.hpp"
+#include "designer_icons.hpp"
 
 #include <QAction>
 #include <QApplication>
@@ -105,6 +106,8 @@ private slots:
     void layerNavigationTracksCanvasSelection();
     void dataMatrixTemplateValuesUpdatePreviewWithoutReplacingSource();
     void gridCheckboxChangesCanvasOnly();
+    void gridAndSnapStateFollowEveryControl();
+    void applicationIconHasTaskbarSizes();
     void layoutSettingsSaveReopenWithoutChangingPrintOutput();
     void layoutEditsPreservePendingSource();
     void quickPanelUnitsAndGuideListCancelPreserveCoordinates();
@@ -195,6 +198,68 @@ void WindowTests::gridCheckboxChangesCanvasOnly()
     undo_->trigger();
     QVERIFY(grid->isChecked());
     QVERIFY(!undo_->isEnabled());
+}
+
+void WindowTests::gridAndSnapStateFollowEveryControl()
+{
+    auto* gridButton = window_->findChild<QPushButton*>(QStringLiteral("gridToggle"));
+    auto* snapButton = window_->findChild<QPushButton*>(QStringLiteral("snapToggle"));
+    auto* labelGrid = window_->findChild<QCheckBox*>(QStringLiteral("labelShowGrid"));
+    auto* setup = window_->findChild<QPushButton*>(QStringLiteral("canvasSetup"));
+    QVERIFY(gridButton); QVERIFY(snapButton); QVERIFY(labelGrid); QVERIFY(setup);
+    const auto verifyState = [&](bool grid, bool snap) {
+        QCOMPARE(canvas_->layoutSettings().gridVisible, grid);
+        QCOMPARE(gridButton->isChecked(), grid);
+        QCOMPARE(labelGrid->isChecked(), grid);
+        QCOMPARE(canvas_->layoutSettings().snapEnabled, snap);
+        QCOMPARE(snapButton->isChecked(), snap);
+        auto* panel = window_->findChild<Designer::CanvasQuickPanel*>();
+        if (!panel) return;
+        QCOMPARE(panel->findChild<QCheckBox*>(QStringLiteral("quickPanelGrid"))->isChecked(), grid);
+        QCOMPARE(panel->findChild<QCheckBox*>(QStringLiteral("quickPanelSnap"))->isChecked(), snap);
+    };
+    verifyState(true, true);
+
+    // The canvas quick panel edits the session; the header buttons and the
+    // Label page checkbox follow without adding steps of their own.
+    setup->click();
+    auto* panel = window_->findChild<Designer::CanvasQuickPanel*>();
+    QVERIFY(panel && panel->isVisible());
+    panel->findChild<QCheckBox*>(QStringLiteral("quickPanelGrid"))->setChecked(false);
+    verifyState(false, true);
+    panel->findChild<QCheckBox*>(QStringLiteral("quickPanelSnap"))->setChecked(false);
+    verifyState(false, false);
+    QTest::keyClick(panel, Qt::Key_Escape);
+    QVERIFY(!panel->isVisible());
+    QCOMPARE(window_->findChild<Designer::DocumentSession*>()->undoStack()->index(), 1);
+
+    labelGrid->setChecked(true);
+    verifyState(true, false);
+    gridButton->click();
+    verifyState(false, false);
+    snapButton->click();
+    verifyState(false, true);
+
+    undo_->trigger();
+    verifyState(false, false);
+    undo_->trigger();
+    verifyState(true, false);
+    undo_->trigger();
+    verifyState(false, false);
+    undo_->trigger();
+    verifyState(true, true);
+    QVERIFY(!undo_->isEnabled());
+}
+
+void WindowTests::applicationIconHasTaskbarSizes()
+{
+    // The EXE resource and the window icon share Installer/assets/setup.ico.
+    const QIcon icon = Designer::applicationIcon();
+    QVERIFY(!icon.isNull());
+    const auto sizes = icon.availableSizes();
+    for (const int side : {16, 32, 48, 256})
+        QVERIFY2(sizes.contains(QSize(side, side)), qPrintable(QString::number(side)));
+    QVERIFY(!icon.pixmap(QSize(32, 32)).toImage().allGray());
 }
 
 void WindowTests::layoutSettingsSaveReopenWithoutChangingPrintOutput()
@@ -953,6 +1018,8 @@ void WindowTests::millimetreFormatIsUndoableAndKeepsElementGeometry()
     auto* format = window_->findChild<QPushButton*>(QStringLiteral("labelFormatSetup"));
     auto* inspector = window_->findChild<QTabWidget*>(QStringLiteral("inspectorTabs"));
     QVERIFY(labelSetup); QVERIFY(format); QVERIFY(inspector);
+    // Scaling is on by default; this format change keeps the element dots.
+    window_->findChild<QCheckBox*>(QStringLiteral("scaleLabelContent"))->setChecked(false);
     labelSetup->click();
     QCOMPARE(inspector->currentIndex(), 1);
     QVERIFY(format->isVisible());
@@ -984,12 +1051,15 @@ void WindowTests::scaledLabelFollowsDpiAndFormat()
     auto* dpi = window_->findChild<QComboBox*>(QStringLiteral("dpi"));
     auto* format = window_->findChild<QPushButton*>(QStringLiteral("labelFormatSetup"));
     QVERIFY(scale); QVERIFY(dpi); QVERIFY(format);
-    QVERIFY(!scale->isChecked());
-    scale->setChecked(true);
-    {
+    QVERIFY(scale->isChecked());
+    const auto savedScale = [this] {
         const QSettings saved(QDir(workspaceSettingsDirectory_).filePath(QStringLiteral("workspace.ini")), QSettings::IniFormat);
-        QVERIFY(saved.value(QStringLiteral("label/scaleContent")).toBool());
-    }
+        return saved.value(QStringLiteral("label/scaleContent")).toBool();
+    };
+    scale->setChecked(false);
+    QVERIFY(!savedScale());
+    scale->setChecked(true);
+    QVERIFY(savedScale());
 
     // Another resolution keeps the millimetres; the box follows the label.
     dpi->setCurrentIndex(dpi->findData(300));
@@ -1237,6 +1307,8 @@ void WindowTests::labelFormatFollowsPropertyUnits()
     QVERIFY(units); QVERIFY(inspector); QVERIFY(width); QVERIFY(height); QVERIFY(dpi);
     width->setLocale(QLocale::c());
     height->setLocale(QLocale::c());
+    // Without scaling a new resolution keeps the dots, checked below.
+    window_->findChild<QCheckBox*>(QStringLiteral("scaleLabelContent"))->setChecked(false);
     const QString original = Designer::toZpl(window_->document());
     const auto millimetres = [](int dots, int resolution) { return QString::number(dots * 25.4 / resolution, 'f', 3); };
 

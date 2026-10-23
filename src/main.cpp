@@ -1,5 +1,6 @@
 #include "main_window.hpp"
 #include "app_version.hpp"
+#include "designer_icons.hpp"
 #include "ui_translations.hpp"
 #include <QApplication>
 #include <QCommandLineParser>
@@ -15,6 +16,7 @@ int main(int argc, char* argv[]) {
     application.setApplicationName(QStringLiteral("QtZpl Designer"));
     application.setOrganizationName(QStringLiteral("QtZpl"));
     application.setApplicationVersion(QString::fromLatin1(Designer::applicationVersion));
+    application.setWindowIcon(Designer::applicationIcon());
     Designer::installDesignerStyle();
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("Native visual ZPL label editor"));

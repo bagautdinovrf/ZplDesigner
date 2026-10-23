@@ -159,6 +159,8 @@ def main() -> int:
     parser.add_argument("--build-dir", type=Path, help="build_* directory directly inside the project's build_agent")
     parser.add_argument("--target", default="all")
     parser.add_argument("--parallel", type=int, default=4)
+    parser.add_argument("--test-jobs", type=int, default=os.cpu_count() or 1,
+                        help="Test executables ctest runs at once (default: all logical CPUs)")
     parser.add_argument("--clean", action="store_true")
     parser.add_argument("--no-tests", dest="tests", action="store_false")
     parser.add_argument("--smoke-test", action="store_true", help="Pass --smoke-test to run")
@@ -169,6 +171,8 @@ def main() -> int:
         parser.error("This helper initializes a Windows Qt/MSVC kit; use CMake directly on other platforms")
     if args.parallel < 1:
         parser.error("--parallel must be positive")
+    if args.test_jobs < 1:
+        parser.error("--test-jobs must be positive")
     args.build_dir = checked_build_dir(args.build_dir or BUILD_ROOT / f"build_agent_{args.config.casefold()}")
     args.qtzpl_source_dir = args.qtzpl_source_dir.resolve()
     qt_dir = (QT_ROOT / args.qt_version / args.compiler).resolve()
@@ -196,7 +200,7 @@ def main() -> int:
         test_environment["QT_QPA_PLATFORM"] = "offscreen"
         run([
             str(QT_TOOLS / "CMake_64/bin/ctest.exe"), "--test-dir", str(args.build_dir),
-            "--output-on-failure", "-C", args.config,
+            "--output-on-failure", "-C", args.config, "--parallel", str(args.test_jobs),
         ], test_environment)
     if args.action == "deploy":
         deploy(args, environment, qt_dir)

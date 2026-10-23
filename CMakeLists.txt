@@ -221,6 +221,15 @@ qt_add_resources(designer_widgets designer_translations
     FILES "${DESIGNER_QT_RUSSIAN_TRANSLATION}"
 )
 
+# The installer artwork is also the application icon: IDI_ICON1 in the EXE for
+# Explorer and shortcuts, and a Qt resource for window and taskbar icons.
+set(DESIGNER_APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/Installer/assets/setup.ico")
+set_source_files_properties("${DESIGNER_APP_ICON}" PROPERTIES QT_RESOURCE_ALIAS "application.ico")
+qt_add_resources(designer_widgets designer_icons
+    PREFIX "/designer/icons"
+    FILES "${DESIGNER_APP_ICON}"
+)
+
 qt_add_executable(QtZplDesigner WIN32 src/main.cpp)
 target_link_libraries(QtZplDesigner PRIVATE designer_widgets)
 target_include_directories(QtZplDesigner PRIVATE "${DESIGNER_GENERATED_DIR}")
@@ -369,6 +378,13 @@ if(DESIGNER_BUILD_TESTS)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 30
     )
+
+    # build_helper runs the test executables in parallel (--test-jobs), which
+    # slows each one down. The long UI suites wait on real layout and preview
+    # timers (50-80 s alone in Debug), so they get headroom over that.
+    set_tests_properties(designer_workspace designer_split_editor designer_window designer_gs1_toggle
+        PROPERTIES TIMEOUT 240)
+    set_tests_properties(designer_command_panels PROPERTIES TIMEOUT 90)
 endif()
 
 install(TARGETS QtZplDesigner RUNTIME DESTINATION bin)

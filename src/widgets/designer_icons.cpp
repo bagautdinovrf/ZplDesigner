@@ -62,6 +62,8 @@ QPainterPath strokePath(DesignerIcon icon)
         path.closeSubpath();
         polyline(path, {{3.5, 5}, {6.5, 5}});
         polyline(path, {{9.5, 5}, {12.5, 5}});
+        // The concept's magnet spans 2.5..12; centre it on the grid like its neighbours.
+        path.translate(0, 0.75);
         break;
     case DesignerIcon::Reset:
         polyline(path, {{2.8, 3}, {2.8, 6.4}, {6.2, 6.4}});
@@ -80,6 +82,19 @@ QPainterPath strokePath(DesignerIcon icon)
     case DesignerIcon::Close:
         polyline(path, {{4.5, 4.5}, {11.5, 11.5}});
         polyline(path, {{11.5, 4.5}, {4.5, 11.5}});
+        break;
+    case DesignerIcon::Link:
+        // Lucide "link": two open halves of a chain, 24 units scaled by 2/3.
+        path.moveTo(6.667, 8.667);
+        svgArc(path, 10.0 / 3, false, false, {11.693, 9.027});
+        path.lineTo(13.693, 7.027);
+        svgArc(path, 10.0 / 3, false, false, {8.98, 2.313});
+        path.lineTo(7.833, 3.453);
+        path.moveTo(9.333, 7.333);
+        svgArc(path, 10.0 / 3, false, false, {4.307, 6.973});
+        path.lineTo(2.307, 8.973);
+        svgArc(path, 10.0 / 3, false, false, {7.02, 13.687});
+        path.lineTo(8.16, 12.547);
         break;
     case DesignerIcon::More: case DesignerIcon::GuideHorizontal: case DesignerIcon::GuideVertical:
         break;
@@ -141,6 +156,12 @@ void paintDesignerIcon(QPainter* painter, const QRectF& rect, DesignerIcon icon,
 QIcon designerIcon(DesignerIcon icon, DesignerColor idle, DesignerColor active)
 {
     return QIcon(new DesignerIconEngine(icon, idle, active));
+}
+
+QIcon applicationIcon()
+{
+    // Every size of the .ico; the resource is registered by CMake (DESIGNER_APP_ICON).
+    return QIcon(QStringLiteral(":/designer/icons/application.ico"));
 }
 
 } // namespace Designer

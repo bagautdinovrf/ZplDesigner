@@ -140,26 +140,6 @@ private:
     bool rounded_ = false;
 };
 
-class SelectionSyncIconEngine final : public QIconEngine {
-public:
-    QIconEngine* clone() const override { return new SelectionSyncIconEngine; }
-    void paint(QPainter* painter, const QRect& rect, QIcon::Mode mode, QIcon::State state) override {
-        painter->save();
-        painter->setRenderHint(QPainter::Antialiasing);
-        painter->translate(rect.center());
-        const auto scale = std::min(rect.width(), rect.height()) / 18.0;
-        painter->scale(scale, scale);
-        painter->rotate(-35);
-        const auto role = state == QIcon::On || mode == QIcon::Selected ? QPalette::Link : QPalette::Text;
-        const auto group = mode == QIcon::Disabled ? QPalette::Disabled : QPalette::Active;
-        painter->setPen(QPen(qApp->palette().color(group, role), 1.6, Qt::SolidLine, Qt::RoundCap));
-        painter->setBrush(Qt::NoBrush);
-        painter->drawRoundedRect(QRectF(-8, -3, 10, 6), 3, 3);
-        painter->drawRoundedRect(QRectF(-2, -3, 10, 6), 3, 3);
-        painter->restore();
-    }
-};
-
 class WorkspaceStatus final : public QLabel {
 public:
     using QLabel::QLabel;
@@ -484,7 +464,8 @@ void MainWindow::buildUi() {
     connect(fullFormat, &QPushButton::clicked, this, &MainWindow::showLabelSetup);
     auto* guidesSection = new WorkspaceSurface(labelPage); auto* guidesLayout = new QVBoxLayout(guidesSection); guidesLayout->setContentsMargins(13, 12, 13, 12); guidesLayout->setSpacing(12);
     guidesLayout->addWidget(sectionHeading(QStringLiteral("Рабочие ориентиры"), guidesSection));
-    auto* labelGrid = new QCheckBox(QStringLiteral("Сетка"), guidesSection); labelGrid->setChecked(true); guidesLayout->addWidget(labelGrid);
+    auto* labelGrid = new QCheckBox(QStringLiteral("Сетка"), guidesSection); labelGrid->setObjectName(QStringLiteral("labelShowGrid"));
+    labelGrid->setChecked(true); guidesLayout->addWidget(labelGrid);
     auto* guidesHint = caption(QStringLiteral("Сетка и рамки выделения не попадают в печать."), guidesSection); guidesHint->setWordWrap(true); guidesLayout->addWidget(guidesHint);
     labelLayout->addWidget(guidesSection); labelLayout->addStretch();
 
@@ -529,7 +510,8 @@ void MainWindow::buildUi() {
     swapEditorSides_ = new QAction(QStringLiteral("⇄"), this);
     swapEditorSides_->setObjectName(QStringLiteral("swapEditorSides"));
     swapEditorSides_->setToolTip(QStringLiteral("Поменять местами код и дизайн / превью"));
-    addTool(canvasHeaderRow, swapEditorSides_, true);
+    // The swap and link buttons form a 26 px square pair, as tall as the canvas toggles.
+    addTool(canvasHeaderRow, swapEditorSides_, true)->setFixedSize(26, 26);
     connect(swapEditorSides_, &QAction::triggered, this, [this] {
         if (workspacePreferences_.editorLayout == EditorLayout::Single) return;
         workspacePreferences_.codeOnLeft = !workspacePreferences_.codeOnLeft;
@@ -537,15 +519,15 @@ void MainWindow::buildUi() {
         setEditorLayout(workspacePreferences_.editorLayout);
         persistWorkspace();
     });
-    syncEditorSelection_ = new QAction(QIcon(new SelectionSyncIconEngine), QStringLiteral("Связать выделение ZPL и дизайна"), this);
+    syncEditorSelection_ = new QAction(designerIcon(DesignerIcon::Link), QStringLiteral("Связать выделение ZPL и дизайна"), this);
     syncEditorSelection_->setObjectName(QStringLiteral("syncEditorSelection"));
     syncEditorSelection_->setCheckable(true);
     syncEditorSelection_->setChecked(workspacePreferences_.selectionSync);
     auto* syncButton = addTool(canvasHeaderRow, syncEditorSelection_, true);
     syncButton->setObjectName(QStringLiteral("sourceSelectionSyncButton"));
     syncButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    syncButton->setIconSize(QSize(18, 18));
-    syncButton->setFixedSize(28, 28);
+    syncButton->setIconSize(QSize(16, 16));
+    syncButton->setFixedSize(26, 26);
     syncButton->setFocusPolicy(Qt::NoFocus);
     syncButton->setAccessibleName(syncEditorSelection_->text());
     const auto updateSelectionToolTip = [this] {
@@ -842,12 +824,18 @@ void MainWindow::buildUi() {
     auto* resetView = new QToolButton(this); resetView->setText(QStringLiteral("Сбросить вид")); resetView->setProperty("flat", true); resetView->setProperty("compact", true);
     statusBar()->addPermanentWidget(resetView); connect(resetView, &QToolButton::clicked, canvas_, &LabelCanvas::fitLabel);
 
+    // refreshCanvasLayout() sets these unblocked, so their twins (the header
+    // buttons and the Label page box) follow; an unchanged value is not an edit.
     connect(grid_, &QCheckBox::toggled, this, [this](bool visible) {
-        auto settings = session_->layoutSettings(); settings.gridVisible = visible;
+        auto settings = session_->layoutSettings();
+        if (settings.gridVisible == visible) return;
+        settings.gridVisible = visible;
         session_->setLayoutSettings(std::move(settings), QStringLiteral("Показать/скрыть сетку"));
     });
     connect(snap_, &QCheckBox::toggled, this, [this](bool enabled) {
-        auto settings = session_->layoutSettings(); settings.snapEnabled = enabled;
+        auto settings = session_->layoutSettings();
+        if (settings.snapEnabled == enabled) return;
+        settings.snapEnabled = enabled;
         session_->setLayoutSettings(std::move(settings), QStringLiteral("Привязка холста"));
     });
     connect(canvas_, &LabelCanvas::layoutSettingsEdited, this, [this](CanvasLayoutSettings settings) {
@@ -1921,7 +1909,6 @@ void MainWindow::showLabelSetup() {
 
 void MainWindow::refreshCanvasLayout() {
     const auto& settings = session_->layoutSettings();
-    const QSignalBlocker gridSignals(grid_), snapSignals(snap_);
     grid_->setChecked(settings.gridVisible);
     snap_->setChecked(settings.snapEnabled);
     const QString step = settings.unit == CanvasUnit::Millimeters

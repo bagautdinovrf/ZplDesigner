@@ -96,16 +96,23 @@ WorkspacePreferences loadWorkspacePreferences()
     preferences.selectionSync = settings.value(u"editor/selectionSync"_s, true).toBool();
     preferences.geometrySizes = settings.value(u"canvas/geometrySizes"_s, true).toBool();
     preferences.geometryCoordinates = settings.value(u"canvas/geometryCoordinates"_s, true).toBool();
-    preferences.rulersDocked = settings.value(u"canvas/rulersDocked"_s, false).toBool();
-    preferences.scaleLabelContent = settings.value(u"label/scaleContent"_s, false).toBool();
+    preferences.rulersDocked = settings.value(u"canvas/rulersDocked"_s, preferences.rulersDocked).toBool();
+    preferences.scaleLabelContent = settings.value(u"label/scaleContent"_s, preferences.scaleLabelContent).toBool();
     preferences.editorSizes = readSizes(settings, u"editor/sizes"_s, {500, 500});
     preferences.canvasZoomPercent = readCanvasZoomPercent(settings);
     preferences.hiddenToolbarCommands = settings.value(u"toolbar/hiddenCommands"_s).toStringList();
     // Version 1 used the larger platform-style panels. Apply the concept's
     // initial widths once; later operator resizing remains persistent.
-    if (settings.value(u"metricsVersion"_s, 0).toInt() < 2) {
+    const int metricsVersion = settings.value(u"metricsVersion"_s, 0).toInt();
+    if (metricsVersion < 2) {
         preferences.balanceSizes = {185, 950, 258};
         preferences.focusSizes = {185, 950, 258};
+    }
+    // Version 2 saved rulers around the label and unscaled label changes as
+    // its defaults with every preference. Apply the new defaults once.
+    if (metricsVersion < 3) {
+        preferences.rulersDocked = true;
+        preferences.scaleLabelContent = true;
     }
     return settings.status() == QSettings::NoError ? preferences : WorkspacePreferences{};
 }
@@ -116,7 +123,7 @@ bool saveWorkspacePreferences(const WorkspacePreferences& preferences)
     if (path.isEmpty() || !QDir().mkpath(QFileInfo(path).absolutePath())) return false;
     QSettings settings(path, QSettings::IniFormat);
     settings.setValue(u"window/geometry"_s, preferences.windowGeometry);
-    settings.setValue(u"metricsVersion"_s, 2);
+    settings.setValue(u"metricsVersion"_s, 3);
     settings.setValue(u"focus"_s, preferences.focus);
     settings.setValue(u"dark"_s, preferences.dark);
     settings.setValue(u"balance/layers"_s, preferences.balanceLayers);

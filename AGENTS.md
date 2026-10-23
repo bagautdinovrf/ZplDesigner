@@ -39,6 +39,11 @@ Native Qt Widgets editor. Read this file and README.md before modifying it.
   Do not create new `build_*` directories or logs in the project root.
 - On Windows use `py -3 tools/build_helper.py all --clean --config Debug`
   for final verification. Do not modify Qt Creator build directories.
+- Run test suites in parallel. `build_helper.py` passes `--test-jobs`
+  (default: all logical CPUs) to ctest; focused runs use
+  `ctest -j <N> -R "<suites>"`. Keep every suite independent (its own
+  QStandardPaths test name or temporary directory, unique result file) and
+  give long UI suites a timeout with headroom for a loaded machine.
 - Build directories and deployed binaries are generated artifacts and must not
   be committed. Never recursively remove paths outside checked project build
   directories.

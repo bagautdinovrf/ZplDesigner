@@ -962,24 +962,25 @@ void SplitEditorTests::geometryLabelPreferencesSurviveReopening()
     };
     QVERIFY(!action("showGeometrySizes"));
     QVERIFY(!action("showGeometryCoordinates"));
-    QVERIFY(!window_->findChild<LabelCanvas*>()->rulersDocked());
+    // Rulers start at the canvas edges.
+    QVERIFY(window_->findChild<LabelCanvas*>()->rulersDocked());
     const int historyIndex = session_->undoStack()->index();
-    auto shown = editLabels(false, true, true);
+    auto shown = editLabels(false, true, false);
     QVERIFY(shown);
     QCOMPARE(*shown, Labels(true, true));
     QCOMPARE(savedLabels(), Labels(false, true));
-    QVERIFY(saved().value(u"canvas/rulersDocked"_s).toBool());
-    QVERIFY(window_->findChild<LabelCanvas*>()->rulersDocked());
+    QVERIFY(!saved().value(u"canvas/rulersDocked"_s).toBool());
+    QVERIFY(!window_->findChild<LabelCanvas*>()->rulersDocked());
     // Workspace preferences never enter the label's undo history.
     QCOMPARE(session_->undoStack()->index(), historyIndex);
     window_.reset();
     createWindow();
-    QVERIFY(window_->findChild<LabelCanvas*>()->rulersDocked());
-    shown = editLabels(true, true, false);
+    QVERIFY(!window_->findChild<LabelCanvas*>()->rulersDocked());
+    shown = editLabels(true, true, true);
     QVERIFY(shown);
     QCOMPARE(*shown, Labels(false, true));
     QCOMPARE(savedLabels(), Labels(true, true));
-    QVERIFY(!saved().value(u"canvas/rulersDocked"_s).toBool());
+    QVERIFY(saved().value(u"canvas/rulersDocked"_s).toBool());
 }
 
 void SplitEditorTests::sourceHighlightsPreserveCursorThemeAndNativeUndo()

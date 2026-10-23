@@ -57,6 +57,8 @@ private slots:
     void restoredManualZoomCentersPaperAfterWindowLayout_data();
     void restoredManualZoomCentersPaperAfterWindowLayout();
     void toolbarPreferencesDefaultVisibleAndPersistHiddenCommands();
+    void rulerAndScaleDefaultsApplyOnce_data();
+    void rulerAndScaleDefaultsApplyOnce();
     void optionalWorkspaceScreenshots();
 
 private:
@@ -835,6 +837,8 @@ void WorkspaceTests::restoredManualZoomCentersPaperAfterWindowLayout()
     window_.reset();
     WorkspacePreferences preferences;
     preferences.canvasZoomPercent = zoomPercent;
+    // The insets below describe rulers around the label, not at the edges.
+    preferences.rulersDocked = false;
     preferences.focus = focusProperties;
     preferences.focusProperties = focusProperties;
     QVERIFY(saveWorkspacePreferences(preferences));
@@ -915,6 +919,42 @@ void WorkspaceTests::toolbarPreferencesDefaultVisibleAndPersistHiddenCommands()
     QCOMPARE(loadWorkspacePreferences().hiddenToolbarCommands, preferences.hiddenToolbarCommands);
     QVERIFY(saveWorkspacePreferences(defaults));
     QVERIFY(loadWorkspacePreferences().hiddenToolbarCommands.isEmpty());
+}
+
+void WorkspaceTests::rulerAndScaleDefaultsApplyOnce_data()
+{
+    QTest::addColumn<QVariant>("metricsVersion");
+    QTest::addColumn<bool>("expected");
+    // Version 2 (1.12.0) wrote both flags off with every preference.
+    QTest::newRow("missing-file") << QVariant{} << true;
+    QTest::newRow("version-2") << QVariant(2) << true;
+    QTest::newRow("version-3") << QVariant(3) << false;
+}
+
+void WorkspaceTests::rulerAndScaleDefaultsApplyOnce()
+{
+    QFETCH(QVariant, metricsVersion);
+    QFETCH(bool, expected);
+    window_.reset();
+    const auto path = workspacePreferencesPath();
+    if (QFile::exists(path)) QVERIFY(QFile::remove(path));
+    if (metricsVersion.isValid()) {
+        QSettings settings(path, QSettings::IniFormat);
+        settings.setValue(u"metricsVersion"_s, metricsVersion);
+        settings.setValue(u"canvas/rulersDocked"_s, false);
+        settings.setValue(u"label/scaleContent"_s, false);
+        settings.sync();
+        QCOMPARE(settings.status(), QSettings::NoError);
+    }
+    auto preferences = loadWorkspacePreferences();
+    QCOMPARE(preferences.rulersDocked, expected);
+    QCOMPARE(preferences.scaleLabelContent, expected);
+    // Once saved, an explicit choice to turn them off persists.
+    preferences.rulersDocked = false;
+    preferences.scaleLabelContent = false;
+    QVERIFY(saveWorkspacePreferences(preferences));
+    QVERIFY(!loadWorkspacePreferences().rulersDocked);
+    QVERIFY(!loadWorkspacePreferences().scaleLabelContent);
 }
 
 void WorkspaceTests::optionalWorkspaceScreenshots()
