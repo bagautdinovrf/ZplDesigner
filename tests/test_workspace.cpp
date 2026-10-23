@@ -738,7 +738,7 @@ void WorkspaceTests::canvasZoomSurvivesWindowAndDocumentLifecycle()
     QVERIFY(fresh);
     fresh->trigger();
     QTest::qWait(150);
-    QCOMPARE(window_->document().width, DesignDocument{}.width);
+    QCOMPARE(window_->document().width, blankDocument().width);
     QVERIFY(!canvas->isFitMode());
     QCOMPARE(canvas->transform().m11(), 1.8);
     auto* width = window_->findChild<QSpinBox*>(u"labelWidth"_s);
