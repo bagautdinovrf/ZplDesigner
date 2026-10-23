@@ -465,7 +465,17 @@ void MainWindow::buildUi() {
     dpi_ = new QComboBox(labelPage); dpi_->setObjectName(QStringLiteral("dpi"));
     for (int dpi : {203, 300, 600}) dpi_->addItem(QStringLiteral("%1 dpi").arg(dpi), dpi);
     formatGrid->addWidget(propertyField(QStringLiteral("Разрешение"), dpi_, formatSection), 1, 0, 1, 2);
-    auto* formatHint = caption(QStringLiteral("Геометрия хранится в точках принтера. Единицы — как на вкладке «Объект».\nМасштаб не меняет размер этикетки."), formatSection);
+    scaleLabelContent_ = new QCheckBox(QStringLiteral("Масштабировать элементы"), formatSection);
+    scaleLabelContent_->setObjectName(QStringLiteral("scaleLabelContent"));
+    scaleLabelContent_->setToolTip(QStringLiteral("При смене размера или DPI пересчитать положение и размеры элементов и направляющих.\nСмена DPI сохраняет размер этикетки в миллиметрах."));
+    scaleLabelContent_->setChecked(workspacePreferences_.scaleLabelContent);
+    formatLayout->addWidget(scaleLabelContent_);
+    connect(scaleLabelContent_, &QCheckBox::toggled, this, [this](bool scale) {
+        if (workspacePreferences_.scaleLabelContent == scale) return;
+        workspacePreferences_.scaleLabelContent = scale;
+        persistWorkspace();
+    });
+    auto* formatHint = caption(QStringLiteral("Геометрия хранится в точках принтера. Единицы — как на вкладке «Объект».\nМасштаб просмотра не меняет размер этикетки."), formatSection);
     formatHint->setWordWrap(true); formatLayout->addWidget(formatHint);
     auto* fullFormat = new QPushButton(QStringLiteral("Формат…"), labelPage);
     fullFormat->setToolTip(QStringLiteral("Размеры в миллиметрах и стандартные форматы этикеток"));
@@ -896,9 +906,22 @@ void MainWindow::buildUi() {
     });
     auto labelChanged = [this] {
         if (updating_ || session_->hasPendingSource() || !session_->document().visualEditable) return;
-        auto values = labelSettings(session_->document());
+        const auto& document = session_->document();
+        auto values = labelSettings(document);
         values.width = labelWidth_->value(); values.height = labelHeight_->value(); values.dpi = dpi_->currentData().toInt();
-        executeOperation(values, QStringLiteral("Параметры этикетки"));
+        values.scaleContent = scaleLabelContent_->isChecked();
+        if (values.scaleContent && values.dpi != document.dpi) {
+            // Another printer resolution keeps the label's millimetres.
+            values.width = qRound(double(values.width) * values.dpi / document.dpi);
+            values.height = qRound(double(values.height) * values.dpi / document.dpi);
+            if (std::min(values.width, values.height) < 32 || std::max(values.width, values.height) > 4096) {
+                const QSignalBlocker block(dpi_);
+                dpi_->setCurrentIndex(dpi_->findData(document.dpi));
+                setNotice(QStringLiteral("При %1 dpi этикетка выйдет за пределы 32–4096 dots. DPI не изменён.").arg(values.dpi));
+                return;
+            }
+        }
+        executeOperation(values, values.scaleContent ? QStringLiteral("Масштабировать этикетку") : QStringLiteral("Параметры этикетки"));
     };
     connect(labelWidth_, &QSpinBox::valueChanged, this, labelChanged);
     connect(labelHeight_, &QSpinBox::valueChanged, this, labelChanged);
@@ -1846,20 +1869,29 @@ void MainWindow::showLabelSetup() {
     form->addRow(QStringLiteral("Принтер"), resolution); layout->addLayout(form);
     auto* rotate = new QPushButton(QStringLiteral("Поменять ширину и высоту"), &dialog);
     rotate->setObjectName(QStringLiteral("swapLabelDimensions")); layout->addWidget(rotate);
+    auto* scale = new QCheckBox(scaleLabelContent_->text(), &dialog);
+    scale->setObjectName(QStringLiteral("labelSetupScaleContent")); scale->setToolTip(scaleLabelContent_->toolTip());
+    scale->setChecked(scaleLabelContent_->isChecked()); layout->addWidget(scale);
     auto* result = new QLabel(&dialog); result->setObjectName(QStringLiteral("labelSetupResult")); result->setWordWrap(true); layout->addWidget(result);
-    auto* hint = new QLabel(QStringLiteral("Размер округляется до целых точек принтера. Положение и размеры элементов остаются в dots. DPI сохраняется вместе с настройками холста; для ZPL без настроек используется 203 dpi."), &dialog);
+    auto* hint = new QLabel(QStringLiteral("Размер округляется до целых точек принтера. Без масштабирования положение и размеры элементов остаются в dots. DPI сохраняется вместе с настройками холста; для ZPL без настроек используется 203 dpi."), &dialog);
     hint->setWordWrap(true); layout->addWidget(hint);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog); layout->addWidget(buttons);
     buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Применить"));
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    const QSize current(session_->document().width, session_->document().height);
     auto update = [=] {
         const int dpi = resolution->currentData().toInt();
         const int w = qRound(width->value() * dpi / 25.4), h = qRound(height->value() * dpi / 25.4);
         const bool valid = w >= 32 && h >= 32 && w <= 4096 && h <= 4096;
-        result->setText(valid ? QStringLiteral("%1 × %2 dots · фактически %3 × %4 мм").arg(w).arg(h)
+        QString text = valid ? QStringLiteral("%1 × %2 dots · фактически %3 × %4 мм").arg(w).arg(h)
             .arg(w * 25.4 / dpi, 0, 'f', 3).arg(h * 25.4 / dpi, 0, 'f', 3)
-            : QStringLiteral("Размер должен быть от 32 до 4096 dots по каждой стороне при выбранном DPI."));
+            : QStringLiteral("Размер должен быть от 32 до 4096 dots по каждой стороне при выбранном DPI.");
+        if (valid && scale->isChecked() && QSize(w, h) != current)
+            text += QStringLiteral("\nЭлементы: ×%1 по ширине, ×%2 по высоте")
+                .arg(QLocale().toString(double(w) / current.width(), 'f', 3))
+                .arg(QLocale().toString(double(h) / current.height(), 'f', 3));
+        result->setText(text);
         buttons->button(QDialogButtonBox::Ok)->setEnabled(valid);
     };
     connect(preset, &QComboBox::activated, &dialog, [=](int index) {
@@ -1872,15 +1904,18 @@ void MainWindow::showLabelSetup() {
     connect(width, &QDoubleSpinBox::valueChanged, &dialog, dimensionChanged);
     connect(height, &QDoubleSpinBox::valueChanged, &dialog, dimensionChanged);
     connect(resolution, &QComboBox::currentIndexChanged, &dialog, update);
+    connect(scale, &QCheckBox::toggled, &dialog, update);
     connect(rotate, &QPushButton::clicked, &dialog, [=] {
         const double w = width->value(); width->setValue(height->value()); height->setValue(w);
     });
     update();
     if (dialog.exec() != QDialog::Accepted) return;
+    scaleLabelContent_->setChecked(scale->isChecked());
     auto next = labelSettings(session_->document()); next.dpi = resolution->currentData().toInt();
     next.width = qRound(width->value() * next.dpi / 25.4); next.height = qRound(height->value() * next.dpi / 25.4);
+    next.scaleContent = scale->isChecked();
     if (next.width == session_->document().width && next.height == session_->document().height && next.dpi == session_->document().dpi) return;
-    executeOperation(next, QStringLiteral("Формат этикетки в миллиметрах"));
+    executeOperation(next, next.scaleContent ? QStringLiteral("Масштабировать этикетку") : QStringLiteral("Формат этикетки в миллиметрах"));
     restoreCanvasZoom();
 }
 

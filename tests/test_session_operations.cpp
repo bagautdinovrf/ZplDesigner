@@ -35,6 +35,7 @@ private slots:
     void pendingRejectedAndSourceOnlyStatesBlockOperations();
     void intermediateGs1TextStaysUndoableAndPortable();
     void reorderUndoKeepsElementAndGroupIds();
+    void scaledLabelStepsFromBaseAndMovesGuides();
 };
 
 void SessionOperationTests::initTestCase()
@@ -285,6 +286,58 @@ void SessionOperationTests::reorderUndoKeepsElementAndGroupIds()
     session.undoStack()->redo();
     QCOMPARE(session.document().elements[2].id, ids[0]);
     QCOMPARE(session.document().elements[3].id, ids[1]);
+    session.discardRecovery();
+}
+
+void SessionOperationTests::scaledLabelStepsFromBaseAndMovesGuides()
+{
+    DesignDocument document;
+    document.width = 400; document.height = 300;
+    document.elements = {makeElement(ElementType::Box, {10, 20})};
+    DocumentSession session;
+    session.reset(document);
+    auto layout = session.layoutSettings();
+    layout.verticalGuides = {100};
+    layout.horizontalGuides = {150};
+    session.setLayoutSettings(layout);
+    const auto scale = [&](int width, int height, int dpi) {
+        UpdateLabelSettings settings{width, height, dpi};
+        settings.scaleContent = true;
+        return session.execute(settings, u"Scale"_s);
+    };
+    const auto box = [&]() -> const Element& { return session.document().elements.front(); };
+
+    // Single-dot steps would round back to x = 10 if each scaled the last one.
+    // Sixty steps stay below the 80-command history limit.
+    for (int width = 401; width <= 460; ++width) QVERIFY(scale(width, 300, 203).value_or(false));
+    QCOMPARE(box().x, qRound(10 * 460.0 / 400));
+    QCOMPARE(box().width, qRound(250 * 460.0 / 400) - box().x);
+    QCOMPARE(session.layoutSettings().verticalGuides, QList<int>{115});
+    QCOMPARE(session.layoutSettings().horizontalGuides, QList<int>{150});
+    const auto same = scale(460, 300, 203);
+    QVERIFY(same && !*same);
+
+    // Returning to the base restores every dot, guides included.
+    QVERIFY(scale(400, 300, 203).value_or(false));
+    QCOMPARE(box().x, 10);
+    QCOMPARE(box().width, document.elements.front().width);
+    QCOMPARE(session.layoutSettings().verticalGuides, QList<int>{100});
+
+    // Elements and guides change in one history step.
+    const int steps = session.undoStack()->count();
+    QVERIFY(scale(800, 600, 300).value_or(false));
+    QCOMPARE(session.undoStack()->count(), steps + 1);
+    QCOMPARE(session.layoutSettings().horizontalGuides, QList<int>{300});
+    session.undoStack()->undo();
+    QCOMPARE(session.document().width, 400);
+    QCOMPARE(session.document().dpi, 203);
+    QCOMPARE(box().x, 10);
+    QCOMPARE(session.layoutSettings().horizontalGuides, QList<int>{150});
+
+    // Another edit starts a new base, so the next scaling keeps it.
+    QVERIFY(session.moveElements({0}, {5, 0}));
+    QVERIFY(scale(800, 600, 203).value_or(false));
+    QCOMPARE(box().x, 30);
     session.discardRecovery();
 }
 

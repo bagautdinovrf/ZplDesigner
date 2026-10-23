@@ -337,6 +337,107 @@ Element resizedElement(const Element& element, QSize requestedSize, QSize curren
     return resized;
 }
 
+Element scaledElement(const Element& element, double scaleX, double scaleY, QChar defaultOrientation)
+{
+    Element scaled = element;
+    const double uniform = std::min(scaleX, scaleY);
+    // Free extents scale both edges, so touching frames and lines stay joined.
+    const auto extent = [](int origin, int size, double scale) {
+        return std::clamp(qRound((origin + size) * scale) - qRound(origin * scale), 1, 4096);
+    };
+    const auto weight = [uniform](int value, int minimum, int maximum) {
+        return roundedLimit(value * uniform, minimum, maximum);
+    };
+    // Lines and filled bars stay solid; outlines keep a proportional weight.
+    const auto stroke = [&](int before, int after) {
+        if (element.thickness >= before) return after;
+        const int value = weight(element.thickness, 1, std::max(1, after));
+        return 2 * element.thickness >= before ? std::max(value, (after + 1) / 2) : value;
+    };
+    scaled.x = roundedLimit(element.x * scaleX, -4096, 4096);
+    scaled.y = roundedLimit(element.y * scaleY, -4096, 4096);
+    switch (element.type) {
+    case ElementType::Box:
+    case ElementType::Line:
+    case ElementType::Ellipse:
+        scaled.width = extent(element.x, element.width, scaleX);
+        scaled.height = extent(element.y, element.height, scaleY);
+        scaled.thickness = stroke(std::min(element.width, element.height), std::min(scaled.width, scaled.height));
+        break;
+    case ElementType::Diagonal:
+        scaled.width = extent(element.x, element.width, scaleX);
+        scaled.height = extent(element.y, element.height, scaleY);
+        scaled.thickness = weight(element.thickness, 1, 4096);
+        break;
+    case ElementType::Circle:
+        scaled.width = scaled.height = weight(element.width, 1, 4096);
+        scaled.thickness = stroke(element.width, scaled.width);
+        break;
+    case ElementType::Image:
+        if (element.imageKeepAspectRatio) {
+            scaled.width = weight(element.width, 1, 4096);
+            scaled.height = weight(element.height, 1, 4096);
+        } else {
+            scaled.width = extent(element.x, element.width, scaleX);
+            scaled.height = extent(element.y, element.height, scaleY);
+        }
+        break;
+    case ElementType::Eac:
+        scaled.width = scaled.height = weight(element.width, 1, 4096);
+        break;
+    case ElementType::Table: {
+        scaled.fontHeight = weight(element.fontHeight, 1, 512);
+        if (element.fontWidth > 0) scaled.fontWidth = weight(element.fontWidth, 1, 512);
+        scaled.tablePadding = weight(element.tablePadding, 0, 128);
+        scaled.thickness = weight(element.thickness, 1, 4096);
+        // Grid lines are edges too; rounding must still fit text and borders.
+        const auto tracks = [&](QList<int>& sizes, int origin, double scale, int minimum) {
+            for (auto& size : sizes) {
+                const int start = origin;
+                origin += size;
+                size = std::clamp(qRound(origin * scale) - qRound(start * scale), minimum, 4096);
+            }
+            return std::accumulate(sizes.cbegin(), sizes.cend(), 0);
+        };
+        const int border = element.tableBorders ? scaled.thickness : 0;
+        scaled.width = tracks(scaled.tableColumnWidths, element.x, scaleX,
+            std::max({8, 2 * scaled.tablePadding + 1, border}));
+        scaled.height = tracks(scaled.tableRowHeights, element.y, scaleY,
+            std::max({8, scaled.fontHeight + 2 * scaled.tablePadding, border}));
+        break;
+    }
+    case ElementType::Text: {
+        scaled.width = weight(element.width, 1, 4096);
+        scaled.height = weight(element.height, 1, 4096);
+        scaled.fontHeight = weight(element.fontHeight, 1, 512);
+        if (element.fontWidth > 0) scaled.fontWidth = weight(element.fontWidth, 1, 512);
+        scaled.characterSpacing = weight(element.characterSpacing, -10, 9999);
+        scaled.blockLineSpacing = weight(element.blockLineSpacing, -512, 512);
+        scaled.blockHangingIndent = weight(element.blockHangingIndent, -4096, 4096);
+        if (element.blockWidth > 0) {
+            // The block follows its own axis; the font never outgrows it, so
+            // alignment inside the block holds and lines do not start to wrap.
+            const QChar orientation = element.useDefaultOrientation ? defaultOrientation : element.orientation;
+            const bool vertical = orientation == u'R' || orientation == u'B';
+            scaled.blockWidth = roundedLimit(element.blockWidth * (vertical ? scaleY : scaleX), 1, 4096);
+        }
+        break;
+    }
+    case ElementType::MaxiCode:
+        // ^BD has a fixed physical dot geometry; only its position follows.
+        break;
+    default:
+        scaled.moduleWidth = weight(element.moduleWidth, 1, 10);
+        scaled.width = weight(element.width, 1, 4096);
+        scaled.height = weight(element.height, 1,
+            isLinearBarcodeType(element.type) || element.type == ElementType::Gs1DataBar ? 1024 : 4096);
+        if (element.type == ElementType::Pdf417 || element.type == ElementType::MicroPdf417)
+            scaled.pdf417RowHeight = weight(element.pdf417RowHeight, 1, 64);
+        break;
+    }
+    return scaled;
+}
+
 DesignDocument blankDocument()
 {
     DesignDocument document;

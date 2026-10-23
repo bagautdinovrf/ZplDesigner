@@ -1,6 +1,9 @@
 #include "document_operations.hpp"
+#include "eac_mark.hpp"
 
 #include <QtTest>
+
+#include <numeric>
 
 using namespace Designer;
 using namespace Qt::StringLiterals;
@@ -23,6 +26,10 @@ private slots:
     void tableContentKeepsEditablePlaceholdersAndDerivesSize();
     void layerOperationsHonorLockAndKeepStableOrder();
     void labelAndAddFailuresAreAtomic();
+    void scaledLabelKeepsLayoutAtAnotherDpi();
+    void scaledLabelStretchesShapesAndKeepsContentProportions();
+    void scaledSampleStaysExportable_data();
+    void scaledSampleStaysExportable();
     void unchangedImportedPropertiesDoNotBlockEditing();
 };
 
@@ -409,6 +416,124 @@ void DocumentOperationTests::labelAndAddFailuresAreAtomic()
     element.x = 5000;
     QVERIFY(!applyOperation(document, AddElement{element}));
     QCOMPARE(document.elements.size(), 1);
+}
+
+void DocumentOperationTests::scaledLabelKeepsLayoutAtAnotherDpi()
+{
+    DesignDocument document;
+    auto frame = makeElement(ElementType::Box, {0, 0});
+    frame.width = document.width; frame.height = document.height; frame.thickness = 4;
+    auto line = makeElement(ElementType::Line, {40, 100});
+    auto text = makeElement(ElementType::Text, {40, 120});
+    auto code = makeElement(ElementType::Code128, {40, 200});
+    code.moduleWidth = 2; code.height = 80;
+    auto qr = makeElement(ElementType::QrCode, {500, 40});
+    auto maxi = makeElement(ElementType::MaxiCode, {500, 200});
+    auto eac = makeElement(ElementType::Eac, {700, 300});
+    eac.width = eac.height = eacMinimumSize(203, eac.eacStyle);
+    document.elements = {frame, line, text, code, qr, maxi, eac};
+    const auto before = document;
+
+    UpdateLabelSettings settings{qRound(document.width * 300.0 / 203), qRound(document.height * 300.0 / 203), 300};
+    QVERIFY(applyOperation(document, settings).value_or(false));
+    QCOMPARE(document.elements.front().x, 0);
+    QCOMPARE(document.elements.front().width, before.elements.front().width);
+    document = before;
+    settings.scaleContent = true;
+    QVERIFY(applyOperation(document, settings).value_or(false));
+    const double factor = 300.0 / 203;
+    const auto& elements = document.elements;
+    // The frame still meets every label edge; a line stays solid.
+    QCOMPARE(elements[0].width, document.width);
+    QCOMPARE(elements[0].height, document.height);
+    QCOMPARE(elements[0].thickness, qRound(4 * factor));
+    QCOMPARE(elements[1].x, qRound(40 * factor));
+    QCOMPARE(elements[1].thickness, elements[1].height);
+    QCOMPARE(elements[1].width, qRound(280 * factor) - qRound(40 * factor));
+    QCOMPARE(elements[2].y, qRound(120 * factor));
+    QCOMPARE(elements[2].fontHeight, qRound(before.elements[2].fontHeight * factor));
+    QCOMPARE(elements[3].moduleWidth, 3);
+    QCOMPARE(elements[3].height, qRound(80 * factor));
+    QCOMPARE(elements[4].moduleWidth, qRound(before.elements[4].moduleWidth * factor));
+    // ^BD keeps its fixed dot geometry; only its place follows the label.
+    QCOMPARE(elements[5].x, qRound(500 * factor));
+    QCOMPARE(elements[5].width, before.elements[5].width);
+    QCOMPARE(elements[6].width, eacSizeForRequest(qRound(before.elements[6].width * factor), 300, elements[6].eacStyle));
+    QVERIFY(elements[6].width >= eacMinimumSize(300, elements[6].eacStyle));
+    const auto valid = validateForExport(document);
+    QVERIFY2(valid, valid ? "" : qPrintable(valid.error()));
+
+    // Scaling the result back gives the original dots for these values.
+    settings = {before.width, before.height, 203};
+    settings.scaleContent = true;
+    QVERIFY(applyOperation(document, settings).value_or(false));
+    QCOMPARE(document.elements[0].width, before.elements[0].width);
+    QCOMPARE(document.elements[1].x, before.elements[1].x);
+    QCOMPARE(document.elements[2].fontHeight, before.elements[2].fontHeight);
+    QCOMPARE(document.elements[3].moduleWidth, before.elements[3].moduleWidth);
+}
+
+void DocumentOperationTests::scaledLabelStretchesShapesAndKeepsContentProportions()
+{
+    DesignDocument document;
+    document.width = 400; document.height = 300;
+    document.defaultOrientation = u'R';
+    auto box = makeElement(ElementType::Box, {10, 20});
+    box.width = 100; box.height = 50;
+    auto block = makeElement(ElementType::Text, {10, 100});
+    block.blockWidth = 100;
+    auto rotated = block;
+    rotated.id = QUuid::createUuid();
+    rotated.useDefaultOrientation = true;
+    auto circle = makeElement(ElementType::Circle, {200, 20});
+    auto locked = makeElement(ElementType::Image, {200, 150});
+    locked.width = 80; locked.height = 40;
+    auto free = locked;
+    free.id = QUuid::createUuid();
+    free.imageKeepAspectRatio = false;
+    auto table = makeElement(ElementType::Table, {40, 200});
+    document.elements = {box, block, rotated, circle, locked, free, table};
+
+    UpdateLabelSettings settings{800, 300, 203, u'R'};
+    settings.scaleContent = true;
+    QVERIFY(applyOperation(document, settings).value_or(false));
+    const auto& elements = document.elements;
+    QCOMPARE(elements[0].x, 20); QCOMPARE(elements[0].y, 20);
+    QCOMPARE(elements[0].width, 200); QCOMPARE(elements[0].height, 50);
+    QCOMPARE(elements[0].thickness, box.thickness);
+    // Fonts use the smaller factor; a block widens only along its own axis.
+    QCOMPARE(elements[1].fontHeight, block.fontHeight);
+    QCOMPARE(elements[1].blockWidth, 200);
+    QCOMPARE(elements[2].blockWidth, 100);
+    QCOMPARE(elements[3].x, 400);
+    QCOMPARE(elements[3].width, circle.width);
+    QCOMPARE(elements[4].width, 80); QCOMPARE(elements[4].height, 40);
+    QCOMPARE(elements[5].width, 160); QCOMPARE(elements[5].height, 40);
+    QCOMPARE(elements[6].tableColumnWidths, (QList<int>{240, 240}));
+    QCOMPARE(elements[6].tableRowHeights, table.tableRowHeights);
+    QCOMPARE(elements[6].width, 480);
+    QCOMPARE(elements[6].height, std::accumulate(table.tableRowHeights.cbegin(), table.tableRowHeights.cend(), 0));
+}
+
+void DocumentOperationTests::scaledSampleStaysExportable_data()
+{
+    QTest::addColumn<int>("dpi");
+    QTest::newRow("203 dpi") << 203;
+    QTest::newRow("600 dpi") << 600;
+}
+
+void DocumentOperationTests::scaledSampleStaysExportable()
+{
+    QFETCH(int, dpi);
+    auto document = sampleDocument();
+    const auto elements = document.elements.size();
+    UpdateLabelSettings settings{qRound(double(document.width) * dpi / document.dpi),
+                                 qRound(double(document.height) * dpi / document.dpi), dpi};
+    settings.scaleContent = true;
+    QVERIFY(applyOperation(document, settings).value_or(false));
+    QCOMPARE(document.elements.size(), elements);
+    const auto valid = validateForExport(document);
+    QVERIFY2(valid, valid ? "" : qPrintable(valid.error()));
 }
 
 void DocumentOperationTests::unchangedImportedPropertiesDoNotBlockEditing()

@@ -98,6 +98,7 @@ private slots:
     void barcodeTypeRejectsIneligibleEdits();
     void barcodeTypePreservesImportedCommentsAndSavedRendering();
     void millimetreFormatIsUndoableAndKeepsElementGeometry();
+    void scaledLabelFollowsDpiAndFormat();
     void newDocumentIs100MillimetresAt300Dpi();
     void groupActionsPreserveSelectionAndHistory();
     void pendingSourceBlocksGroupActions();
@@ -975,6 +976,54 @@ void WindowTests::millimetreFormatIsUndoableAndKeepsElementGeometry()
     undo_->trigger();
     QCOMPARE(window_->document().width, initial_.width);
     QCOMPARE(window_->document().dpi, initial_.dpi);
+}
+
+void WindowTests::scaledLabelFollowsDpiAndFormat()
+{
+    auto* scale = window_->findChild<QCheckBox*>(QStringLiteral("scaleLabelContent"));
+    auto* dpi = window_->findChild<QComboBox*>(QStringLiteral("dpi"));
+    auto* format = window_->findChild<QPushButton*>(QStringLiteral("labelFormatSetup"));
+    QVERIFY(scale); QVERIFY(dpi); QVERIFY(format);
+    QVERIFY(!scale->isChecked());
+    scale->setChecked(true);
+    {
+        const QSettings saved(QDir(workspaceSettingsDirectory_).filePath(QStringLiteral("workspace.ini")), QSettings::IniFormat);
+        QVERIFY(saved.value(QStringLiteral("label/scaleContent")).toBool());
+    }
+
+    // Another resolution keeps the millimetres; the box follows the label.
+    dpi->setCurrentIndex(dpi->findData(300));
+    const auto& before = initial_.elements.first();
+    QCOMPARE(window_->document().dpi, 300);
+    QCOMPARE(window_->document().width, qRound(initial_.width * 300.0 / 203));
+    QCOMPARE(window_->document().height, qRound(initial_.height * 300.0 / 203));
+    const double scaleX = double(window_->document().width) / initial_.width;
+    QCOMPARE(window_->document().elements.first().x, qRound(before.x * scaleX));
+    QCOMPARE(window_->document().elements.first().width,
+             qRound((before.x + before.width) * scaleX) - qRound(before.x * scaleX));
+    undo_->trigger();
+    QCOMPARE(window_->document().dpi, 203);
+    QCOMPARE(window_->document().width, initial_.width);
+    QCOMPARE(window_->document().elements.first().x, before.x);
+    QCOMPARE(dpi->currentData().toInt(), 203);
+
+    bool dialogSeen = false;
+    QTimer::singleShot(0, window_.get(), [&] {
+        auto* dialog = window_->findChild<QDialog*>(QStringLiteral("labelSetupDialog"));
+        if (!dialog) return;
+        auto* dialogScale = dialog->findChild<QCheckBox*>(QStringLiteral("labelSetupScaleContent"));
+        dialogSeen = dialogScale && dialogScale->isChecked();
+        auto* width = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("labelWidthMm"));
+        width->setValue(width->value() * 2);
+        dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+    });
+    format->click();
+    QVERIFY(dialogSeen);
+    QCOMPARE(window_->document().width, 2 * initial_.width);
+    QCOMPARE(window_->document().height, initial_.height);
+    QCOMPARE(window_->document().elements.first().x, 2 * before.x);
+    QCOMPARE(window_->document().elements.first().width, 2 * before.width);
+    QCOMPARE(window_->document().elements.first().height, before.height);
 }
 
 void WindowTests::newDocumentIs100MillimetresAt300Dpi()

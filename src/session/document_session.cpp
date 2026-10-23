@@ -772,6 +772,7 @@ void DocumentSession::resetState(DesignDocument document, QString path,
     revision_ = {QUuid::createUuid(), 0, 0};
     documentNotificationPending_ = false;
     layoutNotificationPending_ = false;
+    labelScaleBase_.reset();
     document_ = std::move(document);
     layoutSettings_ = std::move(settings);
     layoutWarning_ = std::move(warning);
@@ -804,10 +805,45 @@ OperationResult DocumentSession::execute(const EditOperation& operation, const Q
     if (const auto* resize = std::get_if<ResizeElement>(&operation);
         resize && resize->geometryRevision != revision_)
         return std::unexpected(tr("Геометрия превью устарела. Обновите превью перед изменением размера."));
+    if (const auto* label = std::get_if<UpdateLabelSettings>(&operation); label && label->scaleContent)
+        return scaleLabel(*label, title);
     auto next = document_;
     const auto result = std::visit([&](const auto& request) { return applyOperation(next, request); }, operation);
     if (result && *result) commit(std::move(next), title);
     return result;
+}
+
+OperationResult DocumentSession::scaleLabel(const UpdateLabelSettings& request, const QString& title)
+{
+    // Consecutive scaled edits recompute from the state before the first one,
+    // so stepping a size or DPI back and forth does not accumulate rounding.
+    const bool continued = labelScaleBase_ && labelScaleBase_->result == revision_
+        && labelScaleBase_->resultLayout == layoutSettings_;
+    if (continued && document_.width == request.width && document_.height == request.height
+        && document_.dpi == request.dpi && document_.defaultOrientation == request.defaultOrientation
+        && document_.defaultJustification == request.defaultJustification
+        && document_.printMirror == request.printMirror && document_.printInverted == request.printInverted
+        && document_.labelReverse == request.labelReverse)
+        return false;
+    auto base = continued ? *labelScaleBase_ : LabelScaleBase{document_, layoutSettings_, {}, {}};
+    auto next = base.document;
+    const auto result = applyOperation(next, request);
+    // Returning exactly to the base is still a change of the current state.
+    if (!result || (!*result && !continued)) return result;
+    auto layout = scaledLayoutSettings(base.layout, double(request.width) / std::max(1, base.document.width),
+                                       double(request.height) / std::max(1, base.document.height));
+    canonicalizeGuides(layout);
+    const bool layoutChanged = validLayoutSettings(layout) && layout != layoutSettings_;
+    if (layoutChanged) undo_.beginMacro(title);
+    commit(std::move(next), title);
+    if (layoutChanged) {
+        undo_.push(new LayoutSettingsCommand(*this, layoutSettings_, std::move(layout), title, 0));
+        undo_.endMacro();
+    }
+    base.result = revision_;
+    base.resultLayout = layoutSettings_;
+    labelScaleBase_ = std::move(base);
+    return true;
 }
 
 bool DocumentSession::moveElements(const QList<int>& indices, QPoint delta)

@@ -114,6 +114,7 @@ private:
     void resetState(DesignDocument document, QString path, CanvasLayoutSettings settings, QString warning,
                     std::optional<QString> pending = {}, bool recovered = false);
     void setFilePath(QString path);
+    [[nodiscard]] OperationResult scaleLabel(const UpdateLabelSettings& request, const QString& title);
     void scheduleRecovery();
     void writeRecoveryInBackground();
     [[nodiscard]] std::expected<void, QString> reserveRecoveryFile();
@@ -129,6 +130,15 @@ private:
     DocumentRevision revision_{QUuid::createUuid(), 0, 0};
     quint64 sourceRevision_ = 0;
     quint64 layoutEditGroup_ = 0;
+    // State before the first of consecutive scaled label edits, and the state
+    // the latest of them produced. Any other change starts from the new state.
+    struct LabelScaleBase {
+        DesignDocument document;
+        CanvasLayoutSettings layout;
+        DocumentRevision result;
+        CanvasLayoutSettings resultLayout;
+    };
+    std::optional<LabelScaleBase> labelScaleBase_;
     QString sourceError_;
     bool documentNotificationPending_ = false;
     bool layoutNotificationPending_ = false;

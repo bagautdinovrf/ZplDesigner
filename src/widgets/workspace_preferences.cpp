@@ -97,6 +97,7 @@ WorkspacePreferences loadWorkspacePreferences()
     preferences.geometrySizes = settings.value(u"canvas/geometrySizes"_s, true).toBool();
     preferences.geometryCoordinates = settings.value(u"canvas/geometryCoordinates"_s, true).toBool();
     preferences.rulersDocked = settings.value(u"canvas/rulersDocked"_s, false).toBool();
+    preferences.scaleLabelContent = settings.value(u"label/scaleContent"_s, false).toBool();
     preferences.editorSizes = readSizes(settings, u"editor/sizes"_s, {500, 500});
     preferences.canvasZoomPercent = readCanvasZoomPercent(settings);
     preferences.hiddenToolbarCommands = settings.value(u"toolbar/hiddenCommands"_s).toStringList();
@@ -132,6 +133,7 @@ bool saveWorkspacePreferences(const WorkspacePreferences& preferences)
     settings.setValue(u"canvas/geometrySizes"_s, preferences.geometrySizes);
     settings.setValue(u"canvas/geometryCoordinates"_s, preferences.geometryCoordinates);
     settings.setValue(u"canvas/rulersDocked"_s, preferences.rulersDocked);
+    settings.setValue(u"label/scaleContent"_s, preferences.scaleLabelContent);
     settings.setValue(u"toolbar/hiddenCommands"_s, preferences.hiddenToolbarCommands);
     settings.sync();
     return settings.status() == QSettings::NoError;

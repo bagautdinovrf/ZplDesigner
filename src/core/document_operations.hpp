@@ -62,6 +62,9 @@ struct UpdateLabelSettings {
     bool printMirror = false;
     bool printInverted = false;
     bool labelReverse = false;
+    // Scales every element by the change of width and height in dots (see
+    // scaledElement). Otherwise elements keep their dots.
+    bool scaleContent = false;
 };
 struct AddElement { Element element; };
 struct RenameElement { QUuid id; QString name; };

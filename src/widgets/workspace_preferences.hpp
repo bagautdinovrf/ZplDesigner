@@ -28,6 +28,7 @@ struct WorkspacePreferences {
     bool geometrySizes = true;       // Selection dimension lines on the canvas.
     bool geometryCoordinates = true; // Selection ZPL origin coordinates on the canvas.
     bool rulersDocked = false;       // Rulers at the canvas edges instead of around the label.
+    bool scaleLabelContent = false;  // Size and DPI changes scale elements and guides.
     QStringList hiddenToolbarCommands;
 };
 

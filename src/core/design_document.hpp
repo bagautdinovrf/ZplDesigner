@@ -140,6 +140,11 @@ Element makeElement(ElementType type, QPoint position = {40, 40});
 // Sizes are visible bounds in printer dots, after orientation. Text and barcode
 // parameters are adjusted; their raster previews are never stretched.
 Element resizedElement(const Element& element, QSize requestedSize, QSize currentRenderedSize);
+// Label scaling. Positions and free extents (shapes, tables, stretchable
+// images) follow their own axis; fonts, modules, line weights and aspect-locked
+// elements use the smaller factor, so they stay inside their scaled place.
+// Barcode modules round to whole dots; the EAC mark is snapped by the caller.
+Element scaledElement(const Element& element, double scaleX, double scaleY, QChar defaultOrientation = u'N');
 // Empty label of File → New: 100 × 100 mm for a 300 dpi printer. ZPL opened
 // without layout settings keeps DesignDocument's 203 dpi.
 DesignDocument blankDocument();

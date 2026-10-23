@@ -405,6 +405,12 @@ OperationResult applyOperation(DesignDocument& document, const UpdateLabelSettin
     changed |= assign(next.printMirror, request.printMirror);
     changed |= assign(next.printInverted, request.printInverted);
     changed |= assign(next.labelReverse, request.labelReverse);
+    if (request.scaleContent && (request.width != document.width || request.height != document.height)) {
+        const double scaleX = double(request.width) / std::max(1, document.width);
+        const double scaleY = double(request.height) / std::max(1, document.height);
+        for (auto& element : next.elements)
+            element = scaledElement(element, scaleX, scaleY, request.defaultOrientation);
+    }
     for (auto& element : next.elements) {
         if (element.type != ElementType::Eac) continue;
         const int size = eacSizeForRequest(element.width, next.dpi, element.eacStyle);

@@ -178,6 +178,7 @@ private:
     DotSpinBox* labelWidth_ = nullptr;
     DotSpinBox* labelHeight_ = nullptr;
     QComboBox* dpi_ = nullptr;
+    QCheckBox* scaleLabelContent_ = nullptr;
     QCheckBox* layerLocked_ = nullptr;
     QCheckBox* layerVisible_ = nullptr;
     QCheckBox* layerPrintable_ = nullptr;
