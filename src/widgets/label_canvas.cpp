@@ -184,6 +184,7 @@ bool sameGestureElement(const Element& before, const Element& after)
         && before.blockWidth == after.blockWidth && before.blockMaxLines == after.blockMaxLines
         && before.blockLineSpacing == after.blockLineSpacing && before.blockHangingIndent == after.blockHangingIndent
         && before.blockJustification == after.blockJustification && before.code128Mode == after.code128Mode
+        && before.codabarStart == after.codabarStart && before.codabarStop == after.codabarStop
         && before.interpretationAbove == after.interpretationAbove
         && before.code128CheckDigit == after.code128CheckDigit && before.barcodeRatio == after.barcodeRatio
         && before.threshold == after.threshold && before.dither == after.dither

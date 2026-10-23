@@ -202,6 +202,14 @@ std::expected<ProjectState, QString> decodeProject(const QByteArray& bytes)
             || !string(elementSource.value(u"state"_s), element.sourceState)) return invalid();
         ids.insert(element.id);
     }
+    // A Codabar element from before 1.10.0 now writes the start and stop it
+    // showed as ^BK k and l, so the unedited original no longer prints it.
+    if (!document.originalZpl.isEmpty() && document.visualEditable
+        && std::ranges::any_of(document.elements, [&](const Element& element) {
+            return element.type == ElementType::Codabar && element.printable && !element.sourceSignature.isEmpty()
+                && elementZpl(element, true, document.defaultOrientation, document.defaultJustification) != element.sourceSignature;
+        }))
+        document.originalZpl.clear();
     const auto order = source.value(u"order"_s).toArray();
     if (order.size() > 200) return invalid();
     QSet<QUuid> orderIds;

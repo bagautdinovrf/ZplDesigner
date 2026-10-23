@@ -85,6 +85,7 @@ bool validProperties(const Element& before, const ElementProperties& values)
         && number(values.blockMaxLines, before.blockMaxLines, 1, 128) && number(values.blockLineSpacing, before.blockLineSpacing, -512, 512)
         && number(values.blockHangingIndent, before.blockHangingIndent, -4096, 4096)
         && character(values.blockJustification, before.blockJustification, u"LCRJ") && character(values.code128Mode, before.code128Mode, u"NABCDU")
+        && character(values.codabarStart, before.codabarStart, u"ABCD") && character(values.codabarStop, before.codabarStop, u"ABCD")
         && character(values.qrErrorCorrection, before.qrErrorCorrection, u"LMQH") && number(values.pdf417RowHeight, before.pdf417RowHeight, 1, 64)
         && number(values.pdf417Columns, before.pdf417Columns, 0, 30) && number(values.pdf417Security, before.pdf417Security, 0, 8);
 }
@@ -119,6 +120,8 @@ bool updateProperties(Element& element, const ElementProperties& values)
     changed |= assign(element.blockHangingIndent, values.blockHangingIndent);
     changed |= assign(element.blockJustification, values.blockJustification);
     changed |= assign(element.code128Mode, values.code128Mode);
+    changed |= assign(element.codabarStart, values.codabarStart);
+    changed |= assign(element.codabarStop, values.codabarStop);
     changed |= assign(element.interpretationAbove, values.interpretationAbove);
     changed |= assign(element.qrErrorCorrection, values.qrErrorCorrection);
     changed |= assign(element.pdf417RowHeight, values.pdf417RowHeight);
@@ -156,6 +159,8 @@ bool updateBarcodeOptions(Element& target, const Element& source)
             changed |= assign(target.barcodeCheckDigit, source.barcodeCheckDigit);
         if (target.type == ElementType::Code128)
             changed |= copyMembers(target, source, &Element::code128Mode, &Element::code128CheckDigit);
+        if (target.type == ElementType::Codabar)
+            changed |= copyMembers(target, source, &Element::codabarStart, &Element::codabarStop);
     } else if (target.type == ElementType::DataMatrix) {
         changed |= copyMembers(target, source, &Element::dataMatrixRectangular,
                                &Element::dataMatrixColumns, &Element::dataMatrixRows);

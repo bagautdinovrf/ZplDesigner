@@ -185,7 +185,7 @@ Element makeElement(ElementType type, QPoint position)
     else if (type == ElementType::UpcA) { element.text = QStringLiteral("036000291452"); element.moduleWidth = 2; }
     else if (type == ElementType::UpcE) { element.text = QStringLiteral("04252614"); element.moduleWidth = 2; }
     else if (type == ElementType::Code39) { element.text = QStringLiteral("ABC-123"); element.moduleWidth = 2; element.humanReadable = false; }
-    else if (type == ElementType::Codabar) { element.text = QStringLiteral("A123456B"); element.humanReadable = false; element.moduleWidth = 2; }
+    else if (type == ElementType::Codabar) { element.text = QStringLiteral("123456"); element.codabarStop = u'B'; element.humanReadable = false; element.moduleWidth = 2; }
     else if (type == ElementType::Pdf417) { element.text = QStringLiteral("PDF417 sample"); element.moduleWidth = 2; element.humanReadable = false; }
     else if (type == ElementType::Code93) { element.text = QStringLiteral("Code93-123"); element.moduleWidth = 2; }
     else if (type == ElementType::Interleaved2of5 || type == ElementType::Industrial2of5) { element.text = QStringLiteral("12345678"); element.moduleWidth = 2; }

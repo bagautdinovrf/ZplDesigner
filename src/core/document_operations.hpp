@@ -21,7 +21,7 @@ struct ElementProperties {
     std::optional<QChar> diagonalDirection;
     std::optional<bool> imageKeepAspectRatio, gs1;
     std::optional<int> blockWidth, blockMaxLines, blockLineSpacing, blockHangingIndent;
-    std::optional<QChar> blockJustification, code128Mode;
+    std::optional<QChar> blockJustification, code128Mode, codabarStart, codabarStop;
     std::optional<bool> interpretationAbove;
     std::optional<QChar> qrErrorCorrection;
     std::optional<int> pdf417RowHeight, pdf417Columns, pdf417Security;

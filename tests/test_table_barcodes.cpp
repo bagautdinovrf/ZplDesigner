@@ -313,6 +313,8 @@ void TableBarcodeTest::extendedBarcodeOptionsRoundTrip()
     maxi.maxiCodeMode = 5; maxi.maxiCodePosition = 2; maxi.maxiCodeTotal = 3; examples.append(maxi);
     auto code93 = makeElement(ElementType::Code93);
     code93.barcodeCheckDigit = true; examples.append(code93);
+    auto codabar = makeElement(ElementType::Codabar);
+    codabar.codabarStart = u'C'; codabar.codabarStop = u'D'; codabar.text = u"1-2$3:4/5.6+7"_s; examples.append(codabar);
     for (const auto& code : examples) {
         DesignDocument document; document.elements = {code};
         const auto rendered = renderPreview(document);

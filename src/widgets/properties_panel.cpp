@@ -141,6 +141,14 @@ PropertiesPanel::PropertiesPanel(DocumentSession* session, PreviewCoordinator* p
     code128Mode_->addItem(QStringLiteral("GS1-128 (D)"), QStringLiteral("D"));
     code128Mode_->addItem(QStringLiteral("UCC (U)"), QStringLiteral("U"));
     form->addRow(QStringLiteral("Режим Code 128"), code128Mode_);
+    // ^BK k and l: Codabar data never carries its start and stop characters.
+    const auto codabarCharacter = [&](QComboBox*& combo, const QString& name, const QString& label) {
+        combo = new QComboBox(properties); combo->setObjectName(name);
+        for (const QChar value : QStringView{u"ABCD"}) combo->addItem(QString(value), QString(value));
+        form->addRow(label, combo);
+    };
+    codabarCharacter(codabarStart_, QStringLiteral("codabarStart"), QStringLiteral("Старт Codabar"));
+    codabarCharacter(codabarStop_, QStringLiteral("codabarStop"), QStringLiteral("Стоп Codabar"));
     interpretationAbove_ = new QCheckBox(QStringLiteral("Подпись над кодом"), properties);
     interpretationAbove_->setObjectName(QStringLiteral("interpretationAbove"));
     form->addRow(interpretationAbove_);
@@ -234,6 +242,8 @@ PropertiesPanel::PropertiesPanel(DocumentSession* session, PreviewCoordinator* p
     connect(orientation_, &QComboBox::currentIndexChanged, this, &PropertiesPanel::editProperties);
     connect(blockAlignment_, &QComboBox::currentIndexChanged, this, &PropertiesPanel::editProperties);
     connect(code128Mode_, &QComboBox::currentIndexChanged, this, &PropertiesPanel::editProperties);
+    for (auto* combo : {codabarStart_, codabarStop_})
+        connect(combo, &QComboBox::currentIndexChanged, this, &PropertiesPanel::editProperties);
     connect(interpretationAbove_, &QCheckBox::toggled, this, &PropertiesPanel::editProperties);
     for (auto* value : {readable_, reverse_, dither_, imageKeepAspectRatio_}) connect(value, &QCheckBox::toggled, this, &PropertiesPanel::editProperties);
     connect(gs1_, &QCheckBox::toggled, this, [this] {
@@ -293,6 +303,8 @@ void PropertiesPanel::refresh() {
         blockSpacing_->setValue(e.blockLineSpacing); blockIndent_->setValue(e.blockHangingIndent);
         blockAlignment_->setCurrentIndex(blockAlignment_->findData(QString(e.blockJustification)));
         code128Mode_->setCurrentIndex(code128Mode_->findData(QString(e.code128Mode)));
+        codabarStart_->setCurrentIndex(codabarStart_->findData(QString(e.codabarStart)));
+        codabarStop_->setCurrentIndex(codabarStop_->findData(QString(e.codabarStop)));
         qrCorrection_->setCurrentIndex(qrCorrection_->findData(QString(e.qrErrorCorrection)));
         pdfRowHeight_->setValue(e.pdf417RowHeight); pdfColumns_->setValue(e.pdf417Columns); pdfSecurity_->setValue(e.pdf417Security);
         interpretationAbove_->setChecked(e.interpretationAbove);
@@ -352,6 +364,8 @@ void PropertiesPanel::refresh() {
                                static_cast<QWidget*>(blockIndent_), static_cast<QWidget*>(blockAlignment_)})
             setPropertyRowVisible(form, widget, text && e.blockWidth > 0);
         setPropertyRowVisible(form, code128Mode_, e.type == ElementType::Code128);
+        setPropertyRowVisible(form, codabarStart_, e.type == ElementType::Codabar);
+        setPropertyRowVisible(form, codabarStop_, e.type == ElementType::Codabar);
         setPropertyRowVisible(form, interpretationAbove_, isLinearBarcodeType(e.type) && e.humanReadable
             && e.type != ElementType::Codabar && e.type != ElementType::Code39);
         setPropertyRowVisible(form, thickness_, !text && !code && !image && !table && !eac);
@@ -421,6 +435,9 @@ void PropertiesPanel::editProperties() {
     e.blockLineSpacing = blockSpacing_->value(); e.blockHangingIndent = blockIndent_->value();
     e.blockJustification = blockAlignment_->currentData().toString().at(0);
     e.code128Mode = code128Mode_->currentData().toString().at(0);
+    // An imported value outside A-D has no item; leave it to validation.
+    if (codabarStart_->currentIndex() >= 0) e.codabarStart = codabarStart_->currentData().toString().at(0);
+    if (codabarStop_->currentIndex() >= 0) e.codabarStop = codabarStop_->currentData().toString().at(0);
     e.interpretationAbove = interpretationAbove_->isChecked();
     e.qrErrorCorrection = qrCorrection_->currentData().toString().at(0);
     e.pdf417RowHeight = pdfRowHeight_->value(); e.pdf417Columns = pdfColumns_->value(); e.pdf417Security = pdfSecurity_->value();

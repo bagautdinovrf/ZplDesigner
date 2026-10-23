@@ -125,7 +125,8 @@ bool restoreEditorMetadata(DesignDocument& document, const QString& source)
             const auto object = json.object();
             const QString clean = withoutMetadata(source);
             if (object.value(u"sha256"_s).toString() != digest(clean) || !object.value(u"snapshot"_s).isObject()) return false;
-            const auto decoded = decodeElements(QJsonDocument(object.value(u"snapshot"_s).toObject()).toJson(QJsonDocument::Compact));
+            const auto decoded = decodeElements(QJsonDocument(object.value(u"snapshot"_s).toObject()).toJson(QJsonDocument::Compact),
+                                                LegacyCodabar::AsPrinted);
             if (!decoded) return false;
             auto restored = document;
             if (object.contains(u"dpi"_s)) {

@@ -97,6 +97,21 @@ void DocumentOperationTests::barcodeConstraints()
     QVERIFY(!maxi.useDefaultOrientation);
     QCOMPARE(QSize(maxi.width, maxi.height), QSize(201, 195));
     QCOMPARE(maxi.text, matrix.text);
+
+    // Codabar start/stop are ^BK k and l, edited as their own A-D values.
+    const auto codabar = makeElement(ElementType::Codabar);
+    document.elements = {codabar};
+    ElementProperties invalid; invalid.codabarStart = u'E';
+    QVERIFY(!applyOperation(document, UpdateElementProperties{codabar.id, invalid}).has_value());
+    ElementProperties start; start.codabarStart = u'C';
+    QVERIFY(applyOperation(document, UpdateElementProperties{codabar.id, start}).value_or(false));
+    QCOMPARE(document.elements.front().codabarStart, QChar(u'C'));
+    auto options = document.elements.front(); options.codabarStop = u'D';
+    QVERIFY(applyOperation(document, UpdateElementContent{codabar.id, options}).value_or(false));
+    QCOMPARE(document.elements.front().codabarStop, QChar(u'D'));
+    QCOMPARE(document.elements.front().text, codabar.text);
+    options.codabarStop = u'X';
+    QVERIFY(!applyOperation(document, UpdateElementContent{codabar.id, options}).has_value());
 }
 
 void DocumentOperationTests::rejectsIneligibleBarcodeChanges()

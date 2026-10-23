@@ -68,8 +68,20 @@ BarcodeOptionsDialog::BarcodeOptionsDialog(const Element& element, CanvasUnit un
         }
         if (element.type == ElementType::Code39)
             note(tr("QtZpl поддерживает цифры, A–Z, пробел, дефис и точку. Подпись добавляется отдельным текстом."));
-        if (element.type == ElementType::Codabar)
-            note(tr("Используйте начальный/конечный символ A–D. Подпись добавляется отдельным текстом."));
+        if (element.type == ElementType::Codabar) {
+            const auto character = [this, form](const QString& label, const QString& name, QChar Element::*member) {
+                auto* box = new QComboBox(this); box->setObjectName(name);
+                for (const QChar value : QStringView{u"ABCD"}) box->addItem(QString(value), QString(value));
+                box->setCurrentIndex(box->findData(QString(element_.*member))); form->addRow(label, box);
+                connect(box, &QComboBox::currentIndexChanged, this, [this, box, member] {
+                    element_.*member = box->currentData().toString().front(); validateOptions();
+                });
+            };
+            character(tr("Старт"), QStringLiteral("barcodeCodabarStart"), &Element::codabarStart);
+            character(tr("Стоп"), QStringLiteral("barcodeCodabarStop"), &Element::codabarStop);
+            note(tr("Старт и стоп записываются параметрами ^BK; в данных допустимы цифры и - $ : / . +. "
+                    "Подпись добавляется отдельным текстом."));
+        }
     } else if (element.type == ElementType::DataMatrix) {
         flag(tr("Прямоугольный DataMatrix"), QStringLiteral("dataMatrixRectangular"), &Element::dataMatrixRectangular);
         number(tr("Колонки модулей (0 — авто)"), QStringLiteral("dataMatrixColumns"), &Element::dataMatrixColumns, 0, 144);

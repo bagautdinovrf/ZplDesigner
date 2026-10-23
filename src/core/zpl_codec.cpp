@@ -273,7 +273,8 @@ static QString serializeElement(const Element& input, bool preservePlaceholders,
         else if (element.type == ElementType::MaxiCode)
             result += u"^BD%1,%2,%3"_s.arg(element.maxiCodeMode).arg(element.maxiCodePosition).arg(element.maxiCodeTotal);
         else if (element.type == ElementType::Codabar)
-            result += u"^BK%1,N,%2,N,N"_s.arg(element.orientation).arg(element.height);
+            result += u"^BK%1,N,%2,N,N,%3,%4"_s.arg(element.orientation).arg(element.height)
+                .arg(element.codabarStart).arg(element.codabarStop);
         else if (element.type == ElementType::Code39)
             result += u"^B3%1,N,%2,%3,%4"_s.arg(element.orientation).arg(element.height)
                 .arg(element.humanReadable ? u'Y' : u'N').arg(element.interpretationAbove ? u'Y' : u'N');
@@ -753,15 +754,29 @@ std::expected<DesignDocument, QString> fromZpl(const QString& source)
                             element.height = resolved->height;
                             element.humanReadable = resolved->interpretation;
                             element.interpretationAbove = resolved->interpretationAbove;
-                            const bool checkDigit = std::get<QtZpl::LinearOptions>(resolved->options).checkDigit;
-                            const bool extra = element.type == ElementType::Code39 || element.type == ElementType::Codabar;
+                            const auto& options = std::get<QtZpl::LinearOptions>(resolved->options);
+                            const bool codabar = element.type == ElementType::Codabar;
+                            const bool extra = element.type == ElementType::Code39 || codabar;
                             const bool check = element.type == ElementType::Code93 || element.type == ElementType::Interleaved2of5;
-                            element.barcodeCheckDigit = check && checkDigit;
+                            element.barcodeCheckDigit = check && options.checkDigit;
                             // The model has no Code 39/Codabar check digit, and the
                             // serializer omits UPC's e. Captions QtZpl cannot draw
-                            // are rejected by validateElement below.
-                            if ((extra && checkDigit) || code.parameters.size() > (extra || check ? 5 : 4) || fieldFontSet)
+                            // and Codabar data characters a printer drops are
+                            // rejected by validateElement below.
+                            if ((extra && options.checkDigit) || code.parameters.size() > (codabar ? 7 : extra || check ? 5 : 4) || fieldFontSet)
                                 raw(u"Особые параметры штрихкода сохранены в исходном ZPL."_s);
+                            if (codabar) {
+                                // ^BK k and l in any case, A when omitted. QtZpl also
+                                // reads another character as A, as Labelary does;
+                                // keep that spelling in source mode.
+                                for (const qsizetype index : {5, 6}) {
+                                    const auto character = code.parameters.value(index);
+                                    if (!character.isEmpty() && (character.size() != 1 || !QStringView{u"ABCD"}.contains(character.front().toUpper())))
+                                        raw(u"Недопустимые старт/стоп Codabar в ^BK сохранены в исходном ZPL."_s);
+                                }
+                                element.codabarStart = options.start;
+                                element.codabarStop = options.stop;
+                            }
                             break;
                         }
                         case Symbology::Pdf417: {

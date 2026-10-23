@@ -123,12 +123,23 @@ QString validateElement(const Element& element, bool preservePlaceholders, int d
     if (isLinearBarcodeType(element.type)
         && qint64(element.text.size() + 8) * 11 * element.moduleWidth * (element.height + 160) > maximumPixels)
         return u"Штрихкод слишком велик для безопасного рендеринга."_s;
-    if (element.type == ElementType::Code39
-        && (!preservePlaceholders || element.literalText || (!element.text.contains(u"{{") && !element.text.contains(u"[[")))
-        && (element.text.isEmpty() || std::ranges::any_of(element.text, [](QChar ch) {
-            return !QStringView{u"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-. "}.contains(ch);
-        })))
+    // Template values are checked after substitution, before printing.
+    const bool concreteText = !preservePlaceholders || element.literalText
+        || (!element.text.contains(u"{{") && !element.text.contains(u"[["));
+    const auto onlyCharacters = [&](QStringView allowed) {
+        return !element.text.isEmpty() && std::ranges::all_of(element.text, [allowed](QChar ch) { return allowed.contains(ch); });
+    };
+    if (element.type == ElementType::Code39 && concreteText && !onlyCharacters(u"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-. "))
         return u"Code 39: доступные символы — цифры, A–Z, пробел, дефис и точка."_s;
+    // QtZpl, Labelary and printers take start/stop only from ^BK k and l and
+    // drop other characters with codabar-data-ignored.
+    if (element.type == ElementType::Codabar) {
+        if (!QStringView{u"ABCD"}.contains(element.codabarStart) || !QStringView{u"ABCD"}.contains(element.codabarStop))
+            return u"Codabar: старт и стоп — символы A–D."_s;
+        if (concreteText && !onlyCharacters(u"0123456789-$:/.+"))
+            return u"Codabar: в данных допустимы только цифры и - $ : / . +. Старт и стоп A–D задаются "
+                   u"параметрами кода (^BK k,l); другие символы данных принтер пропускает."_s;
+    }
     // QtZpl reports barcode-interpretation-pending instead of drawing these
     // captions (canary: code39CaptionStillPendingInQtZpl).
     if ((element.type == ElementType::Code39 || element.type == ElementType::Codabar)

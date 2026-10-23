@@ -8,6 +8,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMutex>
+#include <algorithm>
 #include <cmath>
 
 namespace Designer {
@@ -49,6 +50,9 @@ constexpr IntegerField barcodeIntegers[] = {
     {"dataBarSegments", &Element::dataBarSegments}, {"dataBarSeparator", &Element::dataBarSeparator},
     {"microPdf417Mode", &Element::microPdf417Mode}, {"aztecSize", &Element::aztecSize},
     {"maxiCodeMode", &Element::maxiCodeMode}, {"maxiCodePosition", &Element::maxiCodePosition}, {"maxiCodeTotal", &Element::maxiCodeTotal}
+};
+constexpr CharacterField codabarCharacters[] = {
+    {"codabarStart", &Element::codabarStart}, {"codabarStop", &Element::codabarStop}
 };
 constexpr BooleanField barcodeBooleans[] = {
     {"pdf417Truncated", &Element::pdf417Truncated}, {"dataMatrixRectangular", &Element::dataMatrixRectangular},
@@ -92,6 +96,7 @@ QByteArray encodeElements(const QList<Element>& elements)
         for (const auto& field : advancedCharacters) object[QLatin1StringView(field.name)] = QString(element.*field.member);
         for (const auto& field : barcodeIntegers) object[QLatin1StringView(field.name)] = element.*field.member;
         for (const auto& field : barcodeBooleans) object[QLatin1StringView(field.name)] = element.*field.member;
+        for (const auto& field : codabarCharacters) object[QLatin1StringView(field.name)] = QString(element.*field.member);
         object[u"locked"_s] = element.locked;
         object[u"editorVisible"_s] = element.editorVisible;
         object[u"printable"_s] = element.printable;
@@ -121,7 +126,7 @@ QByteArray encodeElements(const QList<Element>& elements)
     return result.size() <= maximumClipboard ? result : QByteArray{};
 }
 
-std::expected<QList<Element>, QString> decodeElements(const QByteArray& data)
+std::expected<QList<Element>, QString> decodeElements(const QByteArray& data, LegacyCodabar legacy)
 {
     const auto invalid = [] { return std::unexpected(u"Буфер объектов повреждён или превышает допустимые размеры."_s); };
     if (data.isEmpty() || data.size() > maximumClipboard) return invalid();
@@ -205,6 +210,15 @@ std::expected<QList<Element>, QString> decodeElements(const QByteArray& data)
             if (!property.isBool()) return invalid();
             element.*field.member = property.toBool();
         }
+        const bool legacyCodabar = std::ranges::all_of(codabarCharacters, [&](const CharacterField& field) {
+            return object.value(QLatin1StringView(field.name)).isUndefined();
+        });
+        if (legacyCodabar) element.codabarStart = element.codabarStop = u'A';
+        else for (const auto& field : codabarCharacters) {
+            const auto text = object.value(QLatin1StringView(field.name)).toString();
+            if (text.size() != 1) return invalid();
+            element.*field.member = text.front();
+        }
         for (const auto& field : {IntegerField{"pdf417Columns", &Element::pdf417Columns}, {"pdf417Security", &Element::pdf417Security}, {"pdf417RowHeight", &Element::pdf417RowHeight}}) {
             const auto number = object.value(QLatin1StringView(field.name));
             if (number.isUndefined()) continue;
@@ -242,6 +256,15 @@ std::expected<QList<Element>, QString> decodeElements(const QByteArray& data)
         element.text = object.value(u"text"_s).toString();
         element.name = object.value(u"name"_s).toString();
         if (element.text.size() > 1024 || element.name.size() > 1024) return invalid();
+        // QtZpl before 0.5.0 encoded the first and last text characters as
+        // start and stop, in any case, and showed that symbol in the preview.
+        if (legacyCodabar && legacy == LegacyCodabar::FromText && element.type == ElementType::Codabar
+            && element.text.size() >= 2 && QStringView{u"ABCD"}.contains(element.text.front().toUpper())
+            && QStringView{u"ABCD"}.contains(element.text.back().toUpper())) {
+            element.codabarStart = element.text.front().toUpper();
+            element.codabarStop = element.text.back().toUpper();
+            element.text = element.text.sliced(1, element.text.size() - 2);
+        }
         element.barcodeRatio = object.value(u"barcodeRatio"_s).toDouble();
         const auto group = object.value(u"group"_s).toString();
         element.groupId = QUuid(group);

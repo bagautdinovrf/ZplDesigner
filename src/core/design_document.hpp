@@ -52,6 +52,10 @@ struct Element {
     bool interpretationAbove = false;
     bool code128CheckDigit = false;
     QChar code128Mode = u'A';
+    // Codabar start and stop characters, written as ^BK k and l. The text
+    // holds only data characters; a printer drops A-D found there.
+    QChar codabarStart = u'A';
+    QChar codabarStop = u'A';
     QChar qrErrorCorrection = u'L';
     int pdf417Columns = 0;
     int pdf417Security = 2;

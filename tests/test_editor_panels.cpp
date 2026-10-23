@@ -27,6 +27,7 @@ private slots:
     void primarySelectionAndLayerFlagsRemainVisible();
     void diagnosticActivationRequiresAnExactLocation();
     void propertiesEmitTypedRequestsWithoutMutatingSession();
+    void codabarStartStopAreInspectorProperties();
     void mixedPropertiesKeepUnchangedValuesAbsent();
     void cachedPreviewReturnsWhenSourceDraftIsReverted();
     void sourceDiagnosticsNavigateNormalizedUnicodeText();
@@ -144,6 +145,34 @@ void EditorPanelsTests::propertiesEmitTypedRequestsWithoutMutatingSession()
     QCOMPARE(update->properties.x, std::optional<int>{42});
     QCOMPARE(session.document().elements.first().x, 12);
     QCOMPARE(session.undoStack()->count(), 0);
+}
+
+void EditorPanelsTests::codabarStartStopAreInspectorProperties()
+{
+    DocumentSession session;
+    DesignDocument document;
+    document.elements.append(makeElement(ElementType::Codabar));
+    session.reset(document);
+    ElementSelection selection;
+    selection.setIds({document.elements.first().id}, document);
+    PreviewCoordinator previews;
+    previews.setSnapshot(document, session.revision());
+    PropertiesPanel panel(&session, &previews, &selection);
+    panel.refresh();
+    auto* start = panel.findChild<QComboBox*>(QStringLiteral("codabarStart"));
+    auto* stop = panel.findChild<QComboBox*>(QStringLiteral("codabarStop"));
+    QVERIFY(start && stop);
+    QCOMPARE(start->currentData().toString(), QStringLiteral("A"));
+    QCOMPARE(stop->currentData().toString(), QStringLiteral("B"));
+    std::optional<EditOperation> request;
+    connect(&panel, &PropertiesPanel::editRequested, this,
+        [&request](EditOperation operation, const QString&) { request = std::move(operation); });
+    stop->setCurrentIndex(stop->findData(QStringLiteral("D")));
+    QVERIFY(request.has_value());
+    const auto* update = std::get_if<UpdateElementProperties>(&*request);
+    QVERIFY(update);
+    QCOMPARE(update->properties.codabarStart, std::optional<QChar>{u'A'});
+    QCOMPARE(update->properties.codabarStop, std::optional<QChar>{u'D'});
 }
 
 void EditorPanelsTests::mixedPropertiesKeepUnchangedValuesAbsent()

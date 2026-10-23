@@ -79,6 +79,8 @@ private:
     QSpinBox* blockIndent_ = nullptr;
     QComboBox* blockAlignment_ = nullptr;
     QComboBox* code128Mode_ = nullptr;
+    QComboBox* codabarStart_ = nullptr;
+    QComboBox* codabarStop_ = nullptr;
     QComboBox* barcodeType_ = nullptr;
     QComboBox* eacStyle_ = nullptr;
     QLabel* eacHint_ = nullptr;
