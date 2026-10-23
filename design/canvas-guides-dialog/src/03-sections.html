@@ -1,0 +1,82 @@
+<style>
+.v3 .w3{display:grid;grid-template-columns:204px minmax(0,1fr);min-height:456px;border-top:1px solid var(--border)}
+.v3 .snav{border-right:1px solid var(--border);padding:10px 8px;display:flex;flex-direction:column;gap:2px}
+.v3 .sitem{position:relative;display:flex;align-items:center;gap:10px;height:32px;padding:0 10px;border-radius:5px;color:var(--ink)}
+.v3 .sitem svg.ic{color:var(--muted)}
+.v3 .sitem.on{background:var(--tint);color:var(--accent);font-weight:600}
+.v3 .sitem.on svg.ic{color:var(--accent)}
+.v3 .sitem.on::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:2px;background:var(--accent)}
+.v3 .sitem .cnt{margin-left:auto;color:var(--muted);font-size:11px;font-weight:400;font-variant-numeric:tabular-nums}
+.v3 .snav-foot{margin-top:auto;padding:12px 8px 2px;border-top:1px solid var(--border);display:grid;gap:8px}
+.v3 .spage{padding:16px 20px 18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.v3 .spage-head h2{font-size:15px;font-weight:600;margin:0 0 3px;letter-spacing:-.2px}
+.v3 .card{border:1px solid var(--border);border-radius:6px;background:var(--panel)}
+.v3 .row-card{display:flex;align-items:center;gap:12px;padding:10px 14px}
+.v3 .row-card b{font-weight:600;display:block;margin-bottom:2px}
+.v3 .row-card .chk{margin-left:auto}
+.v3 .card-tools{display:flex;align-items:center;gap:6px;padding:10px 10px 10px 12px}
+.v3 .seg.small span{height:20px;padding:0 9px;font-size:11.5px}
+.v3 .table{border-width:1px 0 0;border-radius:0;--cols:46px 120px 46px minmax(0,1fr) 22px}
+.v3 .card-hint{padding:9px 12px;border-top:1px solid var(--border)}
+.v3 .chev{width:6px;height:6px;border:solid currentColor;border-width:0 1.5px 1.5px 0;transform:rotate(45deg);margin:-3px 0 0 3px}
+</style>
+  <div class="stage">
+    <div class="win v3" style="width:784px" role="dialog" aria-label="Холст и направляющие">
+      <div class="win-title"><span class="app-mark">ZPL</span><span>Холст и направляющие</span><span class="close">{{ic x}}</span></div>
+      <div class="w3">
+        <nav class="snav" aria-label="Разделы">
+          <span class="sitem">{{ic eye}}<span>Вид</span></span>
+          <span class="sitem">{{ic grid}}<span>Сетка и привязка</span><span class="cnt">1,00</span></span>
+          <span class="sitem">{{ic margin}}<span>Безопасный отступ</span><span class="cnt">2,00</span></span>
+          <span class="sitem on">{{ic guide-h}}<span>Направляющие</span><span class="cnt">6</span></span>
+          <span class="sitem">{{ic dims}}<span>Подписи выделения</span></span>
+          <div class="snav-foot">
+            <span class="hint">Единицы</span>
+            <span class="seg"><span class="on">мм</span><span>dots</span></span>
+            <span class="hint num">75,07 × 40,04 мм<br>600 × 320 dots · 203 dpi</span>
+          </div>
+        </nav>
+        <div class="spage">
+          <div class="spage-head"><h2>Направляющие</h2><div class="hint">Линии для выравнивания объектов. Видны только на холсте и не печатаются.</div></div>
+          <div class="card row-card"><div><b>Показывать направляющие</b><span class="hint">Скрытые направляющие сохраняются, но не участвуют в привязке</span></div><span class="chk on"><i></i></span></div>
+          <div class="card">
+            <div class="card-tools">
+              <button class="btn small">{{ic plus}}Добавить<span class="chev"></span></button>
+              <button class="btn small">{{ic trash}}Удалить</button>
+              <span class="spacer"></span>
+              <span class="seg small"><span class="on">Все · 6</span><span>Y · 3</span><span>X · 3</span></span>
+            </div>
+            <div class="table">
+              <div class="t-head"><span>Ось</span><span>Положение</span><span class="r">dots</span><span>До дальнего края</span><span></span></div>
+              <div class="t-row"><span class="axis">{{ic guide-h}}Y</span><span class="num">5,00 мм</span><span class="r num eq">40</span><span class="eq">35,03 мм · снизу</span><span class="del">{{ic x}}</span></div>
+              <div class="t-row sel"><span class="axis">{{ic guide-h}}Y</span><span><span class="spin small focus"><span class="val">17,52<em>мм</em></span><span class="arrows"><i></i><i></i></span></span></span><span class="r num">140</span><span class="eq">22,52 мм · снизу</span><span class="del">{{ic x}}</span></div>
+              <div class="t-row"><span class="axis">{{ic guide-h}}Y</span><span class="num">20,02 мм</span><span class="r num eq">160</span><span><span class="tag">центр</span></span><span class="del">{{ic x}}</span></div>
+              <div class="t-row"><span class="axis">{{ic guide-v}}X</span><span class="num">5,51 мм</span><span class="r num eq">44</span><span class="eq">69,57 мм · справа</span><span class="del">{{ic x}}</span></div>
+              <div class="t-row"><span class="axis">{{ic guide-v}}X</span><span class="num">27,53 мм</span><span class="r num eq">220</span><span class="eq">47,55 мм · справа</span><span class="del">{{ic x}}</span></div>
+              <div class="t-row"><span class="axis">{{ic guide-v}}X</span><span class="num">37,54 мм</span><span class="r num eq">300</span><span><span class="tag">центр</span></span><span class="del">{{ic x}}</span></div>
+            </div>
+            <div class="card-hint hint">На холсте: тяните из линейки — добавить, за этикетку — удалить, <span class="kbd">Esc</span> — отменить жест.</div>
+          </div>
+        </div>
+      </div>
+      <div class="win-foot"><button class="btn flat muted">{{ic reset}}Сбросить раздел</button><span class="spacer"></span><button class="btn">Отмена</button><button class="btn primary">Применить</button></div>
+    </div>
+  </div>
+  <section class="notes">
+    <div><h3>Что меняется</h3><ul>
+      <li>Каждая группа — свой раздел; окно не растёт, когда появляются новые настройки.</li>
+      <li>Единицы и размер этикетки закреплены под навигацией и действуют на все разделы.</li>
+      <li>Фильтр по оси и колонка «до дальнего края» — для выравнивания по правому и нижнему краю.</li>
+      <li>«Добавить ▾»: горизонтальную, вертикальную или через центр этикетки.</li>
+    </ul></div>
+    <div><h3>Компромиссы</h3><ul>
+      <li>Простые флажки видимости спрятаны за переходом между разделами.</li>
+      <li>Пять разделов на дюжину параметров — избыточно сегодня, окупается при росте.</li>
+      <li>«Сбросить раздел» и «По умолчанию для всего» нужно различать.</li>
+    </ul></div>
+    <div><h3>Реализация в Qt</h3><ul>
+      <li>Навигация — <code>QListWidget</code>, страницы — <code>QStackedWidget</code> с <code>QFormLayout</code>.</li>
+      <li>Карточки — <code>QFrame</code>, которые рисует <code>QProxyStyle</code> (новый вариант <code>designerControl=card</code>), без QSS.</li>
+      <li>Фильтр — <code>QSortFilterProxyModel</code> по оси; «до края» — вычисляемая колонка модели.</li>
+    </ul></div>
+  </section>

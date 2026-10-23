@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Холст · Разделы</title>
+<script>(function(){var t;try{t=localStorage.getItem('qtzpl-concept-theme')}catch(e){}if(t!=='dark'&&t!=='light')t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.dataset.theme=t})();</script>
+<style>
+:root{font-family:"Segoe UI",system-ui,-apple-system,Arial,sans-serif;color-scheme:light;
+  --page:#f1f3f5;--panel:#fff;--panel2:#f8f9fb;--ink:#253140;--muted:#6a7583;--border:#dce1e7;--line:#e9edf1;--ctl-border:#b3bcc7;
+  --accent:#246bdd;--accent-ink:#fff;--tint:#e9f1ff;--canvas:#e6e9ee;--grid:#aeb9c766;--shadow:#27384f12;
+  --success:#2c7961;--warning:#8b6409;--danger:#b42f2f;--control:#fff;--ruler:#fff;--ruler-ink:#7b8592;
+  --dialog-shadow:0 22px 60px #1b2a4029,0 3px 10px #1b2a401c;
+  color:var(--ink);background:var(--page)}
+:root[data-theme="dark"]{color-scheme:dark;
+  --page:#161b22;--panel:#242b34;--panel2:#20262e;--ink:#e0e6ee;--muted:#a7b3c2;--border:#3a4452;--line:#313a46;--ctl-border:#5a6676;
+  --accent:#85b1ff;--accent-ink:#0f1d33;--tint:#293d5a;--canvas:#171e27;--grid:#62718766;--shadow:#0004;
+  --success:#83cbb3;--warning:#efc96d;--danger:#ff9d9d;--control:#1d242d;--ruler:#20262e;--ruler-ink:#97a3b2;
+  --dialog-shadow:0 22px 60px #000a,0 3px 10px #0007}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--ink);font-size:13px}
+a{color:var(--accent)}
+.sprite{position:absolute;width:0;height:0;overflow:hidden}
+svg.ic{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
+.num{font-variant-numeric:tabular-nums}
+
+/* Gallery frame (outside the mock-up) */
+.page{max-width:1280px;margin:0 auto;padding:28px 32px 26px}
+.page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:20px}
+.eyebrow{font-size:11px;letter-spacing:1.6px;font-weight:600;color:var(--muted);text-transform:uppercase}
+h1{font-weight:600;font-size:27px;letter-spacing:-.7px;margin:6px 0 0}
+.head-actions{display:flex;gap:8px}
+.gallery-button{display:inline-flex;align-items:center;border:1px solid var(--border);background:var(--panel);color:var(--ink);border-radius:6px;padding:8px 13px;font:inherit;font-size:12px;text-decoration:none;cursor:pointer}
+.gallery-button:hover{background:var(--tint)}
+.variants{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.variant{display:flex;gap:11px;align-items:center;min-width:0;border:1px solid var(--border);background:var(--panel);border-radius:7px;padding:12px;color:inherit;text-decoration:none}
+.variant:hover{background:var(--tint)}
+.variant[aria-current="page"]{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);background:var(--tint)}
+.variant .vn{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.variant div{min-width:0}
+.variant strong{display:block;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.variant small{display:block;font-size:11px;margin-top:3px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.caption{display:flex;justify-content:space-between;gap:36px;align-items:center;padding:18px 1px 16px}
+.caption h2{font-size:17px;font-weight:600;letter-spacing:-.25px;margin:0 0 6px}
+.caption p{font-size:12.5px;line-height:1.55;color:var(--muted);margin:0;max-width:680px}
+.caption .tradeoff{max-width:380px;flex:none}
+.stage{position:relative;display:flex;align-items:flex-start;overflow-x:auto;border:1px solid var(--border);border-radius:10px;padding:44px 28px 48px;background-color:var(--canvas);background-image:radial-gradient(var(--grid) 1px,transparent 1.3px);background-size:16px 16px}
+.stage>*{flex:none;margin:0 auto}
+.notes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;padding:24px 2px 8px}
+.notes h3{font-size:12px;font-weight:600;margin:0 0 8px}
+.notes ul{margin:0;padding-left:17px;color:var(--muted);font-size:12.5px;line-height:1.6}
+.notes li+li{margin-top:4px}
+.notes code{font-family:Consolas,"Cascadia Mono",monospace;font-size:11.5px;color:var(--ink)}
+.foot{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:11.5px;border-top:1px solid var(--border);padding-top:14px;margin-top:20px}
+.foot nav{display:flex;gap:16px}
+.foot a{text-decoration:none}
+
+/* Native dialog chrome */
+.win{background:var(--panel2);border:1px solid var(--border);border-radius:8px;box-shadow:var(--dialog-shadow);font-size:12px;color:var(--ink);overflow:hidden;line-height:1.35}
+.win-title{height:32px;display:flex;align-items:center;gap:9px;padding-left:12px;user-select:none}
+.app-mark{font-size:8.5px;font-weight:700;letter-spacing:-.4px;color:var(--accent);border:1px solid var(--border);border-radius:3px;padding:1px 3px;background:var(--panel)}
+.win-title .close{margin-left:auto;width:46px;height:32px;display:grid;place-items:center;color:var(--muted)}
+.win-body{padding:4px 18px 14px}
+.win-foot{display:flex;align-items:center;gap:8px;padding:12px 18px;border-top:1px solid var(--border)}
+.spacer{flex:1}
+
+/* Controls drawn the way the persistent QProxyStyle paints them */
+.btn{height:28px;padding:0 14px;border:1px solid var(--border);background:var(--control);color:var(--ink);border-radius:4px;font:inherit;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600;min-width:96px}
+.btn.flat{background:transparent;border-color:transparent;color:var(--accent);padding:0 8px}
+.btn.flat.danger{color:var(--danger)}
+.btn.flat.muted{color:var(--muted)}
+.btn.small{height:24px;padding:0 9px;font-size:11.5px}
+.btn.icon{width:24px;height:24px;padding:0;border-color:transparent;background:transparent;color:var(--muted)}
+.btn.on{background:var(--tint);border-color:var(--accent);color:var(--accent)}
+.btn.focus{box-shadow:0 0 0 1px var(--accent);border-color:var(--accent)}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:5px;background:var(--control);padding:2px;gap:2px;flex:none}
+.seg span{height:22px;padding:0 11px;display:inline-flex;align-items:center;gap:5px;border-radius:3px;color:var(--muted);white-space:nowrap}
+.seg .on{background:var(--tint);color:var(--accent);font-weight:600}
+.chk{display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+.chk>i{position:relative;width:14px;height:14px;flex:none;border:1px solid var(--ctl-border);border-radius:3px;background:var(--control)}
+.chk.on>i{background:var(--accent);border-color:var(--accent)}
+.chk.on>i::after{content:"";position:absolute;left:4px;top:1px;width:3.5px;height:7.5px;border:solid var(--accent-ink);border-width:0 2px 2px 0;transform:rotate(45deg)}
+.spin,.combo,.field{display:inline-flex;align-items:stretch;height:28px;border:1px solid var(--border);border-radius:4px;background:var(--control);min-width:0}
+.spin{width:112px}
+.spin .val,.combo .val,.field .val{flex:1;display:flex;align-items:center;gap:4px;padding:0 8px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden}
+.spin em,.field em{font-style:normal;color:var(--muted)}
+.spin .arrows{display:flex;flex-direction:column;width:18px;border-left:1px solid var(--border)}
+.spin .arrows i{flex:1;display:grid;place-items:center}
+.spin .arrows i::before{content:"";border:3.5px solid transparent;border-bottom:4px solid var(--muted);margin-top:-3px}
+.spin .arrows i+i::before{border-bottom:3.5px solid transparent;border-top:4px solid var(--muted);margin:3px 0 0}
+.spin.small,.combo.small{height:24px}
+.spin.focus,.combo.focus,.field.focus{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.spin.focus .val{background:linear-gradient(var(--tint),var(--tint)) 7px 50%/calc(100% - 14px) 16px no-repeat}
+.combo{padding-right:8px;align-items:center}
+.combo .chev{width:7px;height:7px;border:solid var(--muted);border-width:0 1.5px 1.5px 0;transform:rotate(45deg) translate(-2px,-2px);flex:none}
+.field .val{color:var(--muted)}
+.kbd{display:inline-block;border:1px solid var(--border);border-bottom-width:2px;border-radius:3px;padding:0 4px;font-size:10.5px;line-height:15px;background:var(--control);color:var(--ink)}
+.badge{display:inline-flex;align-items:center;font-size:10.5px;color:var(--muted);border:1px solid var(--border);border-radius:9px;padding:0 7px;height:18px;background:var(--panel);white-space:nowrap;font-weight:400}
+.badge.accent{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);background:var(--tint)}
+.tag{font-size:10.5px;color:var(--muted);border-radius:3px;padding:0 5px;background:var(--panel2);border:1px solid var(--line);white-space:nowrap}
+.eq{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.hint{color:var(--muted);font-size:11px;line-height:1.45}
+.note{display:flex;gap:8px;align-items:flex-start;color:var(--muted);font-size:11px;line-height:1.45}
+.note svg{margin-top:1px}
+.sep{height:1px;background:var(--border);margin:0}
+
+/* Form sections */
+.sec{padding:13px 0 12px;border-top:1px solid var(--border)}
+.sec:first-child{border-top:0}
+.sec-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;min-height:20px}
+.sec-head h3{font-size:12px;font-weight:600;margin:0}
+.sec-head .aside{margin-left:auto;display:flex;align-items:center;gap:6px}
+.frow{display:grid;grid-template-columns:var(--label,108px) minmax(0,1fr);align-items:center;column-gap:12px;min-height:32px}
+.frow>.lbl{color:var(--ink)}
+.frow>.ctl{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
+.checks{display:grid;grid-template-columns:repeat(2,max-content);gap:9px 26px}
+
+/* Guide tables */
+.table{border:1px solid var(--border);border-radius:5px;background:var(--panel);overflow:hidden}
+.t-head,.t-row{display:grid;grid-template-columns:var(--cols);align-items:center;column-gap:10px;padding:0 6px 0 10px}
+.t-head{height:26px;color:var(--muted);font-size:11px;background:var(--panel2);border-bottom:1px solid var(--border)}
+.t-row{height:31px}
+.t-row+.t-row{border-top:1px solid var(--line)}
+.t-row.sel{background:var(--tint)}
+.t-row .r,.t-head .r{text-align:right;justify-self:end}
+.axis{display:inline-flex;align-items:center;gap:7px;font-weight:600}
+.axis svg{color:#246bdd}
+:root[data-theme="dark"] .axis svg{color:var(--accent)}
+.t-row .del{color:var(--muted);display:grid;place-items:center;width:22px;height:22px;border-radius:3px}
+.t-row.sel .del{color:var(--danger)}
+.t-row .spin{height:24px;width:116px;background:var(--control)}
+.t-scroll{position:relative}
+.t-scroll::after{content:"";position:absolute;right:2px;top:4px;width:4px;height:44%;border-radius:2px;background:var(--ctl-border);opacity:.7}
+
+/* Label previews (SVG, coordinates in printer dots) */
+.pv{display:block}
+.pv-bg{fill:var(--canvas)}
+.pv-paper{fill:#fff;stroke:var(--border)}
+.pv-shadow{fill:#1b2a40;opacity:.07}
+.pv-grid{stroke:#9fb0c4;stroke-opacity:.42;stroke-width:1;vector-effect:non-scaling-stroke}
+.pv-margin{fill:none;stroke:#1d56b1;stroke-width:1;stroke-dasharray:5 3;vector-effect:non-scaling-stroke}
+.pv-guide{stroke:#246bdd;stroke-width:1;stroke-dasharray:6 3;vector-effect:non-scaling-stroke}
+.pv-guide.sel{stroke-width:2;stroke-dasharray:none}
+.pv-guide.new{stroke:#2c7961;stroke-dasharray:3 3}
+.pv-tag rect{fill:#246bdd}
+.pv-tag text{fill:#fff;font-size:10.5px;font-weight:600;font-family:"Segoe UI",system-ui,sans-serif}
+.pv-ruler{fill:var(--ruler)}
+.pv-ruler-edge{stroke:var(--border);stroke-width:1}
+.pv-tick{stroke:var(--ruler-ink);stroke-width:1}
+.pv-rtext{fill:var(--ruler-ink);font-size:9px;font-family:"Segoe UI",system-ui,sans-serif;font-variant-numeric:tabular-nums}
+.pv-mark{fill:#246bdd}
+:root[data-theme="dark"] .pv-mark{fill:var(--accent)}
+.pv-fade{opacity:.4}
+
+@media (max-width:1100px){.variants{grid-template-columns:repeat(3,minmax(0,1fr))}.caption{flex-direction:column;align-items:flex-start;gap:10px}.caption .tradeoff{max-width:680px}}
+@media (max-width:760px){.page{padding:20px 16px}.page-head{flex-direction:column;align-items:flex-start}.variants{grid-template-columns:repeat(2,minmax(0,1fr))}.notes{grid-template-columns:1fr;gap:18px}.stage{padding:24px 14px}}
+
+.v3 .w3{display:grid;grid-template-columns:204px minmax(0,1fr);min-height:456px;border-top:1px solid var(--border)}
+.v3 .snav{border-right:1px solid var(--border);padding:10px 8px;display:flex;flex-direction:column;gap:2px}
+.v3 .sitem{position:relative;display:flex;align-items:center;gap:10px;height:32px;padding:0 10px;border-radius:5px;color:var(--ink)}
+.v3 .sitem svg.ic{color:var(--muted)}
+.v3 .sitem.on{background:var(--tint);color:var(--accent);font-weight:600}
+.v3 .sitem.on svg.ic{color:var(--accent)}
+.v3 .sitem.on::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:2px;background:var(--accent)}
+.v3 .sitem .cnt{margin-left:auto;color:var(--muted);font-size:11px;font-weight:400;font-variant-numeric:tabular-nums}
+.v3 .snav-foot{margin-top:auto;padding:12px 8px 2px;border-top:1px solid var(--border);display:grid;gap:8px}
+.v3 .spage{padding:16px 20px 18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.v3 .spage-head h2{font-size:15px;font-weight:600;margin:0 0 3px;letter-spacing:-.2px}
+.v3 .card{border:1px solid var(--border);border-radius:6px;background:var(--panel)}
+.v3 .row-card{display:flex;align-items:center;gap:12px;padding:10px 14px}
+.v3 .row-card b{font-weight:600;display:block;margin-bottom:2px}
+.v3 .row-card .chk{margin-left:auto}
+.v3 .card-tools{display:flex;align-items:center;gap:6px;padding:10px 10px 10px 12px}
+.v3 .seg.small span{height:20px;padding:0 9px;font-size:11.5px}
+.v3 .table{border-width:1px 0 0;border-radius:0;--cols:46px 120px 46px minmax(0,1fr) 22px}
+.v3 .card-hint{padding:9px 12px;border-top:1px solid var(--border)}
+.v3 .chev{width:6px;height:6px;border:solid currentColor;border-width:0 1.5px 1.5px 0;transform:rotate(45deg);margin:-3px 0 0 3px}
+
+</style>
+</head>
+<body>
+<svg class="sprite" aria-hidden="true"><symbol id="i-guide-h" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="1" opacity=".45"/><path d="M.8 8h14.4" stroke-dasharray="2.2 1.6"/></symbol><symbol id="i-guide-v" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="1" opacity=".45"/><path d="M8 .8v14.4" stroke-dasharray="2.2 1.6"/></symbol><symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol><symbol id="i-x" viewBox="0 0 16 16"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></symbol><symbol id="i-trash" viewBox="0 0 16 16"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.6 4.5l.6 8.5h5.6l.6-8.5"/></symbol><symbol id="i-grid" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="1"/><path d="M6.2 2.5v11M9.8 2.5v11M2.5 6.2h11M2.5 9.8h11"/></symbol><symbol id="i-ruler" viewBox="0 0 16 16"><rect x="1.5" y="5" width="13" height="6" rx="1"/><path d="M4.2 5v2.4M6.8 5v1.5M9.4 5v2.4M12 5v1.5"/></symbol><symbol id="i-magnet" viewBox="0 0 16 16"><path d="M3.5 2.5h3v5a1.5 1.5 0 0 0 3 0v-5h3v5a4.5 4.5 0 0 1-9 0z"/><path d="M3.5 5h3M9.5 5h3"/></symbol><symbol id="i-margin" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1"/><rect x="4.6" y="4.6" width="6.8" height="6.8" stroke-dasharray="1.6 1.4"/></symbol><symbol id="i-eye" viewBox="0 0 16 16"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></symbol><symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.3"/><path d="M8 7.3v4M8 4.9v.1"/></symbol><symbol id="i-reset" viewBox="0 0 16 16"><path d="M2.8 3v3.4h3.4"/><path d="M3.3 6.2A5 5 0 1 1 3.1 9.6"/></symbol><symbol id="i-center" viewBox="0 0 16 16"><path d="M8 1v14M1 8h14" stroke-dasharray="2 1.6"/><circle cx="8" cy="8" r="2.2"/></symbol><symbol id="i-columns" viewBox="0 0 16 16"><rect x="1.8" y="2.5" width="12.4" height="11" rx="1"/><path d="M6 2.5v11M10 2.5v11"/></symbol><symbol id="i-dims" viewBox="0 0 16 16"><rect x="3.5" y="2.5" width="9" height="6" rx="1"/><path d="M2 12.5h12M2 11v3M14 11v3"/></symbol><symbol id="i-more" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r=".9" fill="currentColor"/><circle cx="8" cy="8" r=".9" fill="currentColor"/><circle cx="12.5" cy="8" r=".9" fill="currentColor"/></symbol><symbol id="i-chev-down" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></symbol><symbol id="i-chev-right" viewBox="0 0 16 16"><path d="M6.5 4.5L10 8l-3.5 3.5"/></symbol><symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.3"/><path d="M10.2 10.2l3.6 3.6"/></symbol><symbol id="i-label" viewBox="0 0 16 16"><rect x="1.5" y="3.5" width="13" height="9" rx="1"/><path d="M4 6.5h5M4 9.5h3"/></symbol></svg>
+<div class="page">
+  <header class="page-head">
+    <div><div class="eyebrow">QtZpl Designer / концепции диалога</div><h1>Холст и направляющие</h1></div>
+    <div class="head-actions"><a class="gallery-button" href="index.html">Сравнение вариантов</a><button id="theme-toggle" class="gallery-button" type="button">Тёмная тема</button></div>
+  </header>
+  <nav class="variants" aria-label="Варианты диалога"><a class="variant" href="01-compact-form.html"><span class="vn">01</span><div><strong>Компактная форма</strong><small>Одна колонка, одна таблица</small></div></a><a class="variant" href="02-live-preview.html"><span class="vn">02</span><div><strong>Живое превью</strong><small>Настройки и этикетка рядом</small></div></a><a class="variant" href="03-sections.html" aria-current="page"><span class="vn">03</span><div><strong>Разделы</strong><small>Навигация слева</small></div></a><a class="variant" href="04-guides-by-axis.html"><span class="vn">04</span><div><strong>Направляющие по осям</strong><small>Две колонки + разметка</small></div></a><a class="variant" href="05-quick-panel.html"><span class="vn">05</span><div><strong>Быстрая панель</strong><small>Всплывает у «···», без «ОК»</small></div></a><a class="variant" href="06-property-grid.html"><span class="vn">06</span><div><strong>Таблица свойств</strong><small>Дерево «свойство — значение»</small></div></a></nav>
+  <section class="caption"><div><h2>Разделы — каждая группа на своей странице</h2><p>Навигация как в системных настройках: вид, сетка и привязка, отступ, направляющие, подписи выделения. Единицы закреплены под навигацией и действуют на все разделы. Таблица направляющих получает фильтр по оси и расстояние до дальнего края.</p></div><p class="tradeoff">Диалог не растёт с новыми настройками, но простые флажки спрятаны за переходами. Для дюжины параметров это пока избыточно.</p></section>
+<div class="stage">
+    <div class="win v3" style="width:784px" role="dialog" aria-label="Холст и направляющие">
+      <div class="win-title"><span class="app-mark">ZPL</span><span>Холст и направляющие</span><span class="close"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></span></div>
+      <div class="w3">
+        <nav class="snav" aria-label="Разделы">
+          <span class="sitem"><svg class="ic" aria-hidden="true"><use href="#i-eye"/></svg><span>Вид</span></span>
+          <span class="sitem"><svg class="ic" aria-hidden="true"><use href="#i-grid"/></svg><span>Сетка и привязка</span><span class="cnt">1,00</span></span>
+          <span class="sitem"><svg class="ic" aria-hidden="true"><use href="#i-margin"/></svg><span>Безопасный отступ</span><span class="cnt">2,00</span></span>
+          <span class="sitem on"><svg class="ic" aria-hidden="true"><use href="#i-guide-h"/></svg><span>Направляющие</span><span class="cnt">6</span></span>
+          <span class="sitem"><svg class="ic" aria-hidden="true"><use href="#i-dims"/></svg><span>Подписи выделения</span></span>
+          <div class="snav-foot">
+            <span class="hint">Единицы</span>
+            <span class="seg"><span class="on">мм</span><span>dots</span></span>
+            <span class="hint num">75,07 × 40,04 мм<br>600 × 320 dots · 203 dpi</span>
+          </div>
+        </nav>
+        <div class="spage">
+          <div class="spage-head"><h2>Направляющие</h2><div class="hint">Линии для выравнивания объектов. Видны только на холсте и не печатаются.</div></div>
+          <div class="card row-card"><div><b>Показывать направляющие</b><span class="hint">Скрытые направляющие сохраняются, но не участвуют в привязке</span></div><span class="chk on"><i></i></span></div>
+          <div class="card">
+            <div class="card-tools">
+              <button class="btn small"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Добавить<span class="chev"></span></button>
+              <button class="btn small"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg>Удалить</button>
+              <span class="spacer"></span>
+              <span class="seg small"><span class="on">Все · 6</span><span>Y · 3</span><span>X · 3</span></span>
+            </div>
+            <div class="table">
+              <div class="t-head"><span>Ось</span><span>Положение</span><span class="r">dots</span><span>До дальнего края</span><span></span></div>
+              <div class="t-row"><span class="axis"><svg class="ic" aria-hidden="true"><use href="#i-guide-h"/></svg>Y</span><span class="num">5,00 мм</span><span class="r num eq">40</span><span class="eq">35,03 мм · снизу</span><span class="del"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></span></div>
+              <div class="t-row sel"><span class="axis"><svg class="ic" aria-hidden="true"><use href="#i-guide-h"/></svg>Y</span><span><span class="spin small focus"><span class="val">17,52<em>мм</em></span><span class="arrows"><i></i><i></i></span></span></span><span class="r num">140</span><span class="eq">22,52 мм · снизу</span><span class="del"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></span></div>
+              <div class="t-row"><span class="axis"><svg class="ic" aria-hidden="true"><use href="#i-guide-h"/></svg>Y</span><span class="num">20,02 мм</span><span class="r num eq">160</span><span><span class="tag">центр</span></span><span class="del"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></span></div>
+              <div class="t-row"><span class="axis"><svg class="ic" aria-hidden="true"><use href="#i-guide-v"/></svg>X</span><span class="num">5,51 мм</span><span class="r num eq">44</span><span class="eq">69,57 мм · справа</span><span class="del"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></span></div>
+              <div class="t-row"><span class="axis"><svg class="ic" aria-hidden="true"><use href="#i-guide-v"/></svg>X</span><span class="num">27,53 мм</span><span class="r num eq">220</span><span class="eq">47,55 мм · справа</span><span class="del"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></span></div>
+              <div class="t-row"><span class="axis"><svg class="ic" aria-hidden="true"><use href="#i-guide-v"/></svg>X</span><span class="num">37,54 мм</span><span class="r num eq">300</span><span><span class="tag">центр</span></span><span class="del"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></span></div>
+            </div>
+            <div class="card-hint hint">На холсте: тяните из линейки — добавить, за этикетку — удалить, <span class="kbd">Esc</span> — отменить жест.</div>
+          </div>
+        </div>
+      </div>
+      <div class="win-foot"><button class="btn flat muted"><svg class="ic" aria-hidden="true"><use href="#i-reset"/></svg>Сбросить раздел</button><span class="spacer"></span><button class="btn">Отмена</button><button class="btn primary">Применить</button></div>
+    </div>
+  </div>
+  <section class="notes">
+    <div><h3>Что меняется</h3><ul>
+      <li>Каждая группа — свой раздел; окно не растёт, когда появляются новые настройки.</li>
+      <li>Единицы и размер этикетки закреплены под навигацией и действуют на все разделы.</li>
+      <li>Фильтр по оси и колонка «до дальнего края» — для выравнивания по правому и нижнему краю.</li>
+      <li>«Добавить ▾»: горизонтальную, вертикальную или через центр этикетки.</li>
+    </ul></div>
+    <div><h3>Компромиссы</h3><ul>
+      <li>Простые флажки видимости спрятаны за переходом между разделами.</li>
+      <li>Пять разделов на дюжину параметров — избыточно сегодня, окупается при росте.</li>
+      <li>«Сбросить раздел» и «По умолчанию для всего» нужно различать.</li>
+    </ul></div>
+    <div><h3>Реализация в Qt</h3><ul>
+      <li>Навигация — <code>QListWidget</code>, страницы — <code>QStackedWidget</code> с <code>QFormLayout</code>.</li>
+      <li>Карточки — <code>QFrame</code>, которые рисует <code>QProxyStyle</code> (новый вариант <code>designerControl=card</code>), без QSS.</li>
+      <li>Фильтр — <code>QSortFilterProxyModel</code> по оси; «до края» — вычисляемая колонка модели.</li>
+    </ul></div>
+  </section>
+
+  <footer class="foot"><span>Статический макет · этикетка 600 × 320 dots, 203 dpi, изображение получено через QtZpl · все значения хранятся в dots</span><nav><a href="02-live-preview.html">← Назад</a><a href="04-guides-by-axis.html">Дальше →</a></nav></footer>
+</div>
+<script>(function(){var r=document.documentElement,b=document.getElementById('theme-toggle');function sync(){b.textContent=r.dataset.theme==='dark'?'Светлая тема':'Тёмная тема'}sync();b.addEventListener('click',function(){r.dataset.theme=r.dataset.theme==='dark'?'light':'dark';try{localStorage.setItem('qtzpl-concept-theme',r.dataset.theme)}catch(e){}sync()})})();</script>
+</body>
+</html>

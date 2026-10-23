@@ -1,0 +1,84 @@
+<style>
+.v6 .win-body{padding-top:6px;display:flex;flex-direction:column;gap:10px}
+.v6 .top{display:flex;align-items:center;gap:8px}
+.v6 .top .field{flex:1;height:28px}
+.v6 .top .field svg{color:var(--muted)}
+.v6 .tree{border:1px solid var(--border);border-radius:5px;background:var(--panel);overflow:hidden}
+.v6 .tr{display:grid;grid-template-columns:214px minmax(0,1fr);height:27px}
+.v6 .tr+.tr{border-top:1px solid var(--line)}
+.v6 .tr>span{display:flex;align-items:center;gap:7px;padding:0 8px;min-width:0;white-space:nowrap}
+.v6 .tr>span:first-child{padding-left:calc(8px + var(--d,0) * 16px);border-right:1px solid var(--line)}
+.v6 .tr.th{height:24px;font-size:11px;color:var(--muted);background:var(--panel2);border-bottom:1px solid var(--border)}
+.v6 .tr.cat{background:var(--panel2);font-weight:600}
+.v6 .tr.cat>span:first-child{border-right:0}
+.v6 .tr.cat .badge{font-weight:400}
+.v6 .tw{display:inline-grid;place-items:center;width:12px;height:12px;color:var(--muted);flex:none}
+.v6 .tw svg.ic{width:12px;height:12px}
+.v6 .tw.none{visibility:hidden}
+.v6 .tr.sel{background:var(--tint)}
+.v6 .tr.sel>span:first-child{color:var(--accent);font-weight:600}
+.v6 .tr .spin{height:22px;width:118px}
+.v6 .tr .combo{height:22px;width:140px}
+.v6 .tr .end{margin-left:auto;color:var(--muted);display:grid;place-items:center}
+.v6 .tr .chk>i{width:13px;height:13px}
+.v6 .tr .chk.on>i::after{left:3.5px;top:.5px}
+.v6 .desc{border:1px solid var(--border);border-radius:5px;background:var(--panel);padding:9px 11px;min-height:70px}
+.v6 .desc b{display:block;font-weight:600;margin-bottom:3px}
+.v6 .desc p{margin:0;color:var(--muted);font-size:11.5px;line-height:1.45}
+</style>
+  <div class="stage">
+    <div class="win v6" style="width:548px" role="dialog" aria-label="Холст и направляющие">
+      <div class="win-title"><span class="app-mark">ZPL</span><span>Холст и направляющие</span><span class="close">{{ic x}}</span></div>
+      <div class="win-body">
+        <div class="top">
+          <span class="field"><span class="val">{{ic search}}Найти свойство</span></span>
+          <span class="seg"><span class="on">мм</span><span>dots</span></span>
+        </div>
+        <div class="tree" role="tree">
+          <div class="tr th"><span>Свойство</span><span>Значение</span></div>
+
+          <div class="tr cat"><span><span class="tw">{{ic chev-down}}</span>Сетка</span><span></span></div>
+          <div class="tr" style="--d:1"><span><span class="tw none"></span>Показывать</span><span><span class="chk on"><i></i></span></span></div>
+          <div class="tr" style="--d:1"><span><span class="tw none"></span>Шаг</span><span class="num">1,00 мм <span class="eq">· 8 dots</span></span></div>
+          <div class="tr" style="--d:1"><span><span class="tw none"></span>Привязка</span><span><span class="chk on"><i></i></span><span class="hint"><span class="kbd">Alt</span> — временно выкл.</span></span></div>
+
+          <div class="tr cat"><span><span class="tw">{{ic chev-down}}</span>Линейки и рамка</span><span></span></div>
+          <div class="tr" style="--d:1"><span><span class="tw none"></span>Линейки</span><span><span class="chk on"><i></i></span></span></div>
+          <div class="tr" style="--d:1"><span><span class="tw none"></span>Рамка отступа</span><span><span class="chk on"><i></i></span></span></div>
+          <div class="tr sel" style="--d:1"><span><span class="tw none"></span>Отступ</span><span><span class="spin focus"><span class="val">2,00<em>мм</em></span><span class="arrows"><i></i><i></i></span></span><span class="eq">16 dots</span></span></div>
+
+          <div class="tr cat"><span><span class="tw">{{ic chev-down}}</span>Направляющие <span class="badge">6</span></span><span></span></div>
+          <div class="tr" style="--d:1"><span><span class="tw none"></span>Показывать</span><span><span class="chk on"><i></i></span></span></div>
+          <div class="tr" style="--d:1"><span><span class="tw">{{ic chev-down}}</span>Горизонтальные · Y</span><span><span class="eq">3</span><span class="end">{{ic plus}}</span></span></div>
+          <div class="tr" style="--d:2"><span><span class="tw none"></span>Y1</span><span class="num">5,00 мм <span class="eq">· 40 dots</span><span class="end">{{ic x}}</span></span></div>
+          <div class="tr" style="--d:2"><span><span class="tw none"></span>Y2</span><span class="num">17,52 мм <span class="eq">· 140 dots</span><span class="end">{{ic x}}</span></span></div>
+          <div class="tr" style="--d:2"><span><span class="tw none"></span>Y3</span><span class="num">20,02 мм <span class="eq">· 160 dots</span>&nbsp;<span class="tag">центр</span><span class="end">{{ic x}}</span></span></div>
+          <div class="tr" style="--d:1"><span><span class="tw">{{ic chev-right}}</span>Вертикальные · X</span><span><span class="eq">3 · 5,51; 27,53; 37,54 мм</span><span class="end">{{ic plus}}</span></span></div>
+
+          <div class="tr cat"><span><span class="tw">{{ic chev-down}}</span>Подписи выделения <span class="badge">все этикетки</span></span><span></span></div>
+          <div class="tr" style="--d:1"><span><span class="tw none"></span>Размеры</span><span><span class="chk on"><i></i></span></span></div>
+          <div class="tr" style="--d:1"><span><span class="tw none"></span>Координаты</span><span><span class="chk on"><i></i></span></span></div>
+        </div>
+        <div class="desc"><b>Отступ</b><p>Расстояние от краёв этикетки до рамки безопасной зоны. На печать не влияет — нужен для привязки и контроля полей. Допустимо 0–19,89 мм (0–159 dots): меньше половины короткой стороны.</p></div>
+      </div>
+      <div class="win-foot"><button class="btn flat muted">{{ic reset}}По умолчанию</button><span class="spacer"></span><button class="btn">Отмена</button><button class="btn primary">Применить</button></div>
+    </div>
+  </div>
+  <section class="notes">
+    <div><h3>Что меняется</h3><ul>
+      <li>Все параметры — одна плотная таблица, как редактор свойств Qt Designer.</li>
+      <li>Группы сворачиваются, направляющие вложены по осям; свёрнутая ось показывает значения в строке.</li>
+      <li>Описание выбранного свойства с допустимым диапазоном вместо постоянных пояснений.</li>
+      <li>Поиск по названию свойства.</li>
+    </ul></div>
+    <div><h3>Компромиссы</h3><ul>
+      <li>Привычно разработчикам, менее очевидно остальным.</li>
+      <li>Важное и редкое выглядят одинаково — нет визуальной иерархии.</li>
+      <li>Правка через редактор в ячейке (двойной щелчок или F2) медленнее флажков.</li>
+    </ul></div>
+    <div><h3>Реализация в Qt</h3><ul>
+      <li><code>QTreeView</code> + <code>QStandardItemModel</code>; флажки — <code>Qt::CheckStateRole</code>.</li>
+      <li>Редакторы — <code>QStyledItemDelegate</code> с <code>DotSpinBox</code>; строки категорий рисует тот же делегат.</li>
+      <li>Описание — <code>QLabel</code>, обновляется по <code>currentChanged</code>; поиск — <code>QSortFilterProxyModel</code> с рекурсивной фильтрацией.</li>
+    </ul></div>
+  </section>

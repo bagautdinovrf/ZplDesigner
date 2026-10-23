@@ -1,0 +1,50 @@
+<style>
+.ix-intro{display:flex;justify-content:space-between;gap:36px;padding:18px 1px 16px}
+.ix-intro h2{font-size:17px;font-weight:600;letter-spacing:-.25px;margin:0 0 6px}
+.ix-intro p{font-size:12.5px;line-height:1.55;color:var(--muted);margin:0;max-width:680px}
+.ix-table{border:1px solid var(--border);border-radius:9px;background:var(--panel);overflow-x:auto}
+.ix-table table{width:100%;border-collapse:collapse;font-size:12.5px;min-width:860px}
+.ix-table th,.ix-table td{text-align:left;padding:11px 14px;border-top:1px solid var(--line);vertical-align:top}
+.ix-table thead th{border-top:0;font-size:11px;font-weight:600;color:var(--muted);background:var(--panel2);letter-spacing:.2px}
+.ix-table td:first-child a{font-weight:600;text-decoration:none}
+.ix-table td:first-child span{display:block;color:var(--muted);font-size:11px;margin-top:2px}
+.ix-table .num{color:var(--muted)}
+.ix-common{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;padding:24px 2px 8px}
+.ix-common h3{font-size:12px;font-weight:600;margin:0 0 8px}
+.ix-common ul{margin:0;padding-left:17px;color:var(--muted);font-size:12.5px;line-height:1.6}
+@media (max-width:760px){.ix-intro{flex-direction:column}.ix-common{grid-template-columns:1fr}}
+</style>
+  <section class="ix-intro">
+    <div><h2>Шесть вариантов одного диалога</h2>
+      <p>Сегодняшний диалог содержит всё нужное, но длинным столбцом: пояснения абзацами, направляющие — в двух вкладках с полем и тремя кнопками, общая настройка редактора смешана с настройками этикетки. Варианты ниже решают это по-разному — от аккуратной перекладки тех же виджетов до быстрой панели без модального окна.</p></div>
+  </section>
+  <div class="ix-table">
+    <table>
+      <thead><tr><th>Вариант</th><th>Окно</th><th>Превью</th><th>Направляющие</th><th>Ширина</th><th>Объём работ</th></tr></thead>
+      <tbody>
+        <tr><td><a href="01-compact-form.html">01 Компактная форма</a><span>Одна колонка, одна таблица</span></td><td>модальное</td><td>нет</td><td>общая таблица, правка в строке</td><td class="num">468 px</td><td>малый</td></tr>
+        <tr><td><a href="02-live-preview.html">02 Живое превью</a><span>Настройки и этикетка рядом</span></td><td>модальное</td><td>этикетка с ориентирами</td><td>на превью, чипы и точное поле</td><td class="num">924 px</td><td>средний</td></tr>
+        <tr><td><a href="03-sections.html">03 Разделы</a><span>Навигация слева</span></td><td>модальное</td><td>нет</td><td>таблица с фильтром по оси и «до края»</td><td class="num">784 px</td><td>средний</td></tr>
+        <tr><td><a href="04-guides-by-axis.html">04 Направляющие по осям</a><span>Две колонки + разметка</span></td><td>модальное</td><td>мини-схемы по осям</td><td>две колонки, быстрая разметка колонок и строк</td><td class="num">828 px</td><td>большой</td></tr>
+        <tr><td><a href="05-quick-panel.html">05 Быстрая панель</a><span>Всплывает у «···»</span></td><td>всплывающее, применяет сразу</td><td>сам холст</td><td>«Список…» открывает таблицу</td><td class="num">310 px</td><td>средний</td></tr>
+        <tr><td><a href="06-property-grid.html">06 Таблица свойств</a><span>Дерево «свойство — значение»</span></td><td>модальное</td><td>нет</td><td>вложенные строки по осям</td><td class="num">548 px</td><td>малый — средний</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <section class="ix-common">
+    <div><h3>Общее для всех вариантов</h3><ul>
+      <li>Значения хранятся в dots; ввод в мм округляется до целой точки, пересчёт показан рядом.</li>
+      <li>Одна короткая строка о том, что ориентиры не попадают в ZPL, превью и PNG.</li>
+      <li>«Подписи выделения» помечены как общая настройка для всех этикеток.</li>
+    </ul></div>
+    <div><h3>Новые мелочи, дешёвые в любом варианте</h3><ul>
+      <li>Метка «центр» у линии через середину этикетки.</li>
+      <li>Расстояние до противоположного края у выбранной направляющей.</li>
+      <li>«По умолчанию» и «Удалить все» для направляющих.</li>
+    </ul></div>
+    <div><h3>Что не меняется</h3><ul>
+      <li>Состав настроек <code>CanvasLayoutSettings</code>, лимит 128 направляющих, отмена через Ctrl+Z.</li>
+      <li>Жесты на холсте: вытянуть из линейки, вынести за этикетку, <span class="kbd">Esc</span>.</li>
+      <li>Только QPalette, <code>QProxyStyle</code> и делегаты — без QSS.</li>
+    </ul></div>
+  </section>

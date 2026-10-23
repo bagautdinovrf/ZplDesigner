@@ -1,0 +1,66 @@
+<style>
+.v1 .win-body{padding-top:2px}
+.v1 .sec-tail{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px}
+.v1 .table{--cols:46px minmax(0,1fr) 44px 22px}
+.v1 .note{padding-top:12px;border-top:1px solid var(--border)}
+</style>
+  <div class="stage">
+    <div class="win v1" style="width:468px" role="dialog" aria-label="Холст и направляющие">
+      <div class="win-title"><span class="app-mark">ZPL</span><span>Холст и направляющие</span><span class="close">{{ic x}}</span></div>
+      <div class="win-body">
+        <section class="sec">
+          <div class="sec-head"><h3>Вид</h3></div>
+          <div class="frow"><span class="lbl">Единицы</span><span class="ctl"><span class="seg"><span class="on">мм</span><span>dots</span></span><span class="eq">линейки и поля ниже</span></span></div>
+          <div class="frow" style="align-items:start;padding-top:8px"><span class="lbl">Показывать</span><span class="ctl"><span class="checks">
+            <span class="chk on"><i></i>Сетка</span><span class="chk on"><i></i>Линейки</span>
+            <span class="chk on"><i></i>Направляющие</span><span class="chk on"><i></i>Рамка отступа</span>
+          </span></span></div>
+        </section>
+        <section class="sec">
+          <div class="sec-head"><h3>Сетка, отступ и привязка</h3></div>
+          <div class="frow"><span class="lbl">Шаг сетки</span><span class="ctl"><span class="spin"><span class="val">1,00<em>мм</em></span><span class="arrows"><i></i><i></i></span></span><span class="eq">= 8 dots</span></span></div>
+          <div class="frow"><span class="lbl">Отступ от края</span><span class="ctl"><span class="spin"><span class="val">2,00<em>мм</em></span><span class="arrows"><i></i><i></i></span></span><span class="eq">= 16 dots</span></span></div>
+          <div class="frow"><span></span><span class="ctl"><span class="chk on"><i></i>Привязка к сетке и ориентирам</span><span class="hint"><span class="kbd">Alt</span> — временно выкл.</span></span></div>
+        </section>
+        <section class="sec">
+          <div class="sec-head"><h3>Направляющие</h3><span class="badge">6 из 128</span>
+            <span class="aside"><button class="btn small">{{ic plus}}Горизонтальная</button><button class="btn small">{{ic plus}}Вертикальная</button></span></div>
+          <div class="table">
+            <div class="t-head"><span>Ось</span><span>Положение</span><span class="r">dots</span><span></span></div>
+            <div class="t-row"><span class="axis">{{ic guide-h}}Y</span><span class="num">5,00 мм</span><span class="r num eq">40</span><span class="del">{{ic x}}</span></div>
+            <div class="t-row sel"><span class="axis">{{ic guide-h}}Y</span><span><span class="spin small focus"><span class="val">17,52<em>мм</em></span><span class="arrows"><i></i><i></i></span></span></span><span class="r num">140</span><span class="del">{{ic x}}</span></div>
+            <div class="t-row"><span class="axis">{{ic guide-h}}Y</span><span class="num">20,02 мм&nbsp; <span class="tag">центр</span></span><span class="r num eq">160</span><span class="del">{{ic x}}</span></div>
+            <div class="t-row"><span class="axis">{{ic guide-v}}X</span><span class="num">5,51 мм</span><span class="r num eq">44</span><span class="del">{{ic x}}</span></div>
+            <div class="t-row"><span class="axis">{{ic guide-v}}X</span><span class="num">27,53 мм</span><span class="r num eq">220</span><span class="del">{{ic x}}</span></div>
+            <div class="t-row"><span class="axis">{{ic guide-v}}X</span><span class="num">37,54 мм&nbsp; <span class="tag">центр</span></span><span class="r num eq">300</span><span class="del">{{ic x}}</span></div>
+          </div>
+          <div class="sec-tail"><span class="hint">На холсте: тяните из линейки — добавить, за этикетку — удалить.</span><button class="btn flat small danger">Удалить все</button></div>
+        </section>
+        <section class="sec">
+          <div class="sec-head"><h3>Подписи выделения</h3><span class="badge">для всех этикеток</span></div>
+          <div class="frow"><span class="lbl">Показывать</span><span class="ctl"><span class="chk on"><i></i>Размеры</span><span class="chk on"><i></i>Координаты</span></span></div>
+        </section>
+        <div class="note">{{ic info}}<span>Ориентиры видны только в редакторе — в ZPL, превью и PNG их нет. Хранятся вместе с локальным макетом этикетки, Ctrl+Z отменяет изменения.</span></div>
+      </div>
+      <div class="win-foot"><button class="btn flat muted">{{ic reset}}По умолчанию</button><span class="spacer"></span><button class="btn">Отмена</button><button class="btn primary">Применить</button></div>
+    </div>
+  </div>
+  <section class="notes">
+    <div><h3>Что меняется</h3><ul>
+      <li>Одна таблица вместо вкладок «Горизонтальные / Вертикальные»: ось — колонка, сортировка по оси и положению.</li>
+      <li>Значение правится прямо в строке — без отдельного поля и кнопок «Изменить» и «Удалить».</li>
+      <li>Пересчёт мм ↔ dots рядом с каждым полем вместо итоговой строки внизу.</li>
+      <li>Линии через середину этикетки помечены «центр».</li>
+      <li>Подписи выделения явно помечены как общая настройка редактора.</li>
+    </ul></div>
+    <div><h3>Компромиссы</h3><ul>
+      <li>Без превью: положение направляющей видно только числом.</li>
+      <li>Высота окна растёт с числом строк; после 8 направляющих таблица прокручивается.</li>
+      <li>Кнопка «По умолчанию» сбрасывает и направляющие — нужна понятная подсказка.</li>
+    </ul></div>
+    <div><h3>Реализация в Qt</h3><ul>
+      <li>Секции — <code>QFormLayout</code> с разделителями <code>QFrame::HLine</code>; единицы — две checkable <code>QToolButton</code> в <code>QButtonGroup</code> (<code>designerControl=segment</code>).</li>
+      <li>Таблица — <code>QTableView</code> над моделью направляющих; делегат с <code>DotSpinBox</code>, значения в dots.</li>
+      <li>«По умолчанию» — <code>QDialogButtonBox::RestoreDefaults</code> → <code>CanvasLayoutSettings{}</code>.</li>
+    </ul></div>
+  </section>

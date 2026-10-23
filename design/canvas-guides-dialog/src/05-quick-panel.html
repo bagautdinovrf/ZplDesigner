@@ -1,0 +1,69 @@
+<style>
+.v5 .app{position:relative;width:968px;border:1px solid var(--border);border-radius:9px;background:var(--panel);box-shadow:0 8px 30px var(--shadow);font-size:12px}
+.v5 .app-top{height:40px;display:flex;align-items:center;gap:6px;padding:0 10px 0 14px;border-bottom:1px solid var(--border);border-radius:9px 9px 0 0}
+.v5 .app-top .ttl{color:var(--muted);margin-right:auto}
+.v5 .app-top .btn{height:26px;padding:0 10px}
+.v5 .app-top .btn.more{width:30px;padding:0}
+.v5 .canvas{height:396px;padding:24px 0 0 28px;background-color:var(--canvas);background-image:radial-gradient(var(--grid) 1px,transparent 1.3px);background-size:16px 16px}
+.v5 .app-status{height:36px;display:flex;align-items:center;gap:10px;padding:0 12px;border-top:1px solid var(--border);color:var(--muted);border-radius:0 0 9px 9px}
+.v5 .app-status .combo{height:24px}
+.v5 .pop{position:absolute;top:46px;right:8px;width:310px;background:var(--panel);border:1px solid var(--border);border-radius:8px;box-shadow:var(--dialog-shadow)}
+.v5 .pop::before{content:"";position:absolute;top:-6px;right:16px;width:10px;height:10px;background:var(--panel);border-left:1px solid var(--border);border-top:1px solid var(--border);transform:rotate(45deg)}
+.v5 .pop-head{display:flex;align-items:center;gap:8px;padding:12px 12px 8px}
+.v5 .pop-head b{font-size:13px;font-weight:600}
+.v5 .pop-head .seg{margin-left:auto}
+.v5 .pop-row{display:flex;align-items:center;gap:8px;min-height:34px;padding:0 12px}
+.v5 .pop-row .chk{min-width:0}
+.v5 .pop-row .aside{margin-left:auto;display:flex;align-items:center;gap:6px}
+.v5 .pop-row .spin{width:98px;height:24px}
+.v5 .pop-row.pair{gap:22px}
+.v5 .pop-sub{display:flex;align-items:center;gap:6px;padding:10px 12px 0;font-size:11px;color:var(--muted)}
+.v5 .pop .sep{margin:6px 0 0}
+.v5 .pop-actions{display:flex;align-items:center;gap:6px;padding:10px 12px}
+.v5 .pop-foot{padding:9px 12px;border-top:1px solid var(--border);background:var(--panel2);border-radius:0 0 8px 8px}
+</style>
+  <div class="stage">
+    <div class="app v5" aria-label="Фрагмент окна редактора">
+      <div class="app-top">
+        <span class="ttl">Холст</span>
+        <button class="btn small on">{{ic grid}}Сетка</button>
+        <button class="btn small on">{{ic magnet}}Привязка</button>
+        <button class="btn small on more" aria-expanded="true" title="Холст и направляющие">{{ic more}}</button>
+      </div>
+      <div class="canvas">{{preview scale=0.86 bg=0 label=Холст_с_направляющими}}</div>
+      <div class="app-status"><span>Название</span><span class="spacer"></span><span>Масштаб</span><span class="combo"><span class="val">Вписать</span><span class="chev"></span></span></div>
+
+      <div class="pop" role="dialog" aria-label="Холст и направляющие">
+        <div class="pop-head"><b>Холст и направляющие</b><span class="seg"><span class="on">мм</span><span>dots</span></span></div>
+        <div class="pop-row"><span class="chk on"><i></i>Сетка</span><span class="aside"><span class="eq">шаг</span><span class="spin"><span class="val">1,00<em>мм</em></span><span class="arrows"><i></i><i></i></span></span></span></div>
+        <div class="pop-row"><span class="chk on"><i></i>Привязка</span><span class="aside hint"><span class="kbd">Alt</span> — временно выкл.</span></div>
+        <div class="pop-row"><span class="chk on"><i></i>Рамка отступа</span><span class="aside"><span class="spin focus"><span class="val">2,00<em>мм</em></span><span class="arrows"><i></i><i></i></span></span></span></div>
+        <div class="pop-row"><span class="chk on"><i></i>Линейки</span></div>
+        <div class="pop-row"><span class="chk on"><i></i>Направляющие</span><span class="aside"><span class="badge">6</span><button class="btn small">Список…</button></span></div>
+        <div class="sep"></div>
+        <div class="pop-sub">Подписи выделения <span class="badge">все этикетки</span></div>
+        <div class="pop-row pair"><span class="chk on"><i></i>Размеры</span><span class="chk on"><i></i>Координаты</span></div>
+        <div class="sep"></div>
+        <div class="pop-actions"><button class="btn small flat muted">{{ic reset}}По умолчанию</button><span class="spacer"></span><button class="btn small flat danger">{{ic trash}}Убрать направляющие</button></div>
+        <div class="pop-foot hint">Применяется сразу. Ctrl+Z отменяет всё, что изменено в панели, одним шагом.</div>
+      </div>
+    </div>
+  </div>
+  <section class="notes">
+    <div><h3>Что меняется</h3><ul>
+      <li>Вместо модального окна — панель у кнопки «···» над холстом; результат сразу виден на этикетке.</li>
+      <li>Частые действия — один щелчок: видимость, шаг, отступ, привязка.</li>
+      <li>«Список…» открывает отдельное окно с таблицей направляющих (как в варианте 01).</li>
+      <li>Закрывается щелчком мимо панели или <span class="kbd">Esc</span>.</li>
+    </ul></div>
+    <div><h3>Компромиссы</h3><ul>
+      <li>Нет «Отмены»: откат только через Ctrl+Z.</li>
+      <li>Правки одного открытия панели нужно склеивать в один шаг истории, иначе шаг сетки «прокрутками» засорит её.</li>
+      <li>Пояснения — только в подсказках, места мало.</li>
+    </ul></div>
+    <div><h3>Реализация в Qt</h3><ul>
+      <li>Панель — <code>QFrame</code> с <code>Qt::Popup</code>, позиция от <code>QToolButton</code> «···».</li>
+      <li>Изменения — через <code>DocumentSession::setLayoutSettings</code>; одна команда с ключом слияния на всё открытие панели.</li>
+      <li>Подписи выделения пишутся в настройки рабочего места сразу, вне истории этикетки.</li>
+    </ul></div>
+  </section>

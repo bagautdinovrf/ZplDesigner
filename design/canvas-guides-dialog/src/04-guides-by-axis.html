@@ -1,0 +1,110 @@
+<style>
+.v4 .win-body{padding-top:6px}
+.v4 .bar{border:1px solid var(--border);border-radius:6px;background:var(--panel);padding:4px 12px}
+.v4 .bar .line{display:flex;align-items:center;gap:14px;min-height:36px;flex-wrap:wrap}
+.v4 .bar .line+.line{border-top:1px solid var(--line)}
+.v4 .bar .lbl{color:var(--muted);width:118px;flex:none}
+.v4 .bar .spin{width:100px}
+.v4 .axes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}
+.v4 .card{border:1px solid var(--border);border-radius:6px;background:var(--panel);display:flex;flex-direction:column;min-width:0}
+.v4 .card-head{display:flex;align-items:center;gap:8px;padding:10px 10px 6px 12px}
+.v4 .card-head h3{font-size:12px;font-weight:600;margin:0}
+.v4 .card-head .aside{margin-left:auto}
+.v4 .mini{display:flex;justify-content:center;padding:6px 12px 12px}
+.v4 .vals{border-top:1px solid var(--border)}
+.v4 .vrow{display:grid;grid-template-columns:118px minmax(0,1fr) 22px;align-items:center;column-gap:10px;height:33px;padding:0 6px 0 12px}
+.v4 .vrow+.vrow{border-top:1px solid var(--line)}
+.v4 .vrow.sel{background:var(--tint)}
+.v4 .vrow .spin{width:112px;height:24px}
+.v4 .vrow .del{color:var(--muted);display:grid;place-items:center}
+.v4 .vrow.sel .del{color:var(--danger)}
+.v4 .add-row{display:flex;gap:8px;align-items:center;padding:8px 12px;border-top:1px solid var(--border);background:var(--panel2);border-radius:0 0 6px 6px}
+.v4 .add-row .spin{width:112px;height:24px}
+.v4 .quick{margin-top:12px}
+.v4 .quick-body{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;padding:2px 12px 12px;align-items:center}
+.v4 .qrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-height:34px}
+.v4 .qrow+.qrow{border-top:1px solid var(--line)}
+.v4 .qrow .lbl{color:var(--muted)}
+.v4 .qrow .spin{width:64px;height:24px}
+.v4 .qrow .spin.wide{width:96px}
+.v4 .qmini{display:grid;justify-items:center;gap:4px}
+.v4 .legend{display:inline-flex;align-items:center;gap:5px}
+.v4 .legend i{width:14px;border-top:2px dashed #2c7961}
+</style>
+  <div class="stage">
+    <div class="win v4" style="width:828px" role="dialog" aria-label="Холст и направляющие">
+      <div class="win-title"><span class="app-mark">ZPL</span><span>Холст и направляющие</span><span class="close">{{ic x}}</span></div>
+      <div class="win-body">
+        <div class="bar">
+          <div class="line"><span class="lbl">Показывать</span>
+            <span class="chk on"><i></i>Сетка</span><span class="chk on"><i></i>Линейки</span><span class="chk on"><i></i>Направляющие</span><span class="chk on"><i></i>Рамка отступа</span>
+            <span class="spacer"></span><span class="seg"><span class="on">мм</span><span>dots</span></span></div>
+          <div class="line"><span class="lbl">Шаг сетки</span>
+            <span class="spin"><span class="val">1,00<em>мм</em></span><span class="arrows"><i></i><i></i></span></span><span class="eq">8 dots</span>
+            <span style="margin-left:8px">Отступ</span><span class="spin"><span class="val">2,00<em>мм</em></span><span class="arrows"><i></i><i></i></span></span><span class="eq">16 dots</span>
+            <span class="spacer"></span><span class="chk on"><i></i>Привязка</span><span class="hint"><span class="kbd">Alt</span> — выкл.</span></div>
+          <div class="line"><span class="lbl">Подписи выделения</span>
+            <span class="chk on"><i></i>Размеры</span><span class="chk on"><i></i>Координаты</span><span class="spacer"></span><span class="badge">для всех этикеток</span></div>
+        </div>
+
+        <div class="axes">
+          <section class="card">
+            <div class="card-head"><span class="axis">{{ic guide-h}}</span><h3>Горизонтальные</h3><span class="badge">Y · 3</span>
+              <span class="aside"><button class="btn small flat danger">Удалить все</button></span></div>
+            <div class="mini">{{mini axis=h scale=0.5 sel=h140 label=Горизонтальные}}</div>
+            <div class="vals">
+              <div class="vrow"><span class="num">5,00 мм</span><span class="eq">40 dots</span><span class="del">{{ic x}}</span></div>
+              <div class="vrow sel"><span class="spin focus"><span class="val">17,52<em>мм</em></span><span class="arrows"><i></i><i></i></span></span><span class="eq">140 dots · до низа 22,52 мм</span><span class="del">{{ic x}}</span></div>
+              <div class="vrow"><span class="num">20,02 мм</span><span class="eq">160 dots&nbsp; <span class="tag">центр</span></span><span class="del">{{ic x}}</span></div>
+            </div>
+            <div class="add-row"><span>Y</span><span class="spin"><span class="val">0,00<em>мм</em></span><span class="arrows"><i></i><i></i></span></span><button class="btn small">{{ic plus}}Добавить</button></div>
+          </section>
+          <section class="card">
+            <div class="card-head"><span class="axis">{{ic guide-v}}</span><h3>Вертикальные</h3><span class="badge">X · 3</span>
+              <span class="aside"><button class="btn small flat danger">Удалить все</button></span></div>
+            <div class="mini">{{mini axis=v scale=0.5 label=Вертикальные}}</div>
+            <div class="vals">
+              <div class="vrow"><span class="num">5,51 мм</span><span class="eq">44 dots</span><span class="del">{{ic x}}</span></div>
+              <div class="vrow"><span class="num">27,53 мм</span><span class="eq">220 dots</span><span class="del">{{ic x}}</span></div>
+              <div class="vrow"><span class="num">37,54 мм</span><span class="eq">300 dots&nbsp; <span class="tag">центр</span></span><span class="del">{{ic x}}</span></div>
+            </div>
+            <div class="add-row"><span>X</span><span class="spin"><span class="val">0,00<em>мм</em></span><span class="arrows"><i></i><i></i></span></span><button class="btn small">{{ic plus}}Добавить</button></div>
+          </section>
+        </div>
+
+        <section class="card quick">
+          <div class="card-head"><h3>Быстрая разметка</h3><span class="badge accent">новое</span><span class="hint">&nbsp;добавляет к существующим, повторы не создаются</span></div>
+          <div class="quick-body">
+            <div>
+              <div class="qrow"><button class="btn small">{{ic center}}Центр по X</button><button class="btn small">{{ic center}}Центр по Y</button><button class="btn small">{{ic margin}}По рамке отступа</button></div>
+              <div class="qrow"><span class="lbl">Колонки</span><span class="spin"><span class="val">3</span><span class="arrows"><i></i><i></i></span></span>
+                <span class="lbl">Строки</span><span class="spin"><span class="val">2</span><span class="arrows"><i></i><i></i></span></span>
+                <span class="lbl">Промежуток</span><span class="spin wide"><span class="val">2,00<em>мм</em></span><span class="arrows"><i></i><i></i></span></span>
+                <span class="lbl">внутри</span><span class="combo small"><span class="val">рамки отступа</span><span class="chev"></span></span></div>
+            </div>
+            <div class="qmini">{{mini axis=hv scale=0.22 new=v16,v195,v211,v389,v405,v584,h16,h152,h168,h304 label=Будущая_разметка}}
+              <button class="btn small">{{ic columns}}Добавить 10</button></div>
+          </div>
+        </section>
+      </div>
+      <div class="win-foot"><button class="btn flat muted">{{ic reset}}По умолчанию</button><span class="spacer"></span><span class="hint">Ориентиры не попадают в ZPL, превью и PNG</span><button class="btn" style="margin-left:12px">Отмена</button><button class="btn primary">Применить</button></div>
+    </div>
+  </div>
+  <section class="notes">
+    <div><h3>Что меняется</h3><ul>
+      <li>Направляющие — главное содержимое: оси в двух колонках, у каждой мини-схема этикетки.</li>
+      <li>Общие настройки сжаты в три строки сверху.</li>
+      <li>Быстрая разметка: центр, линии по рамке отступа, колонки и строки — одна операция в истории.</li>
+      <li>Зелёным на схеме показано, что добавит «Добавить 10» (значения округлены до целых dots).</li>
+    </ul></div>
+    <div><h3>Компромиссы</h3><ul>
+      <li>Разметка — новая функциональность: тесты на округление, дубликаты и лимит 128.</li>
+      <li>Самый объёмный вариант по коду и по высоте окна (~780 px).</li>
+      <li>Вертикальная колонка часто будет пустой у простых этикеток.</li>
+    </ul></div>
+    <div><h3>Реализация в Qt</h3><ul>
+      <li>Две <code>QListView</code> с общим делегатом на <code>DotSpinBox</code>; мини-схемы — <code>QWidget</code> с <code>QPainter</code>.</li>
+      <li>Генератор разметки — чистая функция в <code>designer_core</code>: размер, отступ, колонки, строки, промежуток → <code>QList&lt;int&gt;</code> в dots.</li>
+      <li>Применение — одна команда <code>DocumentSession</code>, отменяется одним Ctrl+Z.</li>
+    </ul></div>
+  </section>

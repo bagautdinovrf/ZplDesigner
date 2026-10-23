@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Холст · Направляющие по осям</title>
+<script>(function(){var t;try{t=localStorage.getItem('qtzpl-concept-theme')}catch(e){}if(t!=='dark'&&t!=='light')t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.dataset.theme=t})();</script>
+<style>
+:root{font-family:"Segoe UI",system-ui,-apple-system,Arial,sans-serif;color-scheme:light;
+  --page:#f1f3f5;--panel:#fff;--panel2:#f8f9fb;--ink:#253140;--muted:#6a7583;--border:#dce1e7;--line:#e9edf1;--ctl-border:#b3bcc7;
+  --accent:#246bdd;--accent-ink:#fff;--tint:#e9f1ff;--canvas:#e6e9ee;--grid:#aeb9c766;--shadow:#27384f12;
+  --success:#2c7961;--warning:#8b6409;--danger:#b42f2f;--control:#fff;--ruler:#fff;--ruler-ink:#7b8592;
+  --dialog-shadow:0 22px 60px #1b2a4029,0 3px 10px #1b2a401c;
+  color:var(--ink);background:var(--page)}
+:root[data-theme="dark"]{color-scheme:dark;
+  --page:#161b22;--panel:#242b34;--panel2:#20262e;--ink:#e0e6ee;--muted:#a7b3c2;--border:#3a4452;--line:#313a46;--ctl-border:#5a6676;
+  --accent:#85b1ff;--accent-ink:#0f1d33;--tint:#293d5a;--canvas:#171e27;--grid:#62718766;--shadow:#0004;
+  --success:#83cbb3;--warning:#efc96d;--danger:#ff9d9d;--control:#1d242d;--ruler:#20262e;--ruler-ink:#97a3b2;
+  --dialog-shadow:0 22px 60px #000a,0 3px 10px #0007}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--ink);font-size:13px}
+a{color:var(--accent)}
+.sprite{position:absolute;width:0;height:0;overflow:hidden}
+svg.ic{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
+.num{font-variant-numeric:tabular-nums}
+
+/* Gallery frame (outside the mock-up) */
+.page{max-width:1280px;margin:0 auto;padding:28px 32px 26px}
+.page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:20px}
+.eyebrow{font-size:11px;letter-spacing:1.6px;font-weight:600;color:var(--muted);text-transform:uppercase}
+h1{font-weight:600;font-size:27px;letter-spacing:-.7px;margin:6px 0 0}
+.head-actions{display:flex;gap:8px}
+.gallery-button{display:inline-flex;align-items:center;border:1px solid var(--border);background:var(--panel);color:var(--ink);border-radius:6px;padding:8px 13px;font:inherit;font-size:12px;text-decoration:none;cursor:pointer}
+.gallery-button:hover{background:var(--tint)}
+.variants{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.variant{display:flex;gap:11px;align-items:center;min-width:0;border:1px solid var(--border);background:var(--panel);border-radius:7px;padding:12px;color:inherit;text-decoration:none}
+.variant:hover{background:var(--tint)}
+.variant[aria-current="page"]{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);background:var(--tint)}
+.variant .vn{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.variant div{min-width:0}
+.variant strong{display:block;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.variant small{display:block;font-size:11px;margin-top:3px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.caption{display:flex;justify-content:space-between;gap:36px;align-items:center;padding:18px 1px 16px}
+.caption h2{font-size:17px;font-weight:600;letter-spacing:-.25px;margin:0 0 6px}
+.caption p{font-size:12.5px;line-height:1.55;color:var(--muted);margin:0;max-width:680px}
+.caption .tradeoff{max-width:380px;flex:none}
+.stage{position:relative;display:flex;align-items:flex-start;overflow-x:auto;border:1px solid var(--border);border-radius:10px;padding:44px 28px 48px;background-color:var(--canvas);background-image:radial-gradient(var(--grid) 1px,transparent 1.3px);background-size:16px 16px}
+.stage>*{flex:none;margin:0 auto}
+.notes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;padding:24px 2px 8px}
+.notes h3{font-size:12px;font-weight:600;margin:0 0 8px}
+.notes ul{margin:0;padding-left:17px;color:var(--muted);font-size:12.5px;line-height:1.6}
+.notes li+li{margin-top:4px}
+.notes code{font-family:Consolas,"Cascadia Mono",monospace;font-size:11.5px;color:var(--ink)}
+.foot{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:11.5px;border-top:1px solid var(--border);padding-top:14px;margin-top:20px}
+.foot nav{display:flex;gap:16px}
+.foot a{text-decoration:none}
+
+/* Native dialog chrome */
+.win{background:var(--panel2);border:1px solid var(--border);border-radius:8px;box-shadow:var(--dialog-shadow);font-size:12px;color:var(--ink);overflow:hidden;line-height:1.35}
+.win-title{height:32px;display:flex;align-items:center;gap:9px;padding-left:12px;user-select:none}
+.app-mark{font-size:8.5px;font-weight:700;letter-spacing:-.4px;color:var(--accent);border:1px solid var(--border);border-radius:3px;padding:1px 3px;background:var(--panel)}
+.win-title .close{margin-left:auto;width:46px;height:32px;display:grid;place-items:center;color:var(--muted)}
+.win-body{padding:4px 18px 14px}
+.win-foot{display:flex;align-items:center;gap:8px;padding:12px 18px;border-top:1px solid var(--border)}
+.spacer{flex:1}
+
+/* Controls drawn the way the persistent QProxyStyle paints them */
+.btn{height:28px;padding:0 14px;border:1px solid var(--border);background:var(--control);color:var(--ink);border-radius:4px;font:inherit;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600;min-width:96px}
+.btn.flat{background:transparent;border-color:transparent;color:var(--accent);padding:0 8px}
+.btn.flat.danger{color:var(--danger)}
+.btn.flat.muted{color:var(--muted)}
+.btn.small{height:24px;padding:0 9px;font-size:11.5px}
+.btn.icon{width:24px;height:24px;padding:0;border-color:transparent;background:transparent;color:var(--muted)}
+.btn.on{background:var(--tint);border-color:var(--accent);color:var(--accent)}
+.btn.focus{box-shadow:0 0 0 1px var(--accent);border-color:var(--accent)}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:5px;background:var(--control);padding:2px;gap:2px;flex:none}
+.seg span{height:22px;padding:0 11px;display:inline-flex;align-items:center;gap:5px;border-radius:3px;color:var(--muted);white-space:nowrap}
+.seg .on{background:var(--tint);color:var(--accent);font-weight:600}
+.chk{display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+.chk>i{position:relative;width:14px;height:14px;flex:none;border:1px solid var(--ctl-border);border-radius:3px;background:var(--control)}
+.chk.on>i{background:var(--accent);border-color:var(--accent)}
+.chk.on>i::after{content:"";position:absolute;left:4px;top:1px;width:3.5px;height:7.5px;border:solid var(--accent-ink);border-width:0 2px 2px 0;transform:rotate(45deg)}
+.spin,.combo,.field{display:inline-flex;align-items:stretch;height:28px;border:1px solid var(--border);border-radius:4px;background:var(--control);min-width:0}
+.spin{width:112px}
+.spin .val,.combo .val,.field .val{flex:1;display:flex;align-items:center;gap:4px;padding:0 8px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden}
+.spin em,.field em{font-style:normal;color:var(--muted)}
+.spin .arrows{display:flex;flex-direction:column;width:18px;border-left:1px solid var(--border)}
+.spin .arrows i{flex:1;display:grid;place-items:center}
+.spin .arrows i::before{content:"";border:3.5px solid transparent;border-bottom:4px solid var(--muted);margin-top:-3px}
+.spin .arrows i+i::before{border-bottom:3.5px solid transparent;border-top:4px solid var(--muted);margin:3px 0 0}
+.spin.small,.combo.small{height:24px}
+.spin.focus,.combo.focus,.field.focus{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.spin.focus .val{background:linear-gradient(var(--tint),var(--tint)) 7px 50%/calc(100% - 14px) 16px no-repeat}
+.combo{padding-right:8px;align-items:center}
+.combo .chev{width:7px;height:7px;border:solid var(--muted);border-width:0 1.5px 1.5px 0;transform:rotate(45deg) translate(-2px,-2px);flex:none}
+.field .val{color:var(--muted)}
+.kbd{display:inline-block;border:1px solid var(--border);border-bottom-width:2px;border-radius:3px;padding:0 4px;font-size:10.5px;line-height:15px;background:var(--control);color:var(--ink)}
+.badge{display:inline-flex;align-items:center;font-size:10.5px;color:var(--muted);border:1px solid var(--border);border-radius:9px;padding:0 7px;height:18px;background:var(--panel);white-space:nowrap;font-weight:400}
+.badge.accent{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);background:var(--tint)}
+.tag{font-size:10.5px;color:var(--muted);border-radius:3px;padding:0 5px;background:var(--panel2);border:1px solid var(--line);white-space:nowrap}
+.eq{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.hint{color:var(--muted);font-size:11px;line-height:1.45}
+.note{display:flex;gap:8px;align-items:flex-start;color:var(--muted);font-size:11px;line-height:1.45}
+.note svg{margin-top:1px}
+.sep{height:1px;background:var(--border);margin:0}
+
+/* Form sections */
+.sec{padding:13px 0 12px;border-top:1px solid var(--border)}
+.sec:first-child{border-top:0}
+.sec-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;min-height:20px}
+.sec-head h3{font-size:12px;font-weight:600;margin:0}
+.sec-head .aside{margin-left:auto;display:flex;align-items:center;gap:6px}
+.frow{display:grid;grid-template-columns:var(--label,108px) minmax(0,1fr);align-items:center;column-gap:12px;min-height:32px}
+.frow>.lbl{color:var(--ink)}
+.frow>.ctl{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
+.checks{display:grid;grid-template-columns:repeat(2,max-content);gap:9px 26px}
+
+/* Guide tables */
+.table{border:1px solid var(--border);border-radius:5px;background:var(--panel);overflow:hidden}
+.t-head,.t-row{display:grid;grid-template-columns:var(--cols);align-items:center;column-gap:10px;padding:0 6px 0 10px}
+.t-head{height:26px;color:var(--muted);font-size:11px;background:var(--panel2);border-bottom:1px solid var(--border)}
+.t-row{height:31px}
+.t-row+.t-row{border-top:1px solid var(--line)}
+.t-row.sel{background:var(--tint)}
+.t-row .r,.t-head .r{text-align:right;justify-self:end}
+.axis{display:inline-flex;align-items:center;gap:7px;font-weight:600}
+.axis svg{color:#246bdd}
+:root[data-theme="dark"] .axis svg{color:var(--accent)}
+.t-row .del{color:var(--muted);display:grid;place-items:center;width:22px;height:22px;border-radius:3px}
+.t-row.sel .del{color:var(--danger)}
+.t-row .spin{height:24px;width:116px;background:var(--control)}
+.t-scroll{position:relative}
+.t-scroll::after{content:"";position:absolute;right:2px;top:4px;width:4px;height:44%;border-radius:2px;background:var(--ctl-border);opacity:.7}
+
+/* Label previews (SVG, coordinates in printer dots) */
+.pv{display:block}
+.pv-bg{fill:var(--canvas)}
+.pv-paper{fill:#fff;stroke:var(--border)}
+.pv-shadow{fill:#1b2a40;opacity:.07}
+.pv-grid{stroke:#9fb0c4;stroke-opacity:.42;stroke-width:1;vector-effect:non-scaling-stroke}
+.pv-margin{fill:none;stroke:#1d56b1;stroke-width:1;stroke-dasharray:5 3;vector-effect:non-scaling-stroke}
+.pv-guide{stroke:#246bdd;stroke-width:1;stroke-dasharray:6 3;vector-effect:non-scaling-stroke}
+.pv-guide.sel{stroke-width:2;stroke-dasharray:none}
+.pv-guide.new{stroke:#2c7961;stroke-dasharray:3 3}
+.pv-tag rect{fill:#246bdd}
+.pv-tag text{fill:#fff;font-size:10.5px;font-weight:600;font-family:"Segoe UI",system-ui,sans-serif}
+.pv-ruler{fill:var(--ruler)}
+.pv-ruler-edge{stroke:var(--border);stroke-width:1}
+.pv-tick{stroke:var(--ruler-ink);stroke-width:1}
+.pv-rtext{fill:var(--ruler-ink);font-size:9px;font-family:"Segoe UI",system-ui,sans-serif;font-variant-numeric:tabular-nums}
+.pv-mark{fill:#246bdd}
+:root[data-theme="dark"] .pv-mark{fill:var(--accent)}
+.pv-fade{opacity:.4}
+
+@media (max-width:1100px){.variants{grid-template-columns:repeat(3,minmax(0,1fr))}.caption{flex-direction:column;align-items:flex-start;gap:10px}.caption .tradeoff{max-width:680px}}
+@media (max-width:760px){.page{padding:20px 16px}.page-head{flex-direction:column;align-items:flex-start}.variants{grid-template-columns:repeat(2,minmax(0,1fr))}.notes{grid-template-columns:1fr;gap:18px}.stage{padding:24px 14px}}
+
+.v4 .win-body{padding-top:6px}
+.v4 .bar{border:1px solid var(--border);border-radius:6px;background:var(--panel);padding:4px 12px}
+.v4 .bar .line{display:flex;align-items:center;gap:14px;min-height:36px;flex-wrap:wrap}
+.v4 .bar .line+.line{border-top:1px solid var(--line)}
+.v4 .bar .lbl{color:var(--muted);width:118px;flex:none}
+.v4 .bar .spin{width:100px}
+.v4 .axes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}
+.v4 .card{border:1px solid var(--border);border-radius:6px;background:var(--panel);display:flex;flex-direction:column;min-width:0}
+.v4 .card-head{display:flex;align-items:center;gap:8px;padding:10px 10px 6px 12px}
+.v4 .card-head h3{font-size:12px;font-weight:600;margin:0}
+.v4 .card-head .aside{margin-left:auto}
+.v4 .mini{display:flex;justify-content:center;padding:6px 12px 12px}
+.v4 .vals{border-top:1px solid var(--border)}
+.v4 .vrow{display:grid;grid-template-columns:118px minmax(0,1fr) 22px;align-items:center;column-gap:10px;height:33px;padding:0 6px 0 12px}
+.v4 .vrow+.vrow{border-top:1px solid var(--line)}
+.v4 .vrow.sel{background:var(--tint)}
+.v4 .vrow .spin{width:112px;height:24px}
+.v4 .vrow .del{color:var(--muted);display:grid;place-items:center}
+.v4 .vrow.sel .del{color:var(--danger)}
+.v4 .add-row{display:flex;gap:8px;align-items:center;padding:8px 12px;border-top:1px solid var(--border);background:var(--panel2);border-radius:0 0 6px 6px}
+.v4 .add-row .spin{width:112px;height:24px}
+.v4 .quick{margin-top:12px}
+.v4 .quick-body{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;padding:2px 12px 12px;align-items:center}
+.v4 .qrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-height:34px}
+.v4 .qrow+.qrow{border-top:1px solid var(--line)}
+.v4 .qrow .lbl{color:var(--muted)}
+.v4 .qrow .spin{width:64px;height:24px}
+.v4 .qrow .spin.wide{width:96px}
+.v4 .qmini{display:grid;justify-items:center;gap:4px}
+.v4 .legend{display:inline-flex;align-items:center;gap:5px}
+.v4 .legend i{width:14px;border-top:2px dashed #2c7961}
+
+</style>
+</head>
+<body>
+<svg class="sprite" aria-hidden="true"><symbol id="i-guide-h" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="1" opacity=".45"/><path d="M.8 8h14.4" stroke-dasharray="2.2 1.6"/></symbol><symbol id="i-guide-v" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="1" opacity=".45"/><path d="M8 .8v14.4" stroke-dasharray="2.2 1.6"/></symbol><symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol><symbol id="i-x" viewBox="0 0 16 16"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></symbol><symbol id="i-trash" viewBox="0 0 16 16"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.6 4.5l.6 8.5h5.6l.6-8.5"/></symbol><symbol id="i-grid" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="1"/><path d="M6.2 2.5v11M9.8 2.5v11M2.5 6.2h11M2.5 9.8h11"/></symbol><symbol id="i-ruler" viewBox="0 0 16 16"><rect x="1.5" y="5" width="13" height="6" rx="1"/><path d="M4.2 5v2.4M6.8 5v1.5M9.4 5v2.4M12 5v1.5"/></symbol><symbol id="i-magnet" viewBox="0 0 16 16"><path d="M3.5 2.5h3v5a1.5 1.5 0 0 0 3 0v-5h3v5a4.5 4.5 0 0 1-9 0z"/><path d="M3.5 5h3M9.5 5h3"/></symbol><symbol id="i-margin" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1"/><rect x="4.6" y="4.6" width="6.8" height="6.8" stroke-dasharray="1.6 1.4"/></symbol><symbol id="i-eye" viewBox="0 0 16 16"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></symbol><symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.3"/><path d="M8 7.3v4M8 4.9v.1"/></symbol><symbol id="i-reset" viewBox="0 0 16 16"><path d="M2.8 3v3.4h3.4"/><path d="M3.3 6.2A5 5 0 1 1 3.1 9.6"/></symbol><symbol id="i-center" viewBox="0 0 16 16"><path d="M8 1v14M1 8h14" stroke-dasharray="2 1.6"/><circle cx="8" cy="8" r="2.2"/></symbol><symbol id="i-columns" viewBox="0 0 16 16"><rect x="1.8" y="2.5" width="12.4" height="11" rx="1"/><path d="M6 2.5v11M10 2.5v11"/></symbol><symbol id="i-dims" viewBox="0 0 16 16"><rect x="3.5" y="2.5" width="9" height="6" rx="1"/><path d="M2 12.5h12M2 11v3M14 11v3"/></symbol><symbol id="i-more" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r=".9" fill="currentColor"/><circle cx="8" cy="8" r=".9" fill="currentColor"/><circle cx="12.5" cy="8" r=".9" fill="currentColor"/></symbol><symbol id="i-chev-down" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></symbol><symbol id="i-chev-right" viewBox="0 0 16 16"><path d="M6.5 4.5L10 8l-3.5 3.5"/></symbol><symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.3"/><path d="M10.2 10.2l3.6 3.6"/></symbol><symbol id="i-label" viewBox="0 0 16 16"><rect x="1.5" y="3.5" width="13" height="9" rx="1"/><path d="M4 6.5h5M4 9.5h3"/></symbol></svg>
+<div class="page">
+  <header class="page-head">
+    <div><div class="eyebrow">QtZpl Designer / концепции диалога</div><h1>Холст и направляющие</h1></div>
+    <div class="head-actions"><a class="gallery-button" href="index.html">Сравнение вариантов</a><button id="theme-toggle" class="gallery-button" type="button">Тёмная тема</button></div>
+  </header>
+  <nav class="variants" aria-label="Варианты диалога"><a class="variant" href="01-compact-form.html"><span class="vn">01</span><div><strong>Компактная форма</strong><small>Одна колонка, одна таблица</small></div></a><a class="variant" href="02-live-preview.html"><span class="vn">02</span><div><strong>Живое превью</strong><small>Настройки и этикетка рядом</small></div></a><a class="variant" href="03-sections.html"><span class="vn">03</span><div><strong>Разделы</strong><small>Навигация слева</small></div></a><a class="variant" href="04-guides-by-axis.html" aria-current="page"><span class="vn">04</span><div><strong>Направляющие по осям</strong><small>Две колонки + разметка</small></div></a><a class="variant" href="05-quick-panel.html"><span class="vn">05</span><div><strong>Быстрая панель</strong><small>Всплывает у «···», без «ОК»</small></div></a><a class="variant" href="06-property-grid.html"><span class="vn">06</span><div><strong>Таблица свойств</strong><small>Дерево «свойство — значение»</small></div></a></nav>
+  <section class="caption"><div><h2>Направляющие по осям — главное содержимое диалога</h2><p>Общие настройки сжаты в две строки сверху. Горизонтальные и вертикальные направляющие — в двух колонках, у каждой своя мини-схема этикетки. Внизу — быстрая разметка: центр, линии по рамке отступа, колонки и строки одной операцией.</p></div><p class="tradeoff">Решает типовые задачи вёрстки этикетки, но быстрая разметка — новая функциональность с тестами на округление до dots и дубликаты.</p></section>
+<div class="stage">
+    <div class="win v4" style="width:828px" role="dialog" aria-label="Холст и направляющие">
+      <div class="win-title"><span class="app-mark">ZPL</span><span>Холст и направляющие</span><span class="close"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></span></div>
+      <div class="win-body">
+        <div class="bar">
+          <div class="line"><span class="lbl">Показывать</span>
+            <span class="chk on"><i></i>Сетка</span><span class="chk on"><i></i>Линейки</span><span class="chk on"><i></i>Направляющие</span><span class="chk on"><i></i>Рамка отступа</span>
+            <span class="spacer"></span><span class="seg"><span class="on">мм</span><span>dots</span></span></div>
+          <div class="line"><span class="lbl">Шаг сетки</span>
+            <span class="spin"><span class="val">1,00<em>мм</em></span><span class="arrows"><i></i><i></i></span></span><span class="eq">8 dots</span>
+            <span style="margin-left:8px">Отступ</span><span class="spin"><span class="val">2,00<em>мм</em></span><span class="arrows"><i></i><i></i></span></span><span class="eq">16 dots</span>
+            <span class="spacer"></span><span class="chk on"><i></i>Привязка</span><span class="hint"><span class="kbd">Alt</span> — выкл.</span></div>
+          <div class="line"><span class="lbl">Подписи выделения</span>
+            <span class="chk on"><i></i>Размеры</span><span class="chk on"><i></i>Координаты</span><span class="spacer"></span><span class="badge">для всех этикеток</span></div>
+        </div>
+
+        <div class="axes">
+          <section class="card">
+            <div class="card-head"><span class="axis"><svg class="ic" aria-hidden="true"><use href="#i-guide-h"/></svg></span><h3>Горизонтальные</h3><span class="badge">Y · 3</span>
+              <span class="aside"><button class="btn small flat danger">Удалить все</button></span></div>
+            <div class="mini"><svg class="pv" viewBox="-1 -1 302 164" width="302" height="164" role="img" aria-label="Горизонтальные"><rect class="pv-shadow" x="0" y="2" width="300" height="160"/><g transform="scale(0.5)"><rect class="pv-paper" width="600" height="320" vector-effect="non-scaling-stroke"/><image href="data:image/png;base64,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" width="600" height="320" class="pv-fade"/><rect class="pv-margin" x="16" y="16" width="568" height="288"/><line class="pv-guide" x1="0" y1="40" x2="600" y2="40"/><line class="pv-guide" x1="0" y1="160" x2="600" y2="160"/><line class="pv-guide sel" x1="0" y1="140" x2="600" y2="140"/></g></svg></div>
+            <div class="vals">
+              <div class="vrow"><span class="num">5,00 мм</span><span class="eq">40 dots</span><span class="del"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></span></div>
+              <div class="vrow sel"><span class="spin focus"><span class="val">17,52<em>мм</em></span><span class="arrows"><i></i><i></i></span></span><span class="eq">140 dots · до низа 22,52 мм</span><span class="del"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></span></div>
+              <div class="vrow"><span class="num">20,02 мм</span><span class="eq">160 dots&nbsp; <span class="tag">центр</span></span><span class="del"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></span></div>
+            </div>
+            <div class="add-row"><span>Y</span><span class="spin"><span class="val">0,00<em>мм</em></span><span class="arrows"><i></i><i></i></span></span><button class="btn small"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Добавить</button></div>
+          </section>
+          <section class="card">
+            <div class="card-head"><span class="axis"><svg class="ic" aria-hidden="true"><use href="#i-guide-v"/></svg></span><h3>Вертикальные</h3><span class="badge">X · 3</span>
+              <span class="aside"><button class="btn small flat danger">Удалить все</button></span></div>
+            <div class="mini"><svg class="pv" viewBox="-1 -1 302 164" width="302" height="164" role="img" aria-label="Вертикальные"><rect class="pv-shadow" x="0" y="2" width="300" height="160"/><g transform="scale(0.5)"><rect class="pv-paper" width="600" height="320" vector-effect="non-scaling-stroke"/><image href="data:image/png;base64,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" width="600" height="320" class="pv-fade"/><rect class="pv-margin" x="16" y="16" width="568" height="288"/><line class="pv-guide" x1="44" y1="0" x2="44" y2="320"/><line class="pv-guide" x1="220" y1="0" x2="220" y2="320"/><line class="pv-guide" x1="300" y1="0" x2="300" y2="320"/></g></svg></div>
+            <div class="vals">
+              <div class="vrow"><span class="num">5,51 мм</span><span class="eq">44 dots</span><span class="del"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></span></div>
+              <div class="vrow"><span class="num">27,53 мм</span><span class="eq">220 dots</span><span class="del"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></span></div>
+              <div class="vrow"><span class="num">37,54 мм</span><span class="eq">300 dots&nbsp; <span class="tag">центр</span></span><span class="del"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></span></div>
+            </div>
+            <div class="add-row"><span>X</span><span class="spin"><span class="val">0,00<em>мм</em></span><span class="arrows"><i></i><i></i></span></span><button class="btn small"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Добавить</button></div>
+          </section>
+        </div>
+
+        <section class="card quick">
+          <div class="card-head"><h3>Быстрая разметка</h3><span class="badge accent">новое</span><span class="hint">&nbsp;добавляет к существующим, повторы не создаются</span></div>
+          <div class="quick-body">
+            <div>
+              <div class="qrow"><button class="btn small"><svg class="ic" aria-hidden="true"><use href="#i-center"/></svg>Центр по X</button><button class="btn small"><svg class="ic" aria-hidden="true"><use href="#i-center"/></svg>Центр по Y</button><button class="btn small"><svg class="ic" aria-hidden="true"><use href="#i-margin"/></svg>По рамке отступа</button></div>
+              <div class="qrow"><span class="lbl">Колонки</span><span class="spin"><span class="val">3</span><span class="arrows"><i></i><i></i></span></span>
+                <span class="lbl">Строки</span><span class="spin"><span class="val">2</span><span class="arrows"><i></i><i></i></span></span>
+                <span class="lbl">Промежуток</span><span class="spin wide"><span class="val">2,00<em>мм</em></span><span class="arrows"><i></i><i></i></span></span>
+                <span class="lbl">внутри</span><span class="combo small"><span class="val">рамки отступа</span><span class="chev"></span></span></div>
+            </div>
+            <div class="qmini"><svg class="pv" viewBox="-1 -1 134 74.4" width="134" height="74.4" role="img" aria-label="Будущая разметка"><rect class="pv-shadow" x="0" y="2" width="132" height="70.4"/><g transform="scale(0.22)"><rect class="pv-paper" width="600" height="320" vector-effect="non-scaling-stroke"/><image href="data:image/png;base64,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" width="600" height="320" class="pv-fade"/><rect class="pv-margin" x="16" y="16" width="568" height="288"/><line class="pv-guide" x1="0" y1="40" x2="600" y2="40"/><line class="pv-guide" x1="0" y1="140" x2="600" y2="140"/><line class="pv-guide" x1="0" y1="160" x2="600" y2="160"/><line class="pv-guide" x1="44" y1="0" x2="44" y2="320"/><line class="pv-guide" x1="220" y1="0" x2="220" y2="320"/><line class="pv-guide" x1="300" y1="0" x2="300" y2="320"/><line class="pv-guide new" x1="16" y1="0" x2="16" y2="320"/><line class="pv-guide new" x1="195" y1="0" x2="195" y2="320"/><line class="pv-guide new" x1="211" y1="0" x2="211" y2="320"/><line class="pv-guide new" x1="389" y1="0" x2="389" y2="320"/><line class="pv-guide new" x1="405" y1="0" x2="405" y2="320"/><line class="pv-guide new" x1="584" y1="0" x2="584" y2="320"/><line class="pv-guide new" x1="0" y1="16" x2="600" y2="16"/><line class="pv-guide new" x1="0" y1="152" x2="600" y2="152"/><line class="pv-guide new" x1="0" y1="168" x2="600" y2="168"/><line class="pv-guide new" x1="0" y1="304" x2="600" y2="304"/></g></svg>
+              <button class="btn small"><svg class="ic" aria-hidden="true"><use href="#i-columns"/></svg>Добавить 10</button></div>
+          </div>
+        </section>
+      </div>
+      <div class="win-foot"><button class="btn flat muted"><svg class="ic" aria-hidden="true"><use href="#i-reset"/></svg>По умолчанию</button><span class="spacer"></span><span class="hint">Ориентиры не попадают в ZPL, превью и PNG</span><button class="btn" style="margin-left:12px">Отмена</button><button class="btn primary">Применить</button></div>
+    </div>
+  </div>
+  <section class="notes">
+    <div><h3>Что меняется</h3><ul>
+      <li>Направляющие — главное содержимое: оси в двух колонках, у каждой мини-схема этикетки.</li>
+      <li>Общие настройки сжаты в три строки сверху.</li>
+      <li>Быстрая разметка: центр, линии по рамке отступа, колонки и строки — одна операция в истории.</li>
+      <li>Зелёным на схеме показано, что добавит «Добавить 10» (значения округлены до целых dots).</li>
+    </ul></div>
+    <div><h3>Компромиссы</h3><ul>
+      <li>Разметка — новая функциональность: тесты на округление, дубликаты и лимит 128.</li>
+      <li>Самый объёмный вариант по коду и по высоте окна (~780 px).</li>
+      <li>Вертикальная колонка часто будет пустой у простых этикеток.</li>
+    </ul></div>
+    <div><h3>Реализация в Qt</h3><ul>
+      <li>Две <code>QListView</code> с общим делегатом на <code>DotSpinBox</code>; мини-схемы — <code>QWidget</code> с <code>QPainter</code>.</li>
+      <li>Генератор разметки — чистая функция в <code>designer_core</code>: размер, отступ, колонки, строки, промежуток → <code>QList&lt;int&gt;</code> в dots.</li>
+      <li>Применение — одна команда <code>DocumentSession</code>, отменяется одним Ctrl+Z.</li>
+    </ul></div>
+  </section>
+
+  <footer class="foot"><span>Статический макет · этикетка 600 × 320 dots, 203 dpi, изображение получено через QtZpl · все значения хранятся в dots</span><nav><a href="03-sections.html">← Назад</a><a href="05-quick-panel.html">Дальше →</a></nav></footer>
+</div>
+<script>(function(){var r=document.documentElement,b=document.getElementById('theme-toggle');function sync(){b.textContent=r.dataset.theme==='dark'?'Светлая тема':'Тёмная тема'}sync();b.addEventListener('click',function(){r.dataset.theme=r.dataset.theme==='dark'?'light':'dark';try{localStorage.setItem('qtzpl-concept-theme',r.dataset.theme)}catch(e){}sync()})})();</script>
+</body>
+</html>
