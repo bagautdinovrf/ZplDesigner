@@ -44,7 +44,8 @@ Native Qt Widgets editor. Read this file and README.md before modifying it.
   directories.
 - Add focused tests for document round trips, image bit packing, escaping, and
   lossless handling of unsupported ZPL. Render acceptance is against Labelary
-  reference images, never go-zpl rendered output.
+  reference images. go-zpl is no longer a reference for rendering or ZPL
+  semantics (QtZpl now exceeds it); follow Zebra documentation and Labelary.
 
 ## Component map
 
