@@ -113,7 +113,8 @@ h1{font-weight:600;font-size:27px;letter-spacing:-.7px;margin:6px 0 0}
 .sec-head .aside{margin-left:auto;display:flex;align-items:center;gap:6px}
 .frow{display:grid;grid-template-columns:var(--label,108px) minmax(0,1fr);align-items:center;column-gap:12px;min-height:32px}
 .frow>.lbl{color:var(--ink)}
-.frow>.ctl{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
+.frow>.ctl{display:flex;align-items:center;gap:8px 10px;flex-wrap:wrap;min-width:0}
+.frow>.ctl.pair{column-gap:24px}
 .checks{display:grid;grid-template-columns:repeat(2,max-content);gap:9px 26px}
 
 /* Guide tables */
@@ -156,7 +157,7 @@ h1{font-weight:600;font-size:27px;letter-spacing:-.7px;margin:6px 0 0}
 @media (max-width:1100px){.variants{grid-template-columns:repeat(3,minmax(0,1fr))}.caption{flex-direction:column;align-items:flex-start;gap:10px}.caption .tradeoff{max-width:680px}}
 @media (max-width:760px){.page{padding:20px 16px}.page-head{flex-direction:column;align-items:flex-start}.variants{grid-template-columns:repeat(2,minmax(0,1fr))}.notes{grid-template-columns:1fr;gap:18px}.stage{padding:24px 14px}}
 
-.v5 .app{position:relative;width:968px;border:1px solid var(--border);border-radius:9px;background:var(--panel);box-shadow:0 8px 30px var(--shadow);font-size:12px}
+.app.v5{position:relative;width:968px;border:1px solid var(--border);border-radius:9px;background:var(--panel);box-shadow:0 8px 30px var(--shadow);font-size:12px}
 .v5 .app-top{height:40px;display:flex;align-items:center;gap:6px;padding:0 10px 0 14px;border-bottom:1px solid var(--border);border-radius:9px 9px 0 0}
 .v5 .app-top .ttl{color:var(--muted);margin-right:auto}
 .v5 .app-top .btn{height:26px;padding:0 10px}
@@ -188,8 +189,8 @@ h1{font-weight:600;font-size:27px;letter-spacing:-.7px;margin:6px 0 0}
     <div><div class="eyebrow">QtZpl Designer / концепции диалога</div><h1>Холст и направляющие</h1></div>
     <div class="head-actions"><a class="gallery-button" href="index.html">Сравнение вариантов</a><button id="theme-toggle" class="gallery-button" type="button">Тёмная тема</button></div>
   </header>
-  <nav class="variants" aria-label="Варианты диалога"><a class="variant" href="01-compact-form.html"><span class="vn">01</span><div><strong>Компактная форма</strong><small>Одна колонка, одна таблица</small></div></a><a class="variant" href="02-live-preview.html"><span class="vn">02</span><div><strong>Живое превью</strong><small>Настройки и этикетка рядом</small></div></a><a class="variant" href="03-sections.html"><span class="vn">03</span><div><strong>Разделы</strong><small>Навигация слева</small></div></a><a class="variant" href="04-guides-by-axis.html"><span class="vn">04</span><div><strong>Направляющие по осям</strong><small>Две колонки + разметка</small></div></a><a class="variant" href="05-quick-panel.html" aria-current="page"><span class="vn">05</span><div><strong>Быстрая панель</strong><small>Всплывает у «···», без «ОК»</small></div></a><a class="variant" href="06-property-grid.html"><span class="vn">06</span><div><strong>Таблица свойств</strong><small>Дерево «свойство — значение»</small></div></a></nav>
-  <section class="caption"><div><h2>Быстрая панель — настройки применяются сразу</h2><p>Вместо модального окна — всплывающая панель у кнопки «···» над холстом. Каждый флажок и шаг виден на этикетке мгновенно. Точный список направляющих открывается отдельной командой «Направляющие…».</p></div><p class="tradeoff">Быстрее всего для частых действий, но нет «Отмены»: откат только через Ctrl+Z, и изменения одного открытия панели нужно склеивать в один шаг истории.</p></section>
+  <nav class="variants" aria-label="Варианты диалога"><a class="variant" href="01-compact-form.html"><span class="vn">01</span><div><strong>Компактная форма</strong><small>Одна колонка, одна таблица</small></div></a><a class="variant" href="02-live-preview.html"><span class="vn">02</span><div><strong>Живое превью</strong><small>Настройки и этикетка рядом</small></div></a><a class="variant" href="03-sections.html"><span class="vn">03</span><div><strong>Разделы</strong><small>Навигация слева</small></div></a><a class="variant" href="04-guides-by-axis.html"><span class="vn">04</span><div><strong>Оси и разметка</strong><small>Две колонки + разметка</small></div></a><a class="variant" href="05-quick-panel.html" aria-current="page"><span class="vn">05</span><div><strong>Быстрая панель</strong><small>Всплывает у «···», без «ОК»</small></div></a><a class="variant" href="06-property-grid.html"><span class="vn">06</span><div><strong>Таблица свойств</strong><small>Дерево «свойство — значение»</small></div></a></nav>
+  <section class="caption"><div><h2>Быстрая панель — настройки применяются сразу</h2><p>Вместо модального окна — всплывающая панель у кнопки «···» над холстом. Каждый флажок и шаг виден на этикетке мгновенно. Точный список направляющих открывается кнопкой «Список…».</p></div><p class="tradeoff">Быстрее всего для частых действий, но нет «Отмены»: откат только через Ctrl+Z, и изменения одного открытия панели нужно склеивать в один шаг истории.</p></section>
 <div class="stage">
     <div class="app v5" aria-label="Фрагмент окна редактора">
       <div class="app-top">
@@ -212,7 +213,7 @@ h1{font-weight:600;font-size:27px;letter-spacing:-.7px;margin:6px 0 0}
         <div class="pop-sub">Подписи выделения <span class="badge">все этикетки</span></div>
         <div class="pop-row pair"><span class="chk on"><i></i>Размеры</span><span class="chk on"><i></i>Координаты</span></div>
         <div class="sep"></div>
-        <div class="pop-actions"><button class="btn small flat muted"><svg class="ic" aria-hidden="true"><use href="#i-reset"/></svg>По умолчанию</button><span class="spacer"></span><button class="btn small flat danger"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg>Убрать направляющие</button></div>
+        <div class="pop-actions"><button class="btn small flat muted"><svg class="ic" aria-hidden="true"><use href="#i-reset"/></svg>По умолчанию</button><span class="spacer"></span><button class="btn small flat danger"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg>Удалить направляющие</button></div>
         <div class="pop-foot hint">Применяется сразу. Ctrl+Z отменяет всё, что изменено в панели, одним шагом.</div>
       </div>
     </div>

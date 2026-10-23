@@ -113,7 +113,8 @@ h1{font-weight:600;font-size:27px;letter-spacing:-.7px;margin:6px 0 0}
 .sec-head .aside{margin-left:auto;display:flex;align-items:center;gap:6px}
 .frow{display:grid;grid-template-columns:var(--label,108px) minmax(0,1fr);align-items:center;column-gap:12px;min-height:32px}
 .frow>.lbl{color:var(--ink)}
-.frow>.ctl{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
+.frow>.ctl{display:flex;align-items:center;gap:8px 10px;flex-wrap:wrap;min-width:0}
+.frow>.ctl.pair{column-gap:24px}
 .checks{display:grid;grid-template-columns:repeat(2,max-content);gap:9px 26px}
 
 /* Guide tables */
@@ -180,7 +181,7 @@ h1{font-weight:600;font-size:27px;letter-spacing:-.7px;margin:6px 0 0}
     <div><div class="eyebrow">QtZpl Designer / концепции диалога</div><h1>Холст и направляющие</h1></div>
     <div class="head-actions"><a class="gallery-button" href="index.html">Сравнение вариантов</a><button id="theme-toggle" class="gallery-button" type="button">Тёмная тема</button></div>
   </header>
-  <nav class="variants" aria-label="Варианты диалога"><a class="variant" href="01-compact-form.html"><span class="vn">01</span><div><strong>Компактная форма</strong><small>Одна колонка, одна таблица</small></div></a><a class="variant" href="02-live-preview.html"><span class="vn">02</span><div><strong>Живое превью</strong><small>Настройки и этикетка рядом</small></div></a><a class="variant" href="03-sections.html"><span class="vn">03</span><div><strong>Разделы</strong><small>Навигация слева</small></div></a><a class="variant" href="04-guides-by-axis.html"><span class="vn">04</span><div><strong>Направляющие по осям</strong><small>Две колонки + разметка</small></div></a><a class="variant" href="05-quick-panel.html"><span class="vn">05</span><div><strong>Быстрая панель</strong><small>Всплывает у «···», без «ОК»</small></div></a><a class="variant" href="06-property-grid.html"><span class="vn">06</span><div><strong>Таблица свойств</strong><small>Дерево «свойство — значение»</small></div></a></nav>
+  <nav class="variants" aria-label="Варианты диалога"><a class="variant" href="01-compact-form.html"><span class="vn">01</span><div><strong>Компактная форма</strong><small>Одна колонка, одна таблица</small></div></a><a class="variant" href="02-live-preview.html"><span class="vn">02</span><div><strong>Живое превью</strong><small>Настройки и этикетка рядом</small></div></a><a class="variant" href="03-sections.html"><span class="vn">03</span><div><strong>Разделы</strong><small>Навигация слева</small></div></a><a class="variant" href="04-guides-by-axis.html"><span class="vn">04</span><div><strong>Оси и разметка</strong><small>Две колонки + разметка</small></div></a><a class="variant" href="05-quick-panel.html"><span class="vn">05</span><div><strong>Быстрая панель</strong><small>Всплывает у «···», без «ОК»</small></div></a><a class="variant" href="06-property-grid.html"><span class="vn">06</span><div><strong>Таблица свойств</strong><small>Дерево «свойство — значение»</small></div></a></nav>
 
 <section class="ix-intro">
     <div><h2>Шесть вариантов одного диалога</h2>
@@ -193,7 +194,7 @@ h1{font-weight:600;font-size:27px;letter-spacing:-.7px;margin:6px 0 0}
         <tr><td><a href="01-compact-form.html">01 Компактная форма</a><span>Одна колонка, одна таблица</span></td><td>модальное</td><td>нет</td><td>общая таблица, правка в строке</td><td class="num">468 px</td><td>малый</td></tr>
         <tr><td><a href="02-live-preview.html">02 Живое превью</a><span>Настройки и этикетка рядом</span></td><td>модальное</td><td>этикетка с ориентирами</td><td>на превью, чипы и точное поле</td><td class="num">924 px</td><td>средний</td></tr>
         <tr><td><a href="03-sections.html">03 Разделы</a><span>Навигация слева</span></td><td>модальное</td><td>нет</td><td>таблица с фильтром по оси и «до края»</td><td class="num">784 px</td><td>средний</td></tr>
-        <tr><td><a href="04-guides-by-axis.html">04 Направляющие по осям</a><span>Две колонки + разметка</span></td><td>модальное</td><td>мини-схемы по осям</td><td>две колонки, быстрая разметка колонок и строк</td><td class="num">828 px</td><td>большой</td></tr>
+        <tr><td><a href="04-guides-by-axis.html">04 Оси и разметка</a><span>Две колонки + разметка</span></td><td>модальное</td><td>мини-схемы по осям</td><td>две колонки, быстрая разметка колонок и строк</td><td class="num">828 px</td><td>большой</td></tr>
         <tr><td><a href="05-quick-panel.html">05 Быстрая панель</a><span>Всплывает у «···»</span></td><td>всплывающее, применяет сразу</td><td>сам холст</td><td>«Список…» открывает таблицу</td><td class="num">310 px</td><td>средний</td></tr>
         <tr><td><a href="06-property-grid.html">06 Таблица свойств</a><span>Дерево «свойство — значение»</span></td><td>модальное</td><td>нет</td><td>вложенные строки по осям</td><td class="num">548 px</td><td>малый — средний</td></tr>
       </tbody>

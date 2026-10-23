@@ -7,7 +7,7 @@
 .v3 .sitem.on svg.ic{color:var(--accent)}
 .v3 .sitem.on::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:2px;background:var(--accent)}
 .v3 .sitem .cnt{margin-left:auto;color:var(--muted);font-size:11px;font-weight:400;font-variant-numeric:tabular-nums}
-.v3 .snav-foot{margin-top:auto;padding:12px 8px 2px;border-top:1px solid var(--border);display:grid;gap:8px}
+.v3 .snav-foot{margin-top:auto;padding:12px 8px 2px;border-top:1px solid var(--border);display:grid;gap:8px;justify-items:start}
 .v3 .spage{padding:16px 20px 18px;display:flex;flex-direction:column;gap:12px;min-width:0}
 .v3 .spage-head h2{font-size:15px;font-weight:600;margin:0 0 3px;letter-spacing:-.2px}
 .v3 .card{border:1px solid var(--border);border-radius:6px;background:var(--panel)}
@@ -26,8 +26,8 @@
       <div class="w3">
         <nav class="snav" aria-label="Разделы">
           <span class="sitem">{{ic eye}}<span>Вид</span></span>
-          <span class="sitem">{{ic grid}}<span>Сетка и привязка</span><span class="cnt">1,00</span></span>
-          <span class="sitem">{{ic margin}}<span>Безопасный отступ</span><span class="cnt">2,00</span></span>
+          <span class="sitem">{{ic grid}}<span>Сетка и привязка</span></span>
+          <span class="sitem">{{ic margin}}<span>Безопасный отступ</span></span>
           <span class="sitem on">{{ic guide-h}}<span>Направляющие</span><span class="cnt">6</span></span>
           <span class="sitem">{{ic dims}}<span>Подписи выделения</span></span>
           <div class="snav-foot">

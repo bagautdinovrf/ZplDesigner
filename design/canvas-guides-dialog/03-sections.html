@@ -113,7 +113,8 @@ h1{font-weight:600;font-size:27px;letter-spacing:-.7px;margin:6px 0 0}
 .sec-head .aside{margin-left:auto;display:flex;align-items:center;gap:6px}
 .frow{display:grid;grid-template-columns:var(--label,108px) minmax(0,1fr);align-items:center;column-gap:12px;min-height:32px}
 .frow>.lbl{color:var(--ink)}
-.frow>.ctl{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
+.frow>.ctl{display:flex;align-items:center;gap:8px 10px;flex-wrap:wrap;min-width:0}
+.frow>.ctl.pair{column-gap:24px}
 .checks{display:grid;grid-template-columns:repeat(2,max-content);gap:9px 26px}
 
 /* Guide tables */
@@ -164,7 +165,7 @@ h1{font-weight:600;font-size:27px;letter-spacing:-.7px;margin:6px 0 0}
 .v3 .sitem.on svg.ic{color:var(--accent)}
 .v3 .sitem.on::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:2px;background:var(--accent)}
 .v3 .sitem .cnt{margin-left:auto;color:var(--muted);font-size:11px;font-weight:400;font-variant-numeric:tabular-nums}
-.v3 .snav-foot{margin-top:auto;padding:12px 8px 2px;border-top:1px solid var(--border);display:grid;gap:8px}
+.v3 .snav-foot{margin-top:auto;padding:12px 8px 2px;border-top:1px solid var(--border);display:grid;gap:8px;justify-items:start}
 .v3 .spage{padding:16px 20px 18px;display:flex;flex-direction:column;gap:12px;min-width:0}
 .v3 .spage-head h2{font-size:15px;font-weight:600;margin:0 0 3px;letter-spacing:-.2px}
 .v3 .card{border:1px solid var(--border);border-radius:6px;background:var(--panel)}
@@ -186,7 +187,7 @@ h1{font-weight:600;font-size:27px;letter-spacing:-.7px;margin:6px 0 0}
     <div><div class="eyebrow">QtZpl Designer / концепции диалога</div><h1>Холст и направляющие</h1></div>
     <div class="head-actions"><a class="gallery-button" href="index.html">Сравнение вариантов</a><button id="theme-toggle" class="gallery-button" type="button">Тёмная тема</button></div>
   </header>
-  <nav class="variants" aria-label="Варианты диалога"><a class="variant" href="01-compact-form.html"><span class="vn">01</span><div><strong>Компактная форма</strong><small>Одна колонка, одна таблица</small></div></a><a class="variant" href="02-live-preview.html"><span class="vn">02</span><div><strong>Живое превью</strong><small>Настройки и этикетка рядом</small></div></a><a class="variant" href="03-sections.html" aria-current="page"><span class="vn">03</span><div><strong>Разделы</strong><small>Навигация слева</small></div></a><a class="variant" href="04-guides-by-axis.html"><span class="vn">04</span><div><strong>Направляющие по осям</strong><small>Две колонки + разметка</small></div></a><a class="variant" href="05-quick-panel.html"><span class="vn">05</span><div><strong>Быстрая панель</strong><small>Всплывает у «···», без «ОК»</small></div></a><a class="variant" href="06-property-grid.html"><span class="vn">06</span><div><strong>Таблица свойств</strong><small>Дерево «свойство — значение»</small></div></a></nav>
+  <nav class="variants" aria-label="Варианты диалога"><a class="variant" href="01-compact-form.html"><span class="vn">01</span><div><strong>Компактная форма</strong><small>Одна колонка, одна таблица</small></div></a><a class="variant" href="02-live-preview.html"><span class="vn">02</span><div><strong>Живое превью</strong><small>Настройки и этикетка рядом</small></div></a><a class="variant" href="03-sections.html" aria-current="page"><span class="vn">03</span><div><strong>Разделы</strong><small>Навигация слева</small></div></a><a class="variant" href="04-guides-by-axis.html"><span class="vn">04</span><div><strong>Оси и разметка</strong><small>Две колонки + разметка</small></div></a><a class="variant" href="05-quick-panel.html"><span class="vn">05</span><div><strong>Быстрая панель</strong><small>Всплывает у «···», без «ОК»</small></div></a><a class="variant" href="06-property-grid.html"><span class="vn">06</span><div><strong>Таблица свойств</strong><small>Дерево «свойство — значение»</small></div></a></nav>
   <section class="caption"><div><h2>Разделы — каждая группа на своей странице</h2><p>Навигация как в системных настройках: вид, сетка и привязка, отступ, направляющие, подписи выделения. Единицы закреплены под навигацией и действуют на все разделы. Таблица направляющих получает фильтр по оси и расстояние до дальнего края.</p></div><p class="tradeoff">Диалог не растёт с новыми настройками, но простые флажки спрятаны за переходами. Для дюжины параметров это пока избыточно.</p></section>
 <div class="stage">
     <div class="win v3" style="width:784px" role="dialog" aria-label="Холст и направляющие">
@@ -194,8 +195,8 @@ h1{font-weight:600;font-size:27px;letter-spacing:-.7px;margin:6px 0 0}
       <div class="w3">
         <nav class="snav" aria-label="Разделы">
           <span class="sitem"><svg class="ic" aria-hidden="true"><use href="#i-eye"/></svg><span>Вид</span></span>
-          <span class="sitem"><svg class="ic" aria-hidden="true"><use href="#i-grid"/></svg><span>Сетка и привязка</span><span class="cnt">1,00</span></span>
-          <span class="sitem"><svg class="ic" aria-hidden="true"><use href="#i-margin"/></svg><span>Безопасный отступ</span><span class="cnt">2,00</span></span>
+          <span class="sitem"><svg class="ic" aria-hidden="true"><use href="#i-grid"/></svg><span>Сетка и привязка</span></span>
+          <span class="sitem"><svg class="ic" aria-hidden="true"><use href="#i-margin"/></svg><span>Безопасный отступ</span></span>
           <span class="sitem on"><svg class="ic" aria-hidden="true"><use href="#i-guide-h"/></svg><span>Направляющие</span><span class="cnt">6</span></span>
           <span class="sitem"><svg class="ic" aria-hidden="true"><use href="#i-dims"/></svg><span>Подписи выделения</span></span>
           <div class="snav-foot">

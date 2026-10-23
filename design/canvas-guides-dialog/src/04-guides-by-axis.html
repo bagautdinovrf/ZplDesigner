@@ -27,9 +27,12 @@
 .v4 .qrow .lbl{color:var(--muted)}
 .v4 .qrow .spin{width:64px;height:24px}
 .v4 .qrow .spin.wide{width:96px}
-.v4 .qmini{display:grid;justify-items:center;gap:4px}
-.v4 .legend{display:inline-flex;align-items:center;gap:5px}
-.v4 .legend i{width:14px;border-top:2px dashed #2c7961}
+.v4 .qlbl{width:78px;flex:none}
+.v4 .qmini{display:grid;gap:8px;padding-top:6px}
+.v4 .qmini-foot{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.v4 .legend{display:inline-flex;align-items:center;gap:6px;color:var(--success);font-weight:600;font-variant-numeric:tabular-nums}
+.v4 .legend i{width:16px;border-top:2px dashed #2c7961}
+.v4 .pv-guide.new{stroke-width:1.4}
 </style>
   <div class="stage">
     <div class="win v4" style="width:828px" role="dialog" aria-label="Холст и направляющие">
@@ -76,14 +79,15 @@
           <div class="card-head"><h3>Быстрая разметка</h3><span class="badge accent">новое</span><span class="hint">&nbsp;добавляет к существующим, повторы не создаются</span></div>
           <div class="quick-body">
             <div>
-              <div class="qrow"><button class="btn small">{{ic center}}Центр по X</button><button class="btn small">{{ic center}}Центр по Y</button><button class="btn small">{{ic margin}}По рамке отступа</button></div>
-              <div class="qrow"><span class="lbl">Колонки</span><span class="spin"><span class="val">3</span><span class="arrows"><i></i><i></i></span></span>
-                <span class="lbl">Строки</span><span class="spin"><span class="val">2</span><span class="arrows"><i></i><i></i></span></span>
-                <span class="lbl">Промежуток</span><span class="spin wide"><span class="val">2,00<em>мм</em></span><span class="arrows"><i></i><i></i></span></span>
-                <span class="lbl">внутри</span><span class="combo small"><span class="val">рамки отступа</span><span class="chev"></span></span></div>
+              <div class="qrow"><span class="lbl qlbl">Одна линия</span><button class="btn small">{{ic center}}Центр по X</button><button class="btn small">{{ic center}}Центр по Y</button><button class="btn small">{{ic margin}}По рамке отступа</button></div>
+              <div class="qrow"><span class="lbl qlbl">Колонки</span><span class="spin"><span class="val">3</span><span class="arrows"><i></i><i></i></span></span>
+                <span class="lbl">строки</span><span class="spin"><span class="val">2</span><span class="arrows"><i></i><i></i></span></span>
+                <span class="lbl">промежуток</span><span class="spin wide"><span class="val">2,00<em>мм</em></span><span class="arrows"><i></i><i></i></span></span></div>
+              <div class="qrow"><span class="lbl qlbl">Область</span><span class="combo small" style="width:172px"><span class="val">внутри рамки отступа</span><span class="chev"></span></span>
+                <span class="hint">Границы колонок и строк округляются до целых dots.</span></div>
             </div>
-            <div class="qmini">{{mini axis=hv scale=0.22 new=v16,v195,v211,v389,v405,v584,h16,h152,h168,h304 label=Будущая_разметка}}
-              <button class="btn small">{{ic columns}}Добавить 10</button></div>
+            <div class="qmini">{{mini axis=hv guides=0 scale=0.3 new=v16,v195,v211,v389,v405,v584,h16,h152,h168,h304 label=Будущая_разметка}}
+              <div class="qmini-foot"><span class="legend"><i></i>+10</span><button class="btn small">{{ic columns}}Добавить</button></div></div>
           </div>
         </section>
       </div>
@@ -95,7 +99,7 @@
       <li>Направляющие — главное содержимое: оси в двух колонках, у каждой мини-схема этикетки.</li>
       <li>Общие настройки сжаты в три строки сверху.</li>
       <li>Быстрая разметка: центр, линии по рамке отступа, колонки и строки — одна операция в истории.</li>
-      <li>Зелёным на схеме показано, что добавит «Добавить 10» (значения округлены до целых dots).</li>
+      <li>Зелёным на схеме — что добавит разметка до нажатия «Добавить» (значения округлены до целых dots).</li>
     </ul></div>
     <div><h3>Компромиссы</h3><ul>
       <li>Разметка — новая функциональность: тесты на округление, дубликаты и лимит 128.</li>

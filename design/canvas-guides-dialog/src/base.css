@@ -105,7 +105,8 @@ h1{font-weight:600;font-size:27px;letter-spacing:-.7px;margin:6px 0 0}
 .sec-head .aside{margin-left:auto;display:flex;align-items:center;gap:6px}
 .frow{display:grid;grid-template-columns:var(--label,108px) minmax(0,1fr);align-items:center;column-gap:12px;min-height:32px}
 .frow>.lbl{color:var(--ink)}
-.frow>.ctl{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
+.frow>.ctl{display:flex;align-items:center;gap:8px 10px;flex-wrap:wrap;min-width:0}
+.frow>.ctl.pair{column-gap:24px}
 .checks{display:grid;grid-template-columns:repeat(2,max-content);gap:9px 26px}
 
 /* Guide tables */

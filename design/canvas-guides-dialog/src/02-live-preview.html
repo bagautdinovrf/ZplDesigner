@@ -2,6 +2,7 @@
 .v2 .win-body{display:grid;grid-template-columns:276px minmax(0,1fr);gap:22px;padding-top:6px}
 .v2 .side{--label:92px;display:flex;flex-direction:column}
 .v2 .side .note{margin-top:auto;padding-top:12px;border-top:1px solid var(--border)}
+.v2 .pair-row{display:flex;align-items:center;gap:24px;min-height:30px}
 .v2 .pane{display:flex;flex-direction:column;gap:10px;padding-top:12px;min-width:0}
 .v2 .pane-head{display:flex;align-items:center;gap:8px}
 .v2 .pane-head h3{font-size:12px;font-weight:600;margin:0}
@@ -39,7 +40,7 @@
           </section>
           <section class="sec">
             <div class="sec-head"><h3>Подписи выделения</h3><span class="badge">все этикетки</span></div>
-            <div class="frow"><span class="lbl">Показывать</span><span class="ctl"><span class="chk on"><i></i>Размеры</span><span class="chk on"><i></i>Координаты</span></span></div>
+            <div class="pair-row"><span class="chk on"><i></i>Размеры</span><span class="chk on"><i></i>Координаты</span></div>
           </section>
           <div class="note">{{ic info}}<span>Ориентиры не попадают в ZPL, превью и PNG.</span></div>
         </div>
