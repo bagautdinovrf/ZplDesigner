@@ -77,6 +77,7 @@ private slots:
     void groupOperationsRejectSourceModeAndExcessCopies();
     void filledExportPreservesTemplateAndSession();
     void layoutSettingsHaveIndependentUndo();
+    void layoutEditGroupsMergeIntoOneStep();
     void layoutGuidesUseOneCanonicalRepresentation();
     void layoutRoundTripAndSaveAs();
     void legacyLayoutMigratesWithoutChangingSidecar();
@@ -533,6 +534,61 @@ void SessionTests::filledExportPreservesTemplateAndSession()
     QVERIFY(session.document().visualEditable);
     QVERIFY(session.document().previewValues.isEmpty());
     QCOMPARE(session.document().elements.first().text, dm.text);
+}
+
+void SessionTests::layoutEditGroupsMergeIntoOneStep()
+{
+    Designer::DocumentSession session;
+    session.reset(simpleDocument());
+    QSignalSpy layoutChanged(&session, &Designer::DocumentSession::layoutSettingsChanged);
+    const Designer::CanvasLayoutSettings original = session.layoutSettings();
+    // One opening of the quick panel: every change lands in one undo step.
+    const auto group = session.newLayoutEditGroup();
+    auto settings = original;
+    settings.gridStep = 10;
+    session.setLayoutSettings(settings, QStringLiteral("Panel"), group);
+    settings.gridVisible = false;
+    session.setLayoutSettings(settings, QStringLiteral("Panel"), group);
+    settings.margin = 30;
+    settings.unit = Designer::CanvasUnit::Dots;
+    session.setLayoutSettings(settings, QStringLiteral("Panel"), group);
+    QCOMPARE(session.undoStack()->count(), 1);
+    QCOMPARE(session.undoStack()->undoText(), QStringLiteral("Panel"));
+    QCOMPARE(layoutChanged.size(), 3);
+    QVERIFY(session.modified());
+    session.undoStack()->undo();
+    QCOMPARE(session.layoutSettings(), original);
+    QVERIFY(!session.modified());
+    session.undoStack()->redo();
+    QCOMPARE(session.layoutSettings(), settings);
+
+    // The next opening is a separate step; changing back to its starting
+    // settings removes that step instead of leaving an empty one.
+    const auto next = session.newLayoutEditGroup();
+    QVERIFY(next != group);
+    auto reopened = settings;
+    reopened.gridStep = 12;
+    session.setLayoutSettings(reopened, QStringLiteral("Panel"), next);
+    QCOMPARE(session.undoStack()->count(), 2);
+    session.setLayoutSettings(settings, QStringLiteral("Panel"), next);
+    QCOMPARE(session.undoStack()->count(), 1);
+    QCOMPARE(session.undoStack()->index(), 1);
+    QCOMPARE(session.layoutSettings(), settings);
+
+    // Ungrouped edits, such as ruler drags, never merge.
+    auto guides = settings;
+    guides.verticalGuides = {40};
+    session.setLayoutSettings(guides, QStringLiteral("Guide"));
+    guides.verticalGuides = {40, 80};
+    session.setLayoutSettings(guides, QStringLiteral("Guide"));
+    QCOMPARE(session.undoStack()->count(), 3);
+    // A group continues only while its step is on top of the history.
+    auto late = guides;
+    late.rulersVisible = false;
+    session.setLayoutSettings(late, QStringLiteral("Panel"), group);
+    QCOMPARE(session.undoStack()->count(), 4);
+    session.undoStack()->undo();
+    QCOMPARE(session.layoutSettings(), guides);
 }
 
 void SessionTests::layoutSettingsHaveIndependentUndo()

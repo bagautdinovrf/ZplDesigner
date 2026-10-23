@@ -2,7 +2,8 @@
 #include "label_canvas.hpp"
 #include "preview_widget.hpp"
 #include "placeholder_values_dialog.hpp"
-#include "canvas_layout_dialog.hpp"
+#include "canvas_quick_panel.hpp"
+#include "guide_list_dialog.hpp"
 #include "document_session.hpp"
 #include "dot_spin_box.hpp"
 #include "print_dialog.hpp"
@@ -105,7 +106,7 @@ private slots:
     void gridCheckboxChangesCanvasOnly();
     void layoutSettingsSaveReopenWithoutChangingPrintOutput();
     void layoutEditsPreservePendingSource();
-    void layoutDialogUnitsAndCancelPreserveCoordinates();
+    void quickPanelUnitsAndGuideListCancelPreserveCoordinates();
     void importedBlockAndCode128PropertiesAreEditable();
     void propertyUnitsReachGeometryAndAdvancedTextFields();
     void labelFormatFollowsPropertyUnits();
@@ -210,23 +211,43 @@ void WindowTests::layoutSettingsSaveReopenWithoutChangingPrintOutput()
     QVERIFY(printed);
     QSignalSpy documentChanges(session, &Designer::DocumentSession::documentChanged);
     QSignalSpy sourceChanges(code_, &QPlainTextEdit::textChanged);
+    // The quick panel applies each change at once and merges one opening.
+    auto* setup = window_->findChild<QPushButton*>(QStringLiteral("canvasSetup"));
+    setup->click();
+    auto* panel = window_->findChild<Designer::CanvasQuickPanel*>();
+    QVERIFY(panel && panel->isVisible());
+    QVERIFY(setup->isChecked());
+    panel->findChild<QPushButton*>(QStringLiteral("quickPanelDots"))->click();
+    panel->findChild<Designer::DotSpinBox*>(QStringLiteral("quickPanelGridStep"))->setValue(12);
+    panel->findChild<QCheckBox*>(QStringLiteral("quickPanelMargins"))->setChecked(true);
+    panel->findChild<Designer::DotSpinBox*>(QStringLiteral("quickPanelMargin"))->setValue(20);
+    QCOMPARE(canvas_->layoutSettings().gridStep, 12);
+    QTest::keyClick(panel, Qt::Key_Escape);
+    QVERIFY(!panel->isVisible());
+    QVERIFY(!setup->isChecked());
+    const int panelStep = session->undoStack()->index();
+    QCOMPARE(panelStep, 1);
+    // "Список…" closes the panel and opens the guide table.
     bool edited = false;
-    QTimer::singleShot(0, window_.get(), [&] {
-        auto* dialog = window_->findChild<Designer::CanvasLayoutDialog*>();
-        if (!dialog) return;
-        dialog->findChild<QComboBox*>(QStringLiteral("canvasUnits"))->setCurrentIndex(1);
-        dialog->findChild<QDoubleSpinBox*>(QStringLiteral("layoutGridStep"))->setValue(12);
-        dialog->findChild<QCheckBox*>(QStringLiteral("layoutShowMargin"))->setChecked(true);
-        dialog->findChild<QDoubleSpinBox*>(QStringLiteral("layoutMargin"))->setValue(20);
-        dialog->findChild<QDoubleSpinBox*>(QStringLiteral("horizontalGuidePosition"))->setValue(120);
-        dialog->findChild<QPushButton*>(QStringLiteral("horizontalGuideAdd"))->click();
-        dialog->findChild<QDoubleSpinBox*>(QStringLiteral("verticalGuidePosition"))->setValue(160);
-        dialog->findChild<QPushButton*>(QStringLiteral("verticalGuideAdd"))->click();
+    QTimer guideList;
+    guideList.setInterval(10);
+    connect(&guideList, &QTimer::timeout, window_.get(), [&] {
+        auto* dialog = window_->findChild<Designer::GuideListDialog*>();
+        if (!dialog || !dialog->isVisible()) return;
+        guideList.stop();
+        QVERIFY(dialog->addGuide(true));
+        dialog->moveGuide(*dialog->currentGuide(), 120);
+        QVERIFY(dialog->addGuide(false));
+        dialog->moveGuide(*dialog->currentGuide(), 160);
+        QVERIFY(dialog->currentGuide() == Designer::CanvasGuide({false, 160}));
         edited = true;
         dialog->accept();
     });
-    window_->findChild<QPushButton*>(QStringLiteral("canvasSetup"))->click();
-    QVERIFY(edited);
+    guideList.start();
+    setup->click();
+    panel->findChild<QPushButton*>(QStringLiteral("quickPanelGuideList"))->click();
+    QVERIFY(!panel->isVisible());
+    QTRY_VERIFY(edited);
     const auto settings = session->layoutSettings();
     QCOMPARE(settings.gridStep, 12);
     QCOMPARE(settings.margin, 20);
@@ -240,7 +261,14 @@ void WindowTests::layoutSettingsSaveReopenWithoutChangingPrintOutput()
     QCOMPARE(previewView->viewport()->grab().toImage(), cleanPreview);
     QCOMPARE(Designer::toZpl(window_->document()), originalZpl);
     undo_->trigger();
+    auto panelOnly = settings;
+    panelOnly.horizontalGuides.clear();
+    panelOnly.verticalGuides.clear();
+    QCOMPARE(session->layoutSettings(), panelOnly);
+    // Four panel edits form one undo step.
+    undo_->trigger();
     QVERIFY(session->layoutSettings() == Designer::CanvasLayoutSettings{});
+    redo_->trigger();
     redo_->trigger();
     QCOMPARE(session->layoutSettings(), settings);
 
@@ -292,28 +320,45 @@ void WindowTests::layoutEditsPreservePendingSource()
     QVERIFY(undo_->isEnabled());
 }
 
-void WindowTests::layoutDialogUnitsAndCancelPreserveCoordinates()
+void WindowTests::quickPanelUnitsAndGuideListCancelPreserveCoordinates()
 {
-    Designer::CanvasLayoutSettings original;
+    auto* session = window_->findChild<Designer::DocumentSession*>();
+    auto original = session->layoutSettings();
     original.gridStep = 7;
     original.margin = 11;
     original.horizontalGuides = {37};
-    Designer::CanvasLayoutDialog dialog(original, {400, 300}, 300, window_.get());
-    auto* unit = dialog.findChild<QComboBox*>(QStringLiteral("canvasUnits"));
+    session->setLayoutSettings(original);
+    const int history = session->undoStack()->index();
+    window_->findChild<QPushButton*>(QStringLiteral("canvasSetup"))->click();
+    auto* panel = window_->findChild<Designer::CanvasQuickPanel*>();
+    QVERIFY(panel && panel->isVisible());
+    auto* millimeters = panel->findChild<QPushButton*>(QStringLiteral("quickPanelMillimeters"));
+    auto* dots = panel->findChild<QPushButton*>(QStringLiteral("quickPanelDots"));
     for (int i = 0; i < 5; ++i) {
-        unit->setCurrentIndex(1);
-        unit->setCurrentIndex(0);
+        dots->click();
+        millimeters->click();
     }
-    QCOMPARE(dialog.settings(), original);
-    unit->setCurrentIndex(1);
-    dialog.findChild<QCheckBox*>(QStringLiteral("layoutShowMargin"))->setChecked(true);
-    dialog.findChild<QDoubleSpinBox*>(QStringLiteral("layoutMargin"))->setValue(150);
-    auto* buttons = dialog.findChild<QDialogButtonBox*>();
-    QVERIFY(!buttons->button(QDialogButtonBox::Ok)->isEnabled());
-    dialog.findChild<QDoubleSpinBox*>(QStringLiteral("layoutMargin"))->setValue(16);
-    QVERIFY(buttons->button(QDialogButtonBox::Ok)->isEnabled());
+    // Unit switches only change the display; back where it started, the
+    // panel leaves no history step at all.
+    QCOMPARE(session->layoutSettings(), original);
+    QCOMPARE(session->undoStack()->index(), history);
+    auto* margin = panel->findChild<Designer::DotSpinBox*>(QStringLiteral("quickPanelMargin"));
+    QCOMPARE(margin->maximum(), (std::min(window_->document().width, window_->document().height) - 1) / 2);
+    QVERIFY(!margin->isEnabled());
+    panel->close();
+
+    Designer::GuideListDialog dialog(original, {400, 300}, 300, window_.get());
+    QVERIFY(dialog.addGuide(false));
+    QCOMPARE(dialog.settings().verticalGuides, QList<int>{200});
+    QVERIFY(dialog.addGuide(false));
+    QCOMPARE(dialog.settings().verticalGuides, QList<int>({200, 207}));
+    dialog.moveGuide({false, 207}, 5000);
+    QCOMPARE(dialog.settings().verticalGuides, QList<int>({200, 400}));
+    dialog.removeGuide({true, 37});
+    QVERIFY(dialog.settings().horizontalGuides.isEmpty());
     dialog.reject();
-    QVERIFY(!undo_->isEnabled());
+    QCOMPARE(session->layoutSettings(), original);
+    QCOMPARE(session->undoStack()->index(), history);
 }
 
 void WindowTests::propertyEditsParticipateInToolbarHistory()

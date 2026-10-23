@@ -7,7 +7,7 @@ namespace Designer {
 enum class DesignerTheme { Light, Dark };
 enum class DesignerColor {
     Page, Panel, PanelAlternate, Ink, Muted, Border, Accent, Tint,
-    Canvas, Grid, Shadow, Success, Warning, Control
+    Canvas, Grid, Shadow, Success, Warning, Control, Danger, Ruler, RulerInk
 };
 
 // Tokens shared by the native widgets and the HTML workspace reference.

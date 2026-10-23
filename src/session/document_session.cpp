@@ -379,18 +379,29 @@ private:
 class LayoutSettingsCommand final : public QUndoCommand {
 public:
     LayoutSettingsCommand(DocumentSession& session, CanvasLayoutSettings before,
-                          CanvasLayoutSettings after, const QString& title)
-        : QUndoCommand(title), session_(session), before_(std::move(before)), after_(std::move(after))
+                          CanvasLayoutSettings after, const QString& title, quint64 group)
+        : QUndoCommand(title), session_(session), before_(std::move(before)), after_(std::move(after)),
+          group_(group)
     {
     }
 
     void undo() override { session_.restoreLayoutSettings(before_); }
     void redo() override { session_.restoreLayoutSettings(after_); }
+    int id() const override { return group_ ? 0x4c61794f : -1; }
+    bool mergeWith(const QUndoCommand* other) override
+    {
+        const auto* next = static_cast<const LayoutSettingsCommand*>(other);
+        if (next->group_ != group_) return false;
+        after_ = next->after_;
+        setObsolete(after_ == before_);
+        return true;
+    }
 
 private:
     DocumentSession& session_;
     const CanvasLayoutSettings before_;
-    const CanvasLayoutSettings after_;
+    CanvasLayoutSettings after_;
+    const quint64 group_;
 };
 
 DocumentSession::DocumentSession(QObject* parent)
@@ -713,13 +724,18 @@ void DocumentSession::restoreLayoutSettings(CanvasLayoutSettings settings)
     layoutNotificationPending_ = true;
 }
 
-void DocumentSession::setLayoutSettings(CanvasLayoutSettings settings, const QString& title)
+quint64 DocumentSession::newLayoutEditGroup()
+{
+    return ++layoutEditGroup_;
+}
+
+void DocumentSession::setLayoutSettings(CanvasLayoutSettings settings, const QString& title, quint64 group)
 {
     if (!validLayoutSettings(settings)) return;
     canonicalizeGuides(settings);
     if (settings == layoutSettings_) return;
     undo_.push(new LayoutSettingsCommand(*this, layoutSettings_, std::move(settings),
-        title.isEmpty() ? tr("Настройки холста") : title));
+        title.isEmpty() ? tr("Настройки холста") : title, group));
 }
 
 void DocumentSession::setFilePath(QString path)

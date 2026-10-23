@@ -184,8 +184,14 @@ add_library(designer_widgets STATIC
     src/widgets/image_edit_dialog.hpp
     src/widgets/main_window.cpp
     src/widgets/main_window.hpp
-    src/widgets/canvas_layout_dialog.cpp
-    src/widgets/canvas_layout_dialog.hpp
+    src/widgets/canvas_quick_panel.cpp
+    src/widgets/canvas_quick_panel.hpp
+    src/widgets/canvas_rulers.cpp
+    src/widgets/canvas_rulers.hpp
+    src/widgets/designer_icons.cpp
+    src/widgets/designer_icons.hpp
+    src/widgets/guide_list_dialog.cpp
+    src/widgets/guide_list_dialog.hpp
     src/widgets/gs1_dialog.cpp
     src/widgets/gs1_dialog.hpp
     src/widgets/placeholder_values_dialog.cpp

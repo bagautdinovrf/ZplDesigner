@@ -6,6 +6,7 @@
 #include <QGraphicsScene>
 #include <QGraphicsView>
 #include <QMargins>
+#include <QPen>
 #include <QPixmap>
 #include <QTransform>
 #include <optional>
@@ -13,6 +14,16 @@
 class QLabel;
 
 namespace Designer {
+
+// One guide line: a horizontal guide at y or a vertical guide at x, in dots.
+struct CanvasGuide {
+    bool horizontal = true;
+    int coordinate = 0;
+    bool operator==(const CanvasGuide&) const = default;
+};
+
+// The pen of guide lines on the canvas, in screen pixels.
+[[nodiscard]] QPen guidePen(bool emphasized);
 
 // Scene coordinates are printer dots. The image is always rendered by QtZpl;
 // the view paints only editor decorations over that raster.
@@ -32,6 +43,12 @@ public:
     void setGridVisible(bool visible);
     void setSnapEnabled(bool enabled);
     void setLayoutSettings(const CanvasLayoutSettings& settings);
+    // Application preference: rulers docked to the top and left viewport
+    // edges, or framing the label 18 px away and moving with it.
+    void setRulersDocked(bool docked);
+    [[nodiscard]] bool rulersDocked() const { return m_rulersDocked; }
+    // A guide picked in the guide list is drawn emphasized, like a dragged one.
+    void setSelectedGuide(std::optional<CanvasGuide> guide);
     // Application preference: selection sizes and ZPL origin coordinates.
     void setGeometryLabelsVisible(bool sizes, bool coordinates);
     // The ^FO/^FT origin named by the coordinate label, in printer dots. A
@@ -129,6 +146,8 @@ private:
     void updatePointer(QPoint viewportPosition);
     void cancelInteraction();
     void updateRulers();
+    void updateRulerMarks();
+    [[nodiscard]] int verticalRulerWidth() const;
     void paintRuler(QWidget* ruler, bool horizontal);
     [[nodiscard]] int guideAt(QPoint viewportPosition, bool& horizontal) const;
     void beginGuide(bool horizontal, int index, QPoint viewportPosition);
@@ -171,6 +190,9 @@ private:
     CanvasLayoutSettings m_layout;
     QWidget* m_horizontalRuler = nullptr;
     QWidget* m_verticalRuler = nullptr;
+    QWidget* m_rulerCorner = nullptr;
+    std::optional<CanvasGuide> m_selectedGuide;
+    bool m_rulersDocked = false;
     QLabel* m_dimensionsCaption = nullptr;
     QString m_dimensionsFooterText;
     QMargins m_workspaceInsets{35, 50, 35, 45};

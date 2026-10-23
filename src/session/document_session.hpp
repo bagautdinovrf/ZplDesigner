@@ -72,7 +72,11 @@ public:
                                                         quint64 expectedSource);
 
     void reset(DesignDocument document, QString path = {});
-    void setLayoutSettings(CanvasLayoutSettings settings, const QString& title = {});
+    // Edits passing the same non-zero group merge into one undo step while it
+    // stays on top of the history, e.g. everything changed in one opening of
+    // the canvas quick panel. A merge back to the original settings removes it.
+    [[nodiscard]] quint64 newLayoutEditGroup();
+    void setLayoutSettings(CanvasLayoutSettings settings, const QString& title = {}, quint64 group = 0);
     void commit(DesignDocument document, const QString& title, bool preserveOriginal = false);
     [[nodiscard]] OperationResult execute(const EditOperation& operation, const QString& title);
     // Each operation is atomic in history. Bounds are indexed like document.elements
@@ -124,6 +128,7 @@ private:
     std::optional<QString> savedPendingSource_;
     DocumentRevision revision_{QUuid::createUuid(), 0, 0};
     quint64 sourceRevision_ = 0;
+    quint64 layoutEditGroup_ = 0;
     QString sourceError_;
     bool documentNotificationPending_ = false;
     bool layoutNotificationPending_ = false;

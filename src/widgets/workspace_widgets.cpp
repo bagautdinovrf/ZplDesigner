@@ -4,10 +4,16 @@
 
 #include <QComboBox>
 #include <QFormLayout>
+#include <QGuiApplication>
+#include <QScreen>
+#include <QFontMetricsF>
 #include <QPainter>
 #include <QSpinBox>
 #include <QStyle>
 #include <QVBoxLayout>
+#include <QtMath>
+
+#include <cmath>
 
 namespace Designer {
 
@@ -35,6 +41,58 @@ void ObjectBadge::paintEvent(QPaintEvent* event)
     p.setBrush(designerColor(outline ? DesignerColor::PanelAlternate : DesignerColor::Tint));
     p.drawRoundedRect(QRectF(rect()).adjusted(.5, .5, -.5, -.5), outline ? 3 : 5, outline ? 3 : 5); p.end();
     QLabel::paintEvent(event);
+}
+
+PillBadge::PillBadge(const QString& text, QWidget* parent) : QWidget(parent), text_(text)
+{
+    QFont badgeFont = font();
+    setFontPixels(badgeFont, 10.5);
+    setFont(badgeFont);
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+}
+
+void PillBadge::setText(const QString& text)
+{
+    if (text_ == text) return;
+    text_ = text;
+    updateGeometry();
+    update();
+}
+
+QSize PillBadge::sizeHint() const
+{
+    return {qCeil(QFontMetricsF(font()).horizontalAdvance(text_)) + 16, 18};
+}
+
+void PillBadge::paintEvent(QPaintEvent*)
+{
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(designerColor(DesignerColor::Border));
+    p.setBrush(designerColor(DesignerColor::Panel));
+    const QRectF pill = QRectF(rect()).adjusted(.5, .5, -.5, -.5);
+    p.drawRoundedRect(pill, pill.height() / 2, pill.height() / 2);
+    p.setPen(designerColor(DesignerColor::Muted));
+    p.drawText(rect(), Qt::AlignCenter, text_);
+}
+
+PanelSeparator::PanelSeparator(QWidget* parent) : QWidget(parent)
+{
+    setFixedHeight(1);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+}
+
+void PanelSeparator::paintEvent(QPaintEvent*)
+{
+    QPainter(this).fillRect(rect(), designerColor(DesignerColor::Border));
+}
+
+void setFontPixels(QFont& font, qreal pixels)
+{
+    if (pixels == std::floor(pixels)) { font.setPixelSize(static_cast<int>(pixels)); return; }
+    // Qt 6 reports 96 dpi with high-DPI scaling; respect any other logical DPI.
+    const auto* screen = QGuiApplication::primaryScreen();
+    font.setPointSizeF(pixels * 72 / (screen ? screen->logicalDotsPerInchY() : 96.0));
 }
 
 QSize ElidedLabel::minimumSizeHint() const

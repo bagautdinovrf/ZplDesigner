@@ -26,9 +26,15 @@ void DotSpinBox::setDisplayUnits(CanvasUnit units, int dpi) {
     setToolTip(tr("Хранится целое число точек принтера. Ввод в мм округляется до ближайшей точки; стрелки меняют значение на 1 dot."));
 }
 
+void DotSpinBox::setMillimeterDecimals(int decimals) {
+    millimeterDecimals_ = std::clamp(decimals, 0, 3);
+    const QSignalBlocker blocker(this);
+    lineEdit()->setText(prefix() + textFromValue(value()) + suffix());
+}
+
 QString DotSpinBox::textFromValue(int value) const {
     return units_ == CanvasUnit::Millimeters
-        ? locale().toString(value * 25.4 / dpi_, 'f', 3) : QSpinBox::textFromValue(value);
+        ? locale().toString(value * 25.4 / dpi_, 'f', millimeterDecimals_) : QSpinBox::textFromValue(value);
 }
 
 QString DotSpinBox::numberText(QString text) const {

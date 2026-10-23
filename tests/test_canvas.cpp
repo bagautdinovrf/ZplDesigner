@@ -1,4 +1,5 @@
 #include "label_canvas.hpp"
+#include "canvas_rulers.hpp"
 #include "designer_theme.hpp"
 
 #include <QApplication>
@@ -20,12 +21,15 @@
 #include <QUrl>
 #include <QWheelEvent>
 
+#include <algorithm>
+#include <cmath>
 #include <memory>
 
 using Designer::DesignDocument;
 using Designer::ElementType;
 using Designer::LabelCanvas;
 using Designer::Preview;
+using namespace Qt::StringLiterals;
 
 namespace {
 class PaintCounter final : public QObject {
@@ -55,12 +59,14 @@ protected:
 QRectF usableViewportRect(const LabelCanvas* canvas, const QMargins& insets)
 {
     int left = insets.left();
+    int top = insets.top();
     if (canvas->layoutSettings().rulersVisible) {
         if (const auto* ruler = canvas->findChild<QWidget*>(QStringLiteral("verticalRuler")))
-            left = qMax(left, ruler->width() + 6);
+            left = qMax(left, ruler->width() + Designer::rulerGap);
+        top = qMax(top, Designer::rulerHeight + Designer::rulerGap);
     }
     return QRectF(canvas->viewport()->rect()).marginsRemoved(
-        QMarginsF(left, insets.top(), insets.right(), insets.bottom()));
+        QMarginsF(left, top, insets.right(), insets.bottom()));
 }
 } // namespace
 
@@ -112,6 +118,9 @@ private slots:
     void rulerDragTracksZoomAndPan();
     void rulersShowFinalLabelDimensions_data();
     void rulersShowFinalLabelDimensions();
+    void rulerTicksFollowConceptScale();
+    void guidesUseConceptDashesAndRulerMarks();
+    void dockedRulersStayAtViewportEdges();
     void guideAndMarginSnappingUsesScreenTolerance();
     void resizingSnapsToGuides();
     void layoutSettingsAreBounded();
@@ -916,23 +925,23 @@ void CanvasTests::rulersShowFinalLabelDimensions_data()
     QTest::addColumn<QString>("heightText");
     QTest::newRow("millimeters-minimum-zoom")
         << QSize(1180, 591) << true << QStringLiteral("en_US") << 10
-        << QStringLiteral("99.9") << QStringLiteral("50");
+        << QStringLiteral("99.91") << QStringLiteral("50.04");
     QTest::newRow("millimeters-fit")
         << QSize(1180, 591) << true << QStringLiteral("en_US") << 0
-        << QStringLiteral("99.9") << QStringLiteral("50");
+        << QStringLiteral("99.91") << QStringLiteral("50.04");
     QTest::newRow("russian-millimeters-fit")
         << QSize(1180, 591) << true << QStringLiteral("ru_RU") << 0
-        << QStringLiteral("99,9") << QStringLiteral("50");
+        << QStringLiteral("99,91") << QStringLiteral("50,04");
     QTest::newRow("russian-portrait-fit")
         << QSize(591, 1180) << true << QStringLiteral("ru_RU") << 0
-        << QStringLiteral("50") << QStringLiteral("99,9");
+        << QStringLiteral("50,04") << QStringLiteral("99,91");
     // The nearby 100 / 50 major marks must not overlap the final dimensions.
     QTest::newRow("beside-100-millimeter-mark")
         << QSize(1182, 1182) << true << QStringLiteral("en_US") << 10
-        << QStringLiteral("100.1") << QStringLiteral("100.1");
+        << QStringLiteral("100.08") << QStringLiteral("100.08");
     QTest::newRow("beside-50-millimeter-mark")
         << QSize(592, 592) << true << QStringLiteral("en_US") << 25
-        << QStringLiteral("50.1") << QStringLiteral("50.1");
+        << QStringLiteral("50.12") << QStringLiteral("50.12");
     QTest::newRow("long-dot-dimensions")
         << QSize(4096, 3071) << false << QStringLiteral("en_US") << 10
         << QLocale(QStringLiteral("en_US")).toString(4096)
@@ -966,49 +975,223 @@ void CanvasTests::rulersShowFinalLabelDimensions()
         canvas_->setZoomPercent(zoomPercent);
     QApplication::processEvents();
 
+    QFont font = canvas_->font();
+    font.setPixelSize(9);
+    const QFontMetricsF metrics(font);
     for (const bool horizontal : {true, false}) {
         auto* ruler = canvas_->findChild<QWidget*>(horizontal ? QStringLiteral("horizontalRuler")
                                                             : QStringLiteral("verticalRuler"));
         QVERIFY(ruler);
         QVERIFY(ruler->isVisible());
         const QString text = horizontal ? widthText : heightText;
-        QFont font = canvas_->font();
-        font.setPixelSize(9);
-        const QFontMetrics metrics(font);
-        const int textWidth = metrics.horizontalAdvance(text);
-        const int textHeight = metrics.height();
-        QVERIFY(ruler->width() >= textWidth + (horizontal ? 0 : 3));
-        QVERIFY(ruler->height() >= textHeight);
-        const QRect textRect = horizontal
-            ? QRect(ruler->width() - textWidth, 0, textWidth, ruler->height() - 2)
-            : QRect(0, ruler->height() - textHeight, ruler->width() - 3, textHeight);
+        const int extent = horizontal ? dots.width() : dots.height();
+        QCOMPARE(Designer::rulerEndLabel(extent, 300, settings.unit, QLocale(localeName)), text);
+        const int depth = horizontal ? ruler->height() : ruler->width();
+        if (horizontal) QCOMPARE(depth, Designer::rulerHeight);
+        else QVERIFY(depth >= qMax<qreal>(Designer::rulerMinimumWidth, metrics.horizontalAdvance(text) + 13));
+        // The size caption ends 3 px before the end tick, which spans the ruler;
+        // on paper narrower than the caption it starts at the ruler's edge.
+        const QPointF origin = canvas_->viewportTransform().map(QPointF(0, 0)) - QPointF(ruler->pos());
+        const qreal end = (horizontal ? origin.x() : origin.y()) + extent * canvas_->transform().m11();
+        const qreal width = metrics.horizontalAdvance(text);
+        const QRectF caption = horizontal
+            ? QRectF(qMax(0.0, end - 3 - width), 10 - metrics.ascent(), width, metrics.height())
+            : QRectF(depth - Designer::rulerMajorTick - 2 - width, end - 3 - metrics.ascent(), width, metrics.height());
+        QVERIFY(QRectF(ruler->rect()).contains(caption.adjusted(0, 0, 0, -metrics.descent())));
 
         const QPixmap actual = ruler->grab();
         QPixmap expected(actual.size());
         expected.setDevicePixelRatio(actual.devicePixelRatio());
-        expected.fill(Designer::designerColor(Designer::DesignerColor::Canvas));
+        expected.fill(Designer::designerColor(Designer::DesignerColor::Ruler));
         {
             QPainter painter(&expected);
             painter.setFont(font);
-            painter.setPen(Designer::designerColor(Designer::DesignerColor::Muted));
-            painter.drawText(textRect, horizontal ? Qt::AlignTop : Qt::AlignRight, text);
-            if (horizontal)
-                painter.drawLine(ruler->width() - 1, ruler->height() - 4,
-                                 ruler->width() - 1, ruler->height() - 1);
-            else
-                painter.drawLine(ruler->width() - 3, ruler->height() - 1,
-                                 ruler->width() - 1, ruler->height() - 1);
+            painter.setPen(Designer::designerColor(Designer::DesignerColor::RulerInk));
+            painter.drawText(caption, Qt::AlignLeft | Qt::AlignTop | Qt::TextSingleLine, text);
         }
-        // Check actual painted glyphs and the gap before them. The latter also
-        // detects a regular ruler mark painted through the final dimension.
-        const QRect checked = (horizontal ? textRect.adjusted(-6, 0, 0, 0)
-                                          : textRect.adjusted(0, -6, 3, 0)).intersected(ruler->rect());
+        // Check the painted glyphs and a 6 px gap before them, clear of the
+        // ticks and the end tick: a regular label there would overlap the size.
+        const int endLine = static_cast<int>(std::floor(end - 0.5));
+        QRect checked = (horizontal ? caption.adjusted(-6, 0, 0, 0) : caption.adjusted(0, -6, 0, 0)).toAlignedRect();
+        if (horizontal) checked.setBottom(qMin(checked.bottom(), depth - Designer::rulerMajorTick - 1));
+        else checked.setRight(qMin(checked.right(), depth - Designer::rulerMajorTick - 1));
+        if (horizontal) checked.setRight(qMin(checked.right(), endLine - 1));
+        else checked.setBottom(qMin(checked.bottom(), endLine - 1));
+        checked = checked.intersected(ruler->rect());
+        QVERIFY(!checked.isEmpty());
         const qreal dpr = actual.devicePixelRatio();
         const QRect pixels(qRound(checked.x() * dpr), qRound(checked.y() * dpr),
                            qRound(checked.width() * dpr), qRound(checked.height() * dpr));
         QCOMPARE(actual.toImage().copy(pixels).convertToFormat(QImage::Format_ARGB32),
                  expected.toImage().copy(pixels).convertToFormat(QImage::Format_ARGB32));
     }
+}
+
+void CanvasTests::rulerTicksFollowConceptScale()
+{
+    using Designer::CanvasUnit;
+    const QLocale russian(QStringLiteral("ru_RU"));
+    const auto labels = [](const QList<Designer::RulerTick>& ticks) {
+        QStringList result;
+        for (const auto& tick : ticks)
+            if (!tick.end && !tick.label.isEmpty()) result.append(tick.label);
+        return result;
+    };
+    // The concept preview: 600 x 320 dots at 203 dpi, drawn at 0.86 px per dot.
+    auto ticks = Designer::rulerTicks(600, 203, CanvasUnit::Millimeters, 0.86, 30,
+                                      Designer::rulerHorizontalEndClearance, russian);
+    QCOMPARE(ticks.size(), 77); // 0..75 mm and the end
+    QVERIFY(qFuzzyCompare(ticks[1].pixel, 203 / 25.4 * 0.86));
+    QCOMPARE(ticks[0].length, 8);
+    QCOMPARE(ticks[1].length, 3);
+    QCOMPARE(ticks[5].length, 5);
+    QCOMPARE(ticks[10].length, 8);
+    QVERIFY(ticks.back().end);
+    QVERIFY(qFuzzyCompare(ticks.back().pixel, 516.0));
+    QCOMPARE(ticks.back().label, QStringLiteral("75,07"));
+    // 70 mm is 35 px from the end: closer than 36 px, so it stays unlabelled.
+    QCOMPARE(labels(ticks), QStringList({u"0"_s, u"10"_s, u"20"_s, u"30"_s, u"40"_s, u"50"_s, u"60"_s}));
+    ticks = Designer::rulerTicks(320, 203, CanvasUnit::Millimeters, 0.86, 30,
+                                 Designer::rulerVerticalEndClearance, russian);
+    QCOMPARE(labels(ticks), QStringList({u"0"_s, u"10"_s, u"20"_s, u"30"_s}));
+    QCOMPARE(ticks.back().label, QStringLiteral("40,04"));
+
+    // 1 mm ticks closer than 3 px disappear first, then the 5 mm ones.
+    ticks = Designer::rulerTicks(600, 203, CanvasUnit::Millimeters, 0.3, 20, 36, russian);
+    QVERIFY(std::ranges::none_of(ticks, [](const auto& tick) { return tick.length == 3; }));
+    QVERIFY(std::ranges::any_of(ticks, [](const auto& tick) { return tick.length == 5; }));
+    // When labelled ticks would crowd, the scale grows tenfold: 10/50/100 mm.
+    ticks = Designer::rulerTicks(4096, 203, CanvasUnit::Millimeters, 0.05, 20, 36, russian);
+    QVERIFY(qFuzzyCompare(ticks[1].pixel, 10 * 203 / 25.4 * 0.05));
+    QCOMPARE(ticks[1].length, 3);
+    QCOMPARE(ticks[5].length, 5);
+    QCOMPARE(labels(ticks), QStringList({u"0"_s, u"100"_s, u"200"_s, u"300"_s, u"400"_s}));
+
+    // Dots use the same rule with 10 / 50 / 100 dot ticks.
+    ticks = Designer::rulerTicks(600, 203, CanvasUnit::Dots, 1.0, 30, 36, russian);
+    QCOMPARE(ticks.size(), 62);
+    QVERIFY(qFuzzyCompare(ticks[1].pixel, 10.0));
+    QCOMPARE(ticks[5].length, 5);
+    QCOMPARE(labels(ticks), QStringList({u"0"_s, u"100"_s, u"200"_s, u"300"_s, u"400"_s, u"500"_s}));
+    QCOMPARE(ticks.back().label, QStringLiteral("600"));
+}
+
+void CanvasTests::guidesUseConceptDashesAndRulerMarks()
+{
+    const QPen dashed = Designer::guidePen(false);
+    QCOMPARE(dashed.color(), QColor(0x24, 0x6b, 0xdd));
+    QVERIFY(dashed.isCosmetic());
+    QCOMPARE(dashed.widthF(), 1.0);
+    QCOMPARE(dashed.capStyle(), Qt::FlatCap);
+    QCOMPARE(dashed.dashPattern(), QList<qreal>({6, 3}));
+    const QPen solid = Designer::guidePen(true);
+    QCOMPARE(solid.style(), Qt::SolidLine);
+    QCOMPARE(solid.widthF(), 2.0);
+
+    document_.elements.clear();
+    const auto rendered = Designer::renderPreview(document_);
+    QVERIFY(rendered);
+    canvas_->setDocument(document_, *rendered);
+    auto settings = canvas_->layoutSettings();
+    settings.gridVisible = settings.marginsVisible = false;
+    settings.verticalGuides = {173};
+    canvas_->setLayoutSettings(settings);
+    canvas_->setTransform(QTransform::fromScale(1.5, 1.5));
+    canvas_->centerOn(QPointF(200, 150));
+    QApplication::processEvents();
+    const QColor ink(0x24, 0x6b, 0xdd);
+    const QRect paper = canvas_->mapFromScene(QRectF(0, 0, document_.width, document_.height)).boundingRect();
+    const auto columnRuns = [&](const QImage& image, int column) {
+        // Lengths of guide-coloured and other runs down one column of paper.
+        QList<QPair<bool, int>> runs;
+        for (int y = paper.top() + 2; y < paper.bottom() - 2; ++y) {
+            const bool guide = image.pixelColor(column, y) == ink;
+            if (runs.isEmpty() || runs.back().first != guide) runs.append({guide, 0});
+            ++runs.back().second;
+        }
+        return runs;
+    };
+    const auto guideColumns = [&](const QImage& image) {
+        QList<int> columns;
+        const int expected = canvas_->mapFromScene(QPointF(173, 0)).x();
+        for (int x = expected - 3; x <= expected + 3; ++x) {
+            const auto runs = columnRuns(image, x);
+            if (std::ranges::any_of(runs, [](const auto& run) { return run.first; })) columns.append(x);
+        }
+        return columns;
+    };
+    QImage image = canvas_->viewport()->grab().toImage().convertToFormat(QImage::Format_RGB32);
+    QCOMPARE(image.devicePixelRatio(), 1.0);
+    auto columns = guideColumns(image);
+    QCOMPARE(columns.size(), 1);
+    // Dashes of 6 screen pixels and gaps of 3, independent of the 150% zoom.
+    const auto runs = columnRuns(image, columns.front());
+    QVERIFY(runs.size() > 20);
+    for (qsizetype index = 1; index + 1 < runs.size(); ++index)
+        QCOMPARE(runs[index].second, runs[index].first ? 6 : 3);
+
+    // A guide selected in the guide list is a 2 px solid line.
+    canvas_->setSelectedGuide(Designer::CanvasGuide{false, 173});
+    QApplication::processEvents();
+    image = canvas_->viewport()->grab().toImage().convertToFormat(QImage::Format_RGB32);
+    columns = guideColumns(image);
+    QCOMPARE(columns.size(), 2);
+    for (const int column : columns) {
+        const auto solidRuns = columnRuns(image, column);
+        QCOMPARE(solidRuns.size(), 1);
+        QVERIFY(solidRuns.front().first);
+    }
+    canvas_->setSelectedGuide(std::nullopt);
+
+    // The top ruler points at the guide with a filled accent arrow.
+    auto* ruler = canvas_->findChild<QWidget*>(QStringLiteral("horizontalRuler"));
+    const QImage marks = ruler->grab().toImage().convertToFormat(QImage::Format_RGB32);
+    const qreal at = canvas_->viewportTransform().map(QPointF(173, 0)).x() - ruler->x();
+    QCOMPARE(marks.pixelColor(qFloor(at), Designer::rulerHeight - 4),
+             Designer::designerColor(Designer::DesignerColor::Accent));
+    QVERIFY(marks.pixelColor(qFloor(at) + 6, Designer::rulerHeight - 4)
+            != Designer::designerColor(Designer::DesignerColor::Accent));
+}
+
+void CanvasTests::dockedRulersStayAtViewportEdges()
+{
+    auto* horizontal = canvas_->findChild<QWidget*>(QStringLiteral("horizontalRuler"));
+    auto* vertical = canvas_->findChild<QWidget*>(QStringLiteral("verticalRuler"));
+    auto* corner = canvas_->findChild<QWidget*>(QStringLiteral("rulerCorner"));
+    QVERIFY(horizontal && vertical && corner);
+    // Around the label the rulers keep an 18 px gap and pan with the paper.
+    QRect paper = canvas_->mapFromScene(QRectF(0, 0, document_.width, document_.height)).boundingRect();
+    QCOMPARE(horizontal->geometry().bottom(), paper.top() - Designer::rulerGap - 1);
+    QCOMPARE(vertical->geometry().right(), paper.left() - Designer::rulerGap - 1);
+    QCOMPARE(corner->geometry().bottomRight(), QPoint(vertical->geometry().right(), horizontal->geometry().bottom()));
+
+    canvas_->setRulersDocked(true);
+    QApplication::processEvents();
+    const QSize area = canvas_->viewport()->size();
+    const int width = vertical->width();
+    QCOMPARE(corner->geometry(), QRect(0, 0, width, Designer::rulerHeight));
+    QCOMPARE(horizontal->geometry(), QRect(width, 0, area.width() - width, Designer::rulerHeight));
+    QCOMPARE(vertical->geometry(), QRect(0, Designer::rulerHeight, width, area.height() - Designer::rulerHeight));
+    canvas_->setTransform(QTransform::fromScale(2, 2));
+    canvas_->centerOn(QPointF(200, 150));
+    canvas_->horizontalScrollBar()->setValue(canvas_->horizontalScrollBar()->value() + 37);
+    QApplication::processEvents();
+    QCOMPARE(horizontal->geometry(), QRect(width, 0, area.width() - width, Designer::rulerHeight));
+    // Docked rulers still create guides at the pointer's printer dot.
+    const QPoint end = vertical->mapFromGlobal(canvas_->viewport()->mapToGlobal(viewPoint({213, 170})));
+    QTest::mousePress(vertical, Qt::LeftButton, Qt::NoModifier, vertical->rect().center());
+    QTest::mouseEvent(QTest::MouseMove, vertical, Qt::NoButton, Qt::NoModifier, end);
+    QTest::mouseRelease(vertical, Qt::LeftButton, Qt::NoModifier, end);
+    QCOMPARE(canvas_->layoutSettings().verticalGuides, QList<int>({213}));
+    // A fitted label stays clear of the docked rulers.
+    canvas_->fitLabel();
+    QApplication::processEvents();
+    paper = canvas_->mapFromScene(QRectF(0, 0, document_.width, document_.height)).boundingRect();
+    QVERIFY(!paper.intersects(horizontal->geometry()));
+    QVERIFY(!paper.intersects(vertical->geometry()));
+    canvas_->setRulersDocked(false);
+    QApplication::processEvents();
+    QCOMPARE(horizontal->geometry().bottom(), paper.top() - Designer::rulerGap - 1);
 }
 
 void CanvasTests::rulerDragsCreateGuides_data()

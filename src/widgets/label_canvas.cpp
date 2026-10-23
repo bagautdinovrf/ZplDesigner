@@ -1,4 +1,5 @@
 #include "label_canvas.hpp"
+#include "canvas_rulers.hpp"
 #include "designer_theme.hpp"
 #include "eac_mark.hpp"
 
@@ -35,8 +36,9 @@
 namespace Designer {
 namespace {
 constexpr auto elementMime = "application/x-qtzpl-element";
-constexpr int rulerThickness = 24;
 constexpr int maximumGuides = 128;
+// Guides are drawn on white paper in both themes, as in the concept.
+constexpr QRgb guideInk = 0xff246bdd;
 constexpr qreal minimumZoom = 0.1;
 constexpr qreal maximumZoom = 8.0;
 
@@ -61,14 +63,18 @@ QFont rulerFont(QFont font)
     return font;
 }
 
-QString rulerEndLabel(int dots, int dpi, CanvasUnit unit, const QLocale& locale)
+// Widest ruler caption: the size at the end or the largest labelled tick.
+qreal rulerTextWidth(const QFontMetricsF& metrics, int dots, int dpi, CanvasUnit unit, const QLocale& locale)
 {
-    if (unit == CanvasUnit::Dots) return locale.toString(dots);
-    const qreal millimeters = dots * 25.4 / std::max(1, dpi);
-    QString text = locale.toString(millimeters, 'f', millimeters < 0.1 ? 2 : 1);
-    while (text.endsWith(locale.zeroDigit())) text.chop(locale.zeroDigit().size());
-    if (text.endsWith(locale.decimalPoint())) text.chop(locale.decimalPoint().size());
-    return text;
+    const auto whole = static_cast<qint64>(canvasUnitValue(dots, unit, dpi));
+    return std::max(metrics.horizontalAdvance(rulerEndLabel(dots, dpi, unit, locale)),
+                    metrics.horizontalAdvance(locale.toString(whole)));
+}
+
+// Labels centred over their ticks keep at least a 12 px gap.
+qreal rulerLabelSpacing(const QFontMetricsF& metrics, int dots, int dpi, CanvasUnit unit, const QLocale& locale)
+{
+    return metrics.horizontalAdvance(locale.toString(static_cast<qint64>(canvasUnitValue(dots, unit, dpi)))) + 12;
 }
 
 // Editor annotations are drawn on white paper in both themes. Keep their ink
@@ -166,6 +172,19 @@ QPen cosmeticPen(const QColor& color, qreal width = 1.0, Qt::PenStyle style = Qt
     return pen;
 }
 
+} // namespace
+
+QPen guidePen(bool emphasized)
+{
+    // A dragged or selected guide is solid; others repeat 6 px dashes with
+    // 3 px gaps in screen pixels. Flat caps keep each dash exactly 6 px.
+    QPen pen(QColor::fromRgba(guideInk), emphasized ? 2 : 1, Qt::SolidLine, Qt::FlatCap);
+    pen.setCosmetic(true);
+    if (!emphasized) pen.setDashPattern({6, 3});
+    return pen;
+}
+
+namespace {
 bool sameGestureElement(const Element& before, const Element& after)
 {
     return before.id == after.id && before.type == after.type
@@ -248,8 +267,11 @@ LabelCanvas::LabelCanvas(QWidget* parent)
                   "Стрелки — перемещение на 1 точку принтера · Shift + стрелки — на 10 точек"));
     m_horizontalRuler = new QWidget(viewport());
     m_verticalRuler = new QWidget(viewport());
+    m_rulerCorner = new QWidget(viewport());
     m_horizontalRuler->setObjectName(QStringLiteral("horizontalRuler"));
     m_verticalRuler->setObjectName(QStringLiteral("verticalRuler"));
+    m_rulerCorner->setObjectName(QStringLiteral("rulerCorner"));
+    m_rulerCorner->installEventFilter(this);
     m_horizontalRuler->setToolTip(tr("Потяните на этикетку, чтобы добавить горизонтальную направляющую"));
     m_verticalRuler->setToolTip(tr("Потяните на этикетку, чтобы добавить вертикальную направляющую"));
     m_horizontalRuler->setAccessibleName(tr("Горизонтальная линейка"));
@@ -490,13 +512,21 @@ void LabelCanvas::fitLabel()
 
 QRectF LabelCanvas::availableViewportRect(QSizeF viewportSize) const
 {
-    const int rulerWidth = QFontMetrics(rulerFont(font())).horizontalAdvance(
-        rulerEndLabel(m_document.height, m_document.dpi, m_layout.unit, locale())) + 9;
-    const int leftInset = m_layout.rulersVisible ? std::max(m_workspaceInsets.left(), rulerWidth)
+    const int leftInset = m_layout.rulersVisible ? std::max(m_workspaceInsets.left(), verticalRulerWidth() + rulerGap)
                                                : m_workspaceInsets.left();
-    return QRectF(leftInset, m_workspaceInsets.top(),
+    const int topInset = m_layout.rulersVisible ? std::max(m_workspaceInsets.top(), rulerHeight + rulerGap)
+                                              : m_workspaceInsets.top();
+    return QRectF(leftInset, topInset,
         std::max(1.0, viewportSize.width() - leftInset - m_workspaceInsets.right()),
-        std::max(1.0, viewportSize.height() - m_workspaceInsets.top() - m_workspaceInsets.bottom()));
+        std::max(1.0, viewportSize.height() - topInset - m_workspaceInsets.bottom()));
+}
+
+int LabelCanvas::verticalRulerWidth() const
+{
+    // Captions keep 3 px from the outer edge and 2 px before the 8 px ticks.
+    const QFontMetricsF metrics(rulerFont(font()));
+    const qreal text = rulerTextWidth(metrics, m_document.height, m_document.dpi, m_layout.unit, locale());
+    return std::max(rulerMinimumWidth, static_cast<int>(std::ceil(text)) + 3 + rulerMajorTick + 2);
 }
 
 QSizeF LabelCanvas::updateScrollBarPolicies()
@@ -1088,27 +1118,25 @@ void LabelCanvas::drawForeground(QPainter* painter, const QRectF&)
         painter->setPen(cosmeticPen(accentColor.darker(125), 1, Qt::DashLine));
         painter->drawRect(page.adjusted(margin, margin, -margin, -margin));
     }
-    const auto drawGuide = [&](bool horizontal, int coordinate) {
+    const auto drawGuide = [&](bool horizontal, int coordinate, bool emphasized) {
+        painter->setPen(guidePen(emphasized));
         if (horizontal)
             painter->drawLine(QPointF(0, coordinate), QPointF(page.width(), coordinate));
         else
             painter->drawLine(QPointF(coordinate, 0), QPointF(coordinate, page.height()));
     };
     if (m_layout.guidesVisible) {
-        painter->setPen(cosmeticPen(paperInk(palette(), QPalette::Link), 1, Qt::DashLine));
-        for (qsizetype index = 0; index < m_layout.horizontalGuides.size(); ++index) {
-            if (m_interaction != Interaction::Guide || !m_guideHorizontal || index != m_guideIndex)
-                drawGuide(true, m_layout.horizontalGuides[index]);
-        }
-        for (qsizetype index = 0; index < m_layout.verticalGuides.size(); ++index) {
-            if (m_interaction != Interaction::Guide || m_guideHorizontal || index != m_guideIndex)
-                drawGuide(false, m_layout.verticalGuides[index]);
+        for (const bool horizontal : {true, false}) {
+            const auto& guides = horizontal ? m_layout.horizontalGuides : m_layout.verticalGuides;
+            for (qsizetype index = 0; index < guides.size(); ++index) {
+                if (m_interaction == Interaction::Guide && m_guideHorizontal == horizontal && index == m_guideIndex)
+                    continue;
+                drawGuide(horizontal, guides[index], m_selectedGuide == CanvasGuide{horizontal, guides[index]});
+            }
         }
     }
-    if (m_interaction == Interaction::Guide && m_guideInside) {
-        painter->setPen(cosmeticPen(paperInk(palette(), QPalette::Link), 2));
-        drawGuide(m_guideHorizontal, m_guidePosition);
-    }
+    if (m_interaction == Interaction::Guide && m_guideInside)
+        drawGuide(m_guideHorizontal, m_guidePosition, true);
     painter->restore();
 
     painter->setBrush(Qt::NoBrush);
@@ -1424,23 +1452,27 @@ void LabelCanvas::changeEvent(QEvent* event)
 void LabelCanvas::updateRulers()
 {
     if (!m_horizontalRuler) return;
-    for (auto* ruler : {m_horizontalRuler, m_verticalRuler})
+    for (auto* ruler : {m_horizontalRuler, m_verticalRuler, m_rulerCorner})
         ruler->setVisible(m_hasDocument && m_layout.rulersVisible);
     if (!m_hasDocument || !m_layout.rulersVisible) return;
-    // Rulers belong to the paper, so panning never leaves a detached L-shaped
-    // frame at the viewport edges. Child widgets preserve guide drag gestures.
-    const QRect paper = mapFromScene(labelRect()).boundingRect();
-    const QFontMetrics metrics(rulerFont(font()));
-    const int horizontalWidth = std::max(paper.width(), metrics.horizontalAdvance(
-        rulerEndLabel(m_document.width, m_document.dpi, m_layout.unit, locale())));
-    const int verticalWidth = std::max(rulerThickness, metrics.horizontalAdvance(
-        rulerEndLabel(m_document.height, m_document.dpi, m_layout.unit, locale())) + 3);
-    const int verticalHeight = std::max(paper.height(), metrics.height());
-    m_horizontalRuler->setGeometry(paper.right() - horizontalWidth + 1, paper.top() - rulerThickness,
-                                   horizontalWidth, 17);
-    m_verticalRuler->setGeometry(paper.left() - verticalWidth - 6, paper.bottom() - verticalHeight + 1,
-                                 verticalWidth, verticalHeight);
-    for (auto* ruler : {m_horizontalRuler, m_verticalRuler}) {
+    // Child widgets preserve guide drags from either placement.
+    const int width = verticalRulerWidth();
+    if (m_rulersDocked) {
+        // Docked rulers stay at the top and left viewport edges while the label pans.
+        const QSize area = viewport()->size();
+        m_rulerCorner->setGeometry(0, 0, width, rulerHeight);
+        m_horizontalRuler->setGeometry(width, 0, std::max(0, area.width() - width), rulerHeight);
+        m_verticalRuler->setGeometry(0, rulerHeight, width, std::max(0, area.height() - rulerHeight));
+    } else {
+        // Otherwise they frame the paper 18 px away and move with it.
+        const QRect paper = mapFromScene(labelRect()).boundingRect();
+        const int top = paper.top() - rulerGap - rulerHeight;
+        m_rulerCorner->setGeometry(paper.left() - rulerGap - width, top, width, rulerHeight);
+        m_horizontalRuler->setGeometry(paper.left() - rulerGap, top, paper.width() + 2 * rulerGap, rulerHeight);
+        m_verticalRuler->setGeometry(paper.left() - rulerGap - width, paper.top() - rulerGap,
+                                     width, paper.height() + 2 * rulerGap);
+    }
+    for (auto* ruler : {m_horizontalRuler, m_verticalRuler, m_rulerCorner}) {
         ruler->raise();
         ruler->update();
     }
@@ -1449,72 +1481,88 @@ void LabelCanvas::updateRulers()
 void LabelCanvas::paintRuler(QWidget* ruler, bool horizontal)
 {
     QPainter painter(ruler);
-    paintWorkspaceBackdrop(&painter, ruler->rect(), m_layout.gridVisible, ruler->pos());
-    painter.setFont(rulerFont(font()));
-    painter.setPen(designerColor(DesignerColor::Muted));
+    painter.fillRect(ruler->rect(), designerColor(DesignerColor::Ruler));
+    if (ruler == m_rulerCorner) {
+        // A docked corner closes both inner edges of the L-shaped frame.
+        if (m_rulersDocked) {
+            painter.fillRect(QRect(0, ruler->height() - 1, ruler->width(), 1), designerColor(DesignerColor::Border));
+            painter.fillRect(QRect(ruler->width() - 1, 0, 1, ruler->height()), designerColor(DesignerColor::Border));
+        }
+        return;
+    }
     if (!m_hasDocument) return;
-    const qreal scale = std::max(minimumZoom, transform().m11());
-    const qreal dotsPerUnit = m_layout.unit == CanvasUnit::Dots ? 1.0 : std::max(1, m_document.dpi) / 25.4;
-    const qreal desiredStep = 100.0 / (dotsPerUnit * scale);
-    const qreal power = std::pow(10.0, std::floor(std::log10(desiredStep)));
-    qreal majorStep = power * 10;
-    for (const qreal multiplier : {1.0, 2.0, 5.0, 10.0}) {
-        if (power * multiplier >= desiredStep) {
-            majorStep = power * multiplier;
-            break;
-        }
-    }
-    const qreal stepDots = majorStep * dotsPerUnit;
-    const QPointF first = mapToScene(QPoint(0, 0));
-    const QPointF last = mapToScene(viewport()->rect().bottomRight());
-    const int extent = horizontal ? m_document.width : m_document.height;
-    const QString endLabel = rulerEndLabel(extent, m_document.dpi, m_layout.unit, locale());
-    const int endWidth = painter.fontMetrics().horizontalAdvance(endLabel);
-    const int textHeight = painter.fontMetrics().height();
-    const QRect endRect = horizontal
-        ? QRect(ruler->width() - endWidth, 0, endWidth, ruler->height() - 2)
-        : QRect(0, ruler->height() - textHeight, ruler->width() - 3, textHeight);
-    const QRect reservedEnd = endRect.adjusted(-6, -6, 6, 6);
-    const auto drawTick = [&](int pixel) {
-        if (horizontal)
-            painter.drawLine(pixel, ruler->height() - 4, pixel, ruler->height() - 1);
-        else
-            painter.drawLine(ruler->width() - 3, pixel, ruler->width() - 1, pixel);
-    };
-    const qreal start = std::max(0.0, horizontal ? first.x() : first.y());
-    const qreal end = std::min(qreal(extent), horizontal ? last.x() : last.y());
-    const int firstTick = static_cast<int>(std::ceil(start / stepDots));
-    const int lastTick = static_cast<int>(std::floor(end / stepDots));
-    // Labels stay at least 100 screen pixels apart at every zoom.
-    for (int tick = firstTick; tick <= lastTick && tick < firstTick + 2048; ++tick) {
-        const qreal coordinate = tick * stepDots;
-        const QPoint viewportPoint = horizontal ? mapFromScene(QPointF(coordinate, 0))
-                                                : mapFromScene(QPointF(0, coordinate));
-        const QPoint point = ruler->mapFrom(viewport(), viewportPoint);
-        const int pixel = horizontal ? point.x() : point.y();
-        const QString label = locale().toString(coordinate / dotsPerUnit, 'f', majorStep < 1 ? 1 : 0);
-        const int textWidth = painter.fontMetrics().horizontalAdvance(label);
-        if (horizontal) {
-            const int x = std::clamp(pixel - textWidth / 2, 0, std::max(0, ruler->width() - textWidth));
-            const QRect textRect(x, 0, textWidth, ruler->height() - 2);
-            if (!textRect.intersects(reservedEnd)) {
-                painter.drawText(textRect, Qt::AlignTop, label);
-                drawTick(pixel);
-            }
-        } else {
-            const int y = std::clamp(pixel - textHeight / 2, 0, std::max(0, ruler->height() - textHeight));
-            const QRect textRect(0, y, ruler->width() - 3, textHeight);
-            if (!textRect.intersects(reservedEnd)) {
-                painter.drawText(textRect, Qt::AlignRight, label);
-                drawTick(pixel);
-            }
-        }
-    }
-    painter.drawText(endRect, horizontal ? Qt::AlignTop : Qt::AlignRight, endLabel);
-    drawTick(horizontal ? ruler->width() - 1 : ruler->height() - 1);
+    // Depth runs across the ruler; its inner edge faces the paper.
+    const int depth = horizontal ? ruler->height() : ruler->width();
     painter.setPen(designerColor(DesignerColor::Border));
-    if (horizontal)
-        painter.drawLine(0, ruler->height() - 1, ruler->width(), ruler->height() - 1);
+    if (horizontal) painter.drawLine(0, depth - 1, ruler->width(), depth - 1);
+    else painter.drawLine(depth - 1, 0, depth - 1, ruler->height());
+
+    const qreal scale = std::max(minimumZoom, transform().m11());
+    const QPointF origin = viewportTransform().map(QPointF(0, 0)) - QPointF(ruler->pos());
+    const qreal start = horizontal ? origin.x() : origin.y();
+    const QFont font = rulerFont(this->font());
+    const QFontMetricsF metrics(font);
+    painter.setFont(font);
+    painter.setPen(designerColor(DesignerColor::RulerInk));
+    // Both rulers share one scale, chosen for the longer side's widest label.
+    const qreal spacing = rulerLabelSpacing(metrics, std::max(m_document.width, m_document.height),
+                                            m_document.dpi, m_layout.unit, locale());
+    const auto ticks = rulerTicks(horizontal ? m_document.width : m_document.height, m_document.dpi,
+                                  m_layout.unit, scale, spacing,
+                                  horizontal ? rulerHorizontalEndClearance : rulerVerticalEndClearance, locale());
+    // Captions sit over their tick: centred above it on the top ruler and
+    // centred on it, right-aligned before the longest ticks, on the left one.
+    const qreal captionRight = depth - rulerMajorTick - 2;
+    const auto captionRect = [&](const RulerTick& tick, qreal at) {
+        const qreal width = metrics.horizontalAdvance(tick.label);
+        if (tick.end) {
+            // The final tick spans the ruler, so its size caption sits just before it.
+            return horizontal ? QRectF(std::max(0.0, at - 3 - width), 10 - metrics.ascent(), width, metrics.height())
+                              : QRectF(captionRight - width, at - 3 - metrics.ascent(), width, metrics.height());
+        }
+        if (horizontal)
+            return QRectF(std::clamp(at - width / 2, 0.0, std::max(0.0, ruler->width() - width)),
+                          10 - metrics.ascent(), width, metrics.height());
+        return QRectF(captionRight - width,
+                      std::clamp(at - metrics.height() / 2, 0.0, std::max(0.0, ruler->height() - metrics.height())),
+                      width, metrics.height());
+    };
+    const RulerTick& endTick = ticks.back();
+    const QRectF endCaption = captionRect(endTick, start + endTick.pixel).adjusted(-4, -4, 4, 4);
+    for (const auto& tick : ticks) {
+        const qreal at = start + tick.pixel;
+        if (tick.end) {
+            const int line = static_cast<int>(std::floor(at - 0.5));
+            if (horizontal) painter.drawLine(line, 2, line, depth - 1);
+            else painter.drawLine(2, line, depth - 1, line);
+        } else {
+            const int line = static_cast<int>(std::floor(at + 0.5));
+            if (horizontal) painter.drawLine(line, depth - tick.length, line, depth - 1);
+            else painter.drawLine(depth - tick.length, line, depth - 1, line);
+        }
+        if (tick.label.isEmpty()) continue;
+        const QRectF text = captionRect(tick, at);
+        if (!tick.end && text.intersects(endCaption)) continue;
+        painter.drawText(text, Qt::AlignLeft | Qt::AlignTop | Qt::TextSingleLine, tick.label);
+    }
+
+    if (!m_layout.guidesVisible) return;
+    // Filled 7 x 5.5 px arrows point from the inner ruler edge at each guide.
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(designerColor(DesignerColor::Accent));
+    const auto mark = [&](int coordinate) {
+        const qreal at = start + coordinate * scale;
+        painter.drawPolygon(horizontal
+            ? QPolygonF{QPointF(at - 3.5, depth - 6.0), QPointF(at + 3.5, depth - 6.0), QPointF(at, depth - 0.5)}
+            : QPolygonF{QPointF(depth - 6.0, at - 3.5), QPointF(depth - 6.0, at + 3.5), QPointF(depth - 0.5, at)});
+    };
+    // The top ruler marks vertical guides (x), the left one horizontal guides (y).
+    const auto& guides = horizontal ? m_layout.verticalGuides : m_layout.horizontalGuides;
+    const bool dragging = m_interaction == Interaction::Guide && m_guideHorizontal != horizontal;
+    for (qsizetype index = 0; index < guides.size(); ++index)
+        if (!dragging || index != m_guideIndex) mark(guides[index]);
+    if (dragging && m_guideInside) mark(m_guidePosition);
 }
 
 bool LabelCanvas::eventFilter(QObject* watched, QEvent* event)
@@ -1526,6 +1574,10 @@ bool LabelCanvas::eventFilter(QObject* watched, QEvent* event)
         && ((watched == horizontalScrollBar() && horizontalScrollBarPolicy() == Qt::ScrollBarAlwaysOff)
             || (watched == verticalScrollBar() && verticalScrollBarPolicy() == Qt::ScrollBarAlwaysOff))) {
         event->accept();
+        return true;
+    }
+    if (watched == m_rulerCorner && event->type() == QEvent::Paint) {
+        paintRuler(m_rulerCorner, true);
         return true;
     }
     const bool horizontal = watched == m_horizontalRuler;
@@ -1596,6 +1648,7 @@ void LabelCanvas::updateGuide(QPoint viewportPosition)
     m_guideInside = viewport()->rect().contains(viewportPosition) && labelRect().contains(position);
     m_guidePosition = std::clamp(qRound(m_guideHorizontal ? position.y() : position.x()), 0, 4096);
     viewport()->update();
+    updateRulerMarks();
 }
 
 void LabelCanvas::finishGuide(QPoint viewportPosition)
@@ -1615,6 +1668,29 @@ void LabelCanvas::finishGuide(QPoint viewportPosition)
         emit layoutSettingsEdited(settings);
     }
     updatePointer(viewportPosition);
+    viewport()->update();
+    updateRulerMarks();
+}
+
+void LabelCanvas::updateRulerMarks()
+{
+    if (!m_horizontalRuler) return;
+    m_horizontalRuler->update();
+    m_verticalRuler->update();
+}
+
+void LabelCanvas::setRulersDocked(bool docked)
+{
+    if (m_rulersDocked == docked) return;
+    m_rulersDocked = docked;
+    updateRulers();
+    positionDimensionsCaption();
+}
+
+void LabelCanvas::setSelectedGuide(std::optional<CanvasGuide> guide)
+{
+    if (m_selectedGuide == guide) return;
+    m_selectedGuide = guide;
     viewport()->update();
 }
 
@@ -1865,9 +1941,11 @@ void LabelCanvas::cancelInteraction()
 {
     if (m_interaction == Interaction::RubberBand)
         setSelectedIndices(m_rubberInitialSelection);
+    const bool guide = m_interaction == Interaction::Guide;
     m_interaction = Interaction::None;
     viewport()->unsetCursor();
     viewport()->update();
+    if (guide) updateRulerMarks();
 }
 
 void LabelCanvas::keyPressEvent(QKeyEvent* event)

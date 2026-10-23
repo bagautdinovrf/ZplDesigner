@@ -860,9 +860,9 @@ void WorkspaceTests::restoredManualZoomCentersPaperAfterWindowLayout()
         const QRect paper = canvas->mapFromScene(
             QRectF(0, 0, initial_.width, initial_.height)).boundingRect();
         QVERIFY(ruler->isVisible());
-        // Use the actual ruler width plus its six-pixel paper gap: a wide
+        // Use the actual ruler width plus its 18 px paper gap: a wide
         // localized endpoint can legitimately exceed the base 35px inset.
-        const int leftInset = qMax(35, ruler->width() + 6);
+        const int leftInset = qMax(35, ruler->width() + 18);
         const QRectF available = QRectF(canvas->viewport()->rect()).marginsRemoved(
             QMarginsF(leftInset, 50, focusProperties ? 274 : 35, focusProperties ? 80 : 45));
         QVERIFY2(available.width() >= paper.width() && available.height() >= paper.height(),

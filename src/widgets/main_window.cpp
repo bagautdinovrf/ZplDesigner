@@ -1,7 +1,9 @@
 #include "main_window.hpp"
 #include "command_icons.hpp"
 #include "label_canvas.hpp"
-#include "canvas_layout_dialog.hpp"
+#include "canvas_quick_panel.hpp"
+#include "designer_icons.hpp"
+#include "guide_list_dialog.hpp"
 #include "document_session.hpp"
 #include "preset_catalog.hpp"
 #include "preview_widget.hpp"
@@ -50,6 +52,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontDatabase>
+#include <QFontMetricsF>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QGridLayout>
@@ -90,9 +93,11 @@
 #include <QUndoCommand>
 #include <QUndoStack>
 #include <QVBoxLayout>
+#include <QtMath>
 #include <algorithm>
 #include <array>
 #include <span>
+#include <tuple>
 
 namespace Designer {
 namespace {
@@ -551,19 +556,28 @@ void MainWindow::buildUi() {
     grid_ = new QCheckBox(QStringLiteral("Сетка"), canvasHeader); grid_->setObjectName(QStringLiteral("showGrid")); grid_->setChecked(true); grid_->hide();
     connect(labelGrid, &QCheckBox::toggled, grid_, &QCheckBox::setChecked); connect(grid_, &QCheckBox::toggled, labelGrid, &QCheckBox::setChecked);
     snap_ = new QCheckBox(QStringLiteral("Привязка"), canvasHeader); snap_->setObjectName(QStringLiteral("snapEnabled")); snap_->setChecked(true); snap_->hide();
-    for (auto* check : {grid_, snap_}) {
-        auto* button = new QPushButton(check->text(), canvasHeader); button->setCheckable(true); button->setChecked(check->isChecked()); button->setProperty("compact", true);
-        canvasHeaderRow->addWidget(button); connect(button, &QPushButton::toggled, check, &QCheckBox::setChecked); connect(check, &QCheckBox::toggled, button, &QPushButton::setChecked);
+    // Canvas toggles of the canvas-guides concept: 26 px tall, 10 px padding,
+    // a 14 px icon 6 px before the caption; tinted with accent ink when on.
+    auto* canvasTools = new QHBoxLayout; canvasTools->setSpacing(6); canvasHeaderRow->addLayout(canvasTools);
+    QFont toolFont = font(); toolFont.setPixelSize(11);
+    for (const auto& [check, icon, name] : {std::tuple{grid_, DesignerIcon::Grid, QStringLiteral("gridToggle")},
+                                             std::tuple{snap_, DesignerIcon::Magnet, QStringLiteral("snapToggle")}}) {
+        auto* button = new QPushButton(designerIcon(icon), check->text(), canvasHeader); button->setObjectName(name);
+        button->setCheckable(true); button->setChecked(check->isChecked()); button->setProperty("compact", true); button->setIconSize({14, 14});
+        button->setFixedSize(qCeil(QFontMetricsF(toolFont).horizontalAdvance(check->text())) + 14 + 6 + 20, 26);
+        canvasTools->addWidget(button); connect(button, &QPushButton::toggled, check, &QCheckBox::setChecked); connect(check, &QCheckBox::toggled, button, &QPushButton::setChecked);
     }
-    auto* canvasSetup = new QPushButton(QStringLiteral("···"), canvasHeader); canvasSetup->setObjectName(QStringLiteral("canvasSetup")); canvasSetup->setProperty("compact", true); canvasSetup->setFixedWidth(25);
-    canvasSetup->setToolTip(QStringLiteral("Сетка, линейки, направляющие, безопасный отступ и подписи выделения")); canvasHeaderRow->addWidget(canvasSetup);
-    connect(canvasSetup, &QPushButton::clicked, this, &MainWindow::showCanvasLayout);
+    canvasSetup_ = new QPushButton(designerIcon(DesignerIcon::More), QString(), canvasHeader); canvasSetup_->setObjectName(QStringLiteral("canvasSetup"));
+    canvasSetup_->setCheckable(true); canvasSetup_->setIconSize({14, 14}); canvasSetup_->setFixedSize(30, 26);
+    canvasSetup_->setToolTip(QStringLiteral("Холст и направляющие")); canvasSetup_->setAccessibleName(canvasSetup_->toolTip()); canvasTools->addWidget(canvasSetup_);
+    connect(canvasSetup_, &QPushButton::clicked, this, &MainWindow::showCanvasLayout);
     auto* propertiesTool = addTool(canvasHeaderRow, propertiesAction_, true);
     propertiesTool->setToolTip(QStringLiteral("Показать или скрыть свойства · Ctrl+Alt+P"));
     centerLayout->addWidget(canvasHeader);
     canvas_ = new LabelCanvas(editorTabs_); canvas_->setObjectName(QStringLiteral("labelCanvas"));
     canvas_->viewport()->installEventFilter(this);
     canvas_->setGeometryLabelsVisible(workspacePreferences_.geometrySizes, workspacePreferences_.geometryCoordinates);
+    canvas_->setRulersDocked(workspacePreferences_.rulersDocked);
     editorTabs_->addTab(canvas_, QStringLiteral("  Дизайн  "));
     sourceSlot_ = new QWidget(editorTabs_);
     auto* sourceSlotLayout = new QVBoxLayout(sourceSlot_);
@@ -1886,19 +1900,39 @@ void MainWindow::refreshCanvasLayout() {
 }
 
 void MainWindow::showCanvasLayout() {
-    CanvasLayoutDialog dialog(session_->layoutSettings(),
-        {session_->document().width, session_->document().height}, session_->document().dpi, this);
-    dialog.setGeometryLabelsVisible(workspacePreferences_.geometrySizes, workspacePreferences_.geometryCoordinates);
-    if (dialog.exec() != QDialog::Accepted) return;
-    // Selection labels are workspace preferences: persisted per user, outside label history.
-    if (workspacePreferences_.geometrySizes != dialog.geometrySizesVisible()
-        || workspacePreferences_.geometryCoordinates != dialog.geometryCoordinatesVisible()) {
-        workspacePreferences_.geometrySizes = dialog.geometrySizesVisible();
-        workspacePreferences_.geometryCoordinates = dialog.geometryCoordinatesVisible();
-        canvas_->setGeometryLabelsVisible(workspacePreferences_.geometrySizes, workspacePreferences_.geometryCoordinates);
-        persistWorkspace();
+    if (!canvasPanel_) {
+        canvasPanel_ = new CanvasQuickPanel(session_, this);
+        // Selection labels are workspace preferences: persisted per user, outside label history.
+        connect(canvasPanel_, &CanvasQuickPanel::geometryLabelsChanged, this, [this](bool sizes, bool coordinates) {
+            if (workspacePreferences_.geometrySizes == sizes && workspacePreferences_.geometryCoordinates == coordinates) return;
+            workspacePreferences_.geometrySizes = sizes;
+            workspacePreferences_.geometryCoordinates = coordinates;
+            canvas_->setGeometryLabelsVisible(sizes, coordinates);
+            persistWorkspace();
+        });
+        connect(canvasPanel_, &CanvasQuickPanel::rulersDockedChanged, this, [this](bool docked) {
+            if (workspacePreferences_.rulersDocked == docked) return;
+            workspacePreferences_.rulersDocked = docked;
+            canvas_->setRulersDocked(docked);
+            persistWorkspace();
+        });
+        connect(canvasPanel_, &CanvasQuickPanel::closed, this, [this] { canvasSetup_->setChecked(false); });
+        connect(canvasPanel_, &CanvasQuickPanel::guideListRequested, this, &MainWindow::showGuideList, Qt::QueuedConnection);
     }
-    session_->setLayoutSettings(dialog.settings(), QStringLiteral("Настройки холста"));
+    if (canvasPanel_->isVisible()) { canvasPanel_->close(); return; }
+    canvasPanel_->setGeometryLabelsVisible(workspacePreferences_.geometrySizes, workspacePreferences_.geometryCoordinates);
+    canvasPanel_->setRulersDocked(workspacePreferences_.rulersDocked);
+    canvasSetup_->setChecked(true);
+    canvasPanel_->popup(canvasSetup_);
+}
+
+void MainWindow::showGuideList() {
+    GuideListDialog dialog(session_->layoutSettings(),
+        {session_->document().width, session_->document().height}, session_->document().dpi, this);
+    connect(&dialog, &GuideListDialog::currentGuideChanged, canvas_, &LabelCanvas::setSelectedGuide);
+    const bool accepted = dialog.exec() == QDialog::Accepted;
+    canvas_->setSelectedGuide(std::nullopt);
+    if (accepted) session_->setLayoutSettings(dialog.settings(), QStringLiteral("Направляющие"));
 }
 
 bool MainWindow::applySource() {

@@ -26,6 +26,7 @@ class QUndoStack;
 
 namespace Designer {
 class LabelCanvas;
+class CanvasQuickPanel;
 class DocumentSession;
 class ElementSelection;
 class SourceEditorAdapter;
@@ -103,6 +104,7 @@ private:
     void showPrintDialog();
     void showLabelSetup();
     void showCanvasLayout();
+    void showGuideList();
     void refreshCanvasLayout();
     void duplicateElement();
     void deleteElement();
@@ -181,6 +183,8 @@ private:
     QCheckBox* layerPrintable_ = nullptr;
     QCheckBox* grid_ = nullptr;
     QCheckBox* snap_ = nullptr;
+    QPushButton* canvasSetup_ = nullptr;
+    CanvasQuickPanel* canvasPanel_ = nullptr;
     bool alignToLabel_ = false;
 };
 } // namespace Designer

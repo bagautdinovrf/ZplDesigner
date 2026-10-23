@@ -26,14 +26,17 @@ DesignerTheme currentTheme = DesignerTheme::Light;
 QColor colorFor(DesignerColor color, DesignerTheme theme)
 {
     // Exact workspace.css tokens, including alpha in grid and shadow colors.
-    static constexpr std::array<QRgb, 14> light{
+    // Danger and the ruler pair come from the canvas-guides concept tokens.
+    static constexpr std::array<QRgb, 17> light{
         0xfff1f3f5, 0xffffffff, 0xfff8f9fb, 0xff253140, 0xff6a7583,
         0xffdce1e7, 0xff246bdd, 0xffe9f1ff, 0xffe6e9ee, 0x66aeb9c7,
-        0x1227384f, 0xff2c7961, 0xff8b6409, 0xffffffff};
-    static constexpr std::array<QRgb, 14> dark{
+        0x1227384f, 0xff2c7961, 0xff8b6409, 0xffffffff, 0xffb42f2f,
+        0xffffffff, 0xff7b8592};
+    static constexpr std::array<QRgb, 17> dark{
         0xff161b22, 0xff242b34, 0xff20262e, 0xffe0e6ee, 0xffa7b3c2,
         0xff3a4452, 0xff85b1ff, 0xff293d5a, 0xff171e27, 0x66627187,
-        0x44000000, 0xff83cbb3, 0xffefc96d, 0xff1d242d};
+        0x44000000, 0xff83cbb3, 0xffefc96d, 0xff1d242d, 0xffff9d9d,
+        0xff20262e, 0xff97a3b2};
     return QColor::fromRgba((theme == DesignerTheme::Dark ? dark : light)[static_cast<std::size_t>(color)]);
 }
 
@@ -562,15 +565,17 @@ private:
         const bool hovered = option->state.testFlag(State_MouseOver) || option->state.testFlag(State_Sunken);
         const bool accent = variant(widget, "accent");
         const bool segment = variant(widget, "segment");
-        QColor fill = flat || segment ? QColor(Qt::transparent) : designerColor(DesignerColor::Control);
-        QColor border = flat || segment || accent ? QColor(Qt::transparent) : designerColor(DesignerColor::Border);
-        if (hovered || checked || accent) fill = designerColor(DesignerColor::Tint);
-        if (checked && !flat && !segment) border = designerColor(DesignerColor::Accent);
+        // One option of a segmented choice: only the active option is tinted.
+        const bool choice = variant(widget, "choice");
+        QColor fill = flat || segment || choice ? QColor(Qt::transparent) : designerColor(DesignerColor::Control);
+        QColor border = flat || segment || choice || accent ? QColor(Qt::transparent) : designerColor(DesignerColor::Border);
+        if ((hovered && !choice) || checked || accent) fill = designerColor(DesignerColor::Tint);
+        if (checked && !flat && !segment && !choice) border = designerColor(DesignerColor::Accent);
         if (segment && checked) fill = designerColor(DesignerColor::Panel);
         if (option->state.testFlag(State_HasFocus) && option->state.testFlag(State_KeyboardFocusChange)) border = designerColor(DesignerColor::Accent);
         painter->save();
         if (!option->state.testFlag(State_Enabled)) painter->setOpacity(painter->opacity() * 0.48);
-        roundedRect(painter, option->rect, fill, border);
+        roundedRect(painter, option->rect, fill, border, choice ? 3 : 4);
         painter->restore();
     }
 
@@ -580,10 +585,16 @@ private:
     {
         const bool enabled = option->state.testFlag(State_Enabled);
         const bool selected = option->state.testFlag(State_On) || variant(widget, "accent");
+        const bool choice = variant(widget, "choice");
         painter->save();
         if (!enabled) painter->setOpacity(painter->opacity() * 0.48);
         if (compact(widget)) { QFont font = painter->font(); font.setPixelSize(11); painter->setFont(font); }
-        painter->setPen(designerColor(selected ? DesignerColor::Accent : DesignerColor::Ink));
+        if (choice && selected) { QFont font = painter->font(); font.setWeight(QFont::DemiBold); painter->setFont(font); }
+        // A tone recolours the caption of a quiet command; its icon brings its own colour.
+        const QString tone = widget ? widget->property("tone").toString() : QString();
+        const DesignerColor idle = choice || tone == QLatin1String("muted") ? DesignerColor::Muted
+            : tone == QLatin1String("danger") ? DesignerColor::Danger : DesignerColor::Ink;
+        painter->setPen(designerColor(selected ? DesignerColor::Accent : idle));
         const int inset = widget && widget->property("commandButton").toBool() ? 4 : compact(widget) ? 7 : 9;
         QRect content = option->rect.adjusted(inset, 2, -inset, -2);
         if (menu) {

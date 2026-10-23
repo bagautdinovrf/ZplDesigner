@@ -27,6 +27,7 @@ struct WorkspacePreferences {
     int canvasZoomPercent = 0; // 0 keeps the label fitted to the canvas.
     bool geometrySizes = true;       // Selection dimension lines on the canvas.
     bool geometryCoordinates = true; // Selection ZPL origin coordinates on the canvas.
+    bool rulersDocked = false;       // Rulers at the canvas edges instead of around the label.
     QStringList hiddenToolbarCommands;
 };
 

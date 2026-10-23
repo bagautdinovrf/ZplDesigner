@@ -1,4 +1,4 @@
-#include "canvas_layout_dialog.hpp"
+#include "canvas_quick_panel.hpp"
 #include "designer_theme.hpp"
 #include "document_session.hpp"
 #include "label_canvas.hpp"
@@ -938,49 +938,48 @@ void SplitEditorTests::selectionSyncPreferenceSurvivesReopening()
 void SplitEditorTests::geometryLabelPreferencesSurviveReopening()
 {
     using Labels = QPair<bool, bool>; // {sizes, coordinates}
-    // Drives the canvas layout dialog; returns the checkbox states it opened with.
-    const auto editLabels = [this](bool accept, bool sizes, bool coordinates) {
-        Labels shown{false, false};
-        bool opened = false;
-        QTimer::singleShot(0, window_.get(), [&] {
-            auto* dialog = window_->findChild<CanvasLayoutDialog*>();
-            if (!dialog) return;
-            auto* sizesCheck = dialog->findChild<QCheckBox*>(u"layoutShowGeometrySizes"_s);
-            auto* coordinatesCheck = dialog->findChild<QCheckBox*>(u"layoutShowGeometryCoordinates"_s);
-            if (!sizesCheck || !coordinatesCheck) { dialog->reject(); return; }
-            shown = {sizesCheck->isChecked(), coordinatesCheck->isChecked()};
-            sizesCheck->setChecked(sizes);
-            coordinatesCheck->setChecked(coordinates);
-            opened = true;
-            if (accept) dialog->accept();
-            else dialog->reject();
-        });
+    // Drives the canvas quick panel; returns the checkbox states it opened with.
+    const auto editLabels = [this](bool sizes, bool coordinates, bool docked) -> std::optional<Labels> {
         window_->findChild<QPushButton*>(u"canvasSetup"_s)->click();
-        return opened ? std::optional(shown) : std::nullopt;
+        auto* panel = window_->findChild<CanvasQuickPanel*>();
+        if (!panel || !panel->isVisible()) return std::nullopt;
+        auto* sizesCheck = panel->findChild<QCheckBox*>(u"quickPanelGeometrySizes"_s);
+        auto* coordinatesCheck = panel->findChild<QCheckBox*>(u"quickPanelGeometryCoordinates"_s);
+        const Labels shown{sizesCheck->isChecked(), coordinatesCheck->isChecked()};
+        sizesCheck->setChecked(sizes);
+        coordinatesCheck->setChecked(coordinates);
+        panel->findChild<QPushButton*>(docked ? u"quickPanelRulersDocked"_s : u"quickPanelRulersAtLabel"_s)->click();
+        panel->close();
+        return shown;
     };
-    const auto savedLabels = [this] {
-        QSettings saved(QDir(settingsDirectory_).filePath(u"workspace.ini"_s), QSettings::IniFormat);
-        return Labels(saved.value(u"canvas/geometrySizes"_s, true).toBool(),
-                      saved.value(u"canvas/geometryCoordinates"_s, true).toBool());
+    const auto saved = [this] {
+        return QSettings(QDir(settingsDirectory_).filePath(u"workspace.ini"_s), QSettings::IniFormat);
+    };
+    const auto savedLabels = [&] {
+        const auto settings = saved();
+        return Labels(settings.value(u"canvas/geometrySizes"_s, true).toBool(),
+                      settings.value(u"canvas/geometryCoordinates"_s, true).toBool());
     };
     QVERIFY(!action("showGeometrySizes"));
     QVERIFY(!action("showGeometryCoordinates"));
+    QVERIFY(!window_->findChild<LabelCanvas*>()->rulersDocked());
     const int historyIndex = session_->undoStack()->index();
-    auto shown = editLabels(false, false, false);
-    QVERIFY(shown);
-    QCOMPARE(*shown, Labels(true, true));
-    QCOMPARE(savedLabels(), Labels(true, true));
-    shown = editLabels(true, false, true);
+    auto shown = editLabels(false, true, true);
     QVERIFY(shown);
     QCOMPARE(*shown, Labels(true, true));
     QCOMPARE(savedLabels(), Labels(false, true));
+    QVERIFY(saved().value(u"canvas/rulersDocked"_s).toBool());
+    QVERIFY(window_->findChild<LabelCanvas*>()->rulersDocked());
     // Workspace preferences never enter the label's undo history.
     QCOMPARE(session_->undoStack()->index(), historyIndex);
     window_.reset();
     createWindow();
-    shown = editLabels(false, true, true);
+    QVERIFY(window_->findChild<LabelCanvas*>()->rulersDocked());
+    shown = editLabels(true, true, false);
     QVERIFY(shown);
     QCOMPARE(*shown, Labels(false, true));
+    QCOMPARE(savedLabels(), Labels(true, true));
+    QVERIFY(!saved().value(u"canvas/rulersDocked"_s).toBool());
 }
 
 void SplitEditorTests::sourceHighlightsPreserveCursorThemeAndNativeUndo()
