@@ -28,9 +28,6 @@ Native Qt Widgets editor. Read this file and README.md before modifying it.
 - Unsupported or ambiguous ZPL must remain available in source mode. Do not
   silently discard commands or collapse a multi-label file into one label.
 - Use QPalette, a persistent QProxyStyle, QPainter, and delegates. Do not use QSS.
-- Read `C:/Users/r.bagautdinov/.codex/WORKFLOW-NOTES.md` before relevant tool,
-  Git, publication, or PowerShell actions. Record newly resolved tool problems
-  there, including symptom, working solution, and verification.
 - During lengthy work, give a brief progress update at least every 30 seconds.
 - Batch related implementation changes before running builds and tests.
 - Keep agent build trees, temporary probes, screenshots, and other generated
